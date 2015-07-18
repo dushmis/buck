@@ -1,7 +1,21 @@
 android_binary(
+  name = 'java-only',
+  manifest = 'AndroidManifest.xml',
+  keystore = '//keystores:debug',
+  use_split_dex = True,
+  dex_compression = 'jar',
+  primary_dex_patterns = [
+    '/MyApplication^',
+  ],
+  deps = [
+    '//java/com/sample/app:app',
+    '//java/com/sample/lib:lib',
+  ],
+)
+
+android_binary(
   name = 'app',
   manifest = 'AndroidManifest.xml',
-  target = 'Google Inc.:Google APIs:19',
   keystore = '//keystores:debug',
   use_split_dex = True,
   dex_compression = 'jar',
@@ -19,7 +33,6 @@ android_binary(
 android_binary(
   name = 'app-art',
   manifest = 'AndroidManifest.xml',
-  target = 'Google Inc.:Google APIs:19',
   keystore = '//keystores:debug',
   use_split_dex = True,
   primary_dex_patterns = [
@@ -36,7 +49,6 @@ android_binary(
 android_binary(
   name = 'app-dex-exo',
   manifest = 'AndroidManifest.xml',
-  target = 'Google Inc.:Google APIs:19',
   keystore = '//keystores:debug',
   use_split_dex = True,
   exopackage_modes = ['secondary_dex'],
@@ -55,7 +67,6 @@ android_binary(
 android_binary(
   name = 'app-native-exo',
   manifest = 'AndroidManifest.xml',
-  target = 'Google Inc.:Google APIs:19',
   keystore = '//keystores:debug',
   use_split_dex = True,
   exopackage_modes = ['native_library'],
@@ -74,9 +85,32 @@ android_binary(
 android_binary(
   name = 'app-dex-native-exo',
   manifest = 'AndroidManifest.xml',
-  target = 'Google Inc.:Google APIs:19',
   keystore = '//keystores:debug',
   use_split_dex = True,
+  exopackage_modes = [
+    'native_library',
+    'secondary_dex',
+  ],
+  primary_dex_patterns = [
+    '/MyApplication^',
+  ],
+  deps = [
+    '//java/com/sample/app:app',
+    '//java/com/sample/lib:lib',
+    '//native/fakenative/jni:fakenative',
+    '//native/mybinary/jni:mybinary',
+    '//third-party:kiwi',
+  ],
+)
+
+android_binary(
+  name = 'app-dex-native-exo-intra-reorder',
+  manifest = 'AndroidManifest.xml',
+  keystore = '//keystores:debug',
+  use_split_dex = True,
+  reorder_classes_intra_dex = True,
+  dex_reorder_tool_file = "//externa_files:fake_reorder_tool.sh",
+  dex_reorder_data_dump_file = "//externa_files:fake_data_file",
   exopackage_modes = [
     'native_library',
     'secondary_dex',

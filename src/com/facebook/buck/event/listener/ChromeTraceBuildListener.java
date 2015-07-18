@@ -17,15 +17,17 @@
 package com.facebook.buck.event.listener;
 
 import com.facebook.buck.cli.CommandEvent;
-import com.facebook.buck.cli.InstallEvent;
-import com.facebook.buck.cli.StartActivityEvent;
-import com.facebook.buck.cli.UninstallEvent;
 import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.event.BuckEventListener;
 import com.facebook.buck.event.ChromeTraceEvent;
+import com.facebook.buck.event.CompilerPluginDurationEvent;
+import com.facebook.buck.event.InstallEvent;
+import com.facebook.buck.event.StartActivityEvent;
 import com.facebook.buck.event.TraceEvent;
-import com.facebook.buck.io.ProjectFilesystem;
+import com.facebook.buck.event.UninstallEvent;
 import com.facebook.buck.io.PathListing;
+import com.facebook.buck.io.ProjectFilesystem;
+import com.facebook.buck.java.AnnotationProcessingEvent;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildId;
 import com.facebook.buck.parser.ParseEvent;
@@ -35,8 +37,10 @@ import com.facebook.buck.rules.ArtifactCacheEvent;
 import com.facebook.buck.rules.BuildEvent;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleEvent;
+import com.facebook.buck.rules.TestSummaryEvent;
 import com.facebook.buck.step.StepEvent;
 import com.facebook.buck.timing.Clock;
+import com.facebook.buck.util.BestCompressionGZIPOutputStream;
 import com.facebook.buck.util.BuckConstant;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.Optionals;
@@ -48,10 +52,9 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.eventbus.Subscribe;
 
-import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -68,6 +71,7 @@ public class ChromeTraceBuildListener implements BuckEventListener {
   private final ProjectFilesystem projectFilesystem;
   private final Clock clock;
   private final int tracesToKeep;
+  private final boolean compressTraces;
   private final ObjectMapper mapper;
   private final ThreadLocal<SimpleDateFormat> dateFormat;
   private ConcurrentLinkedQueue<ChromeTraceEvent> eventList =
@@ -77,8 +81,16 @@ public class ChromeTraceBuildListener implements BuckEventListener {
       ProjectFilesystem projectFilesystem,
       Clock clock,
       ObjectMapper objectMapper,
-      int tracesToKeep) {
-    this(projectFilesystem, clock, objectMapper, Locale.US, TimeZone.getDefault(), tracesToKeep);
+      int tracesToKeep,
+      boolean compressTraces) {
+    this(
+        projectFilesystem,
+        clock,
+        objectMapper,
+        Locale.US,
+        TimeZone.getDefault(),
+        tracesToKeep,
+        compressTraces);
   }
 
   @VisibleForTesting
@@ -88,7 +100,8 @@ public class ChromeTraceBuildListener implements BuckEventListener {
       ObjectMapper objectMapper,
       final Locale locale,
       final TimeZone timeZone,
-      int tracesToKeep) {
+      int tracesToKeep,
+      boolean compressTraces) {
     this.projectFilesystem = projectFilesystem;
     this.clock = clock;
     this.mapper = objectMapper;
@@ -101,6 +114,7 @@ public class ChromeTraceBuildListener implements BuckEventListener {
       }
     };
     this.tracesToKeep = tracesToKeep;
+    this.compressTraces = compressTraces;
     addProcessMetadataEvent();
   }
 
@@ -143,21 +157,25 @@ public class ChromeTraceBuildListener implements BuckEventListener {
   public void outputTrace(BuildId buildId) {
     try {
       String filenameTime = dateFormat.get().format(new Date(clock.currentTimeMillis()));
-      String tracePath = String.format("%s/build.%s.%s.trace",
-          BuckConstant.BUCK_TRACE_DIR,
-          filenameTime,
-          buildId);
-      File traceOutput = projectFilesystem.getFileForRelativePath(tracePath);
+      String traceName = String.format("build.%s.%s.trace", filenameTime, buildId);
+      if (compressTraces) {
+        traceName = traceName + ".gz";
+      }
+      Path tracePath = BuckConstant.BUCK_TRACE_DIR.resolve(traceName);
       projectFilesystem.createParentDirs(tracePath);
+      OutputStream stream = projectFilesystem.newFileOutputStream(tracePath);
+      if (compressTraces) {
+        stream = new BestCompressionGZIPOutputStream(stream, true);
+      }
 
       LOG.debug("Writing Chrome trace to %s", tracePath);
-      mapper.writeValue(traceOutput, eventList);
+      mapper.writeValue(stream, eventList);
 
-      String symlinkPath = String.format("%s/build.trace",
-          BuckConstant.BUCK_TRACE_DIR);
-      File symlinkFile = projectFilesystem.getFileForRelativePath(symlinkPath);
-      projectFilesystem.createSymLink(Paths.get(traceOutput.toURI()),
-          Paths.get(symlinkFile.toURI()),
+      String symlinkName = compressTraces ? "build.trace.gz" : "build.trace";
+      Path symlinkPath = BuckConstant.BUCK_TRACE_DIR.resolve(symlinkName);
+      projectFilesystem.createSymLink(
+          projectFilesystem.resolve(symlinkPath),
+          projectFilesystem.resolve(tracePath),
           true);
 
       deleteOldTraces();
@@ -209,7 +227,6 @@ public class ChromeTraceBuildListener implements BuckEventListener {
   @Subscribe
   public void ruleStarted(BuildRuleEvent.Started started) {
     BuildRule buildRule = started.getBuildRule();
-
     writeChromeTraceEvent("buck",
         buildRule.getFullyQualifiedName(),
         ChromeTraceEvent.Phase.BEGIN,
@@ -231,9 +248,30 @@ public class ChromeTraceBuildListener implements BuckEventListener {
   }
 
   @Subscribe
+  public void ruleResumed(BuildRuleEvent.Resumed resumed) {
+    BuildRule buildRule = resumed.getBuildRule();
+    writeChromeTraceEvent(
+        "buck",
+        buildRule.getFullyQualifiedName(),
+        ChromeTraceEvent.Phase.BEGIN,
+        ImmutableMap.of("rule_key", resumed.getRuleKeySafe()),
+        resumed);
+  }
+
+  @Subscribe
+  public void ruleSuspended(BuildRuleEvent.Suspended suspended) {
+    BuildRule buildRule = suspended.getBuildRule();
+    writeChromeTraceEvent("buck",
+        buildRule.getFullyQualifiedName(),
+        ChromeTraceEvent.Phase.END,
+        ImmutableMap.of("rule_key", suspended.getRuleKeySafe()),
+        suspended);
+  }
+
+  @Subscribe
   public void stepStarted(StepEvent.Started started) {
     writeChromeTraceEvent("buck",
-        started.getStep().getShortName(),
+        started.getShortStepName(),
         ChromeTraceEvent.Phase.BEGIN,
         ImmutableMap.<String, String>of(),
         started);
@@ -242,7 +280,7 @@ public class ChromeTraceBuildListener implements BuckEventListener {
   @Subscribe
   public void stepFinished(StepEvent.Finished finished) {
     writeChromeTraceEvent("buck",
-        finished.getStep().getShortName(),
+        finished.getShortStepName(),
         ChromeTraceEvent.Phase.END,
         ImmutableMap.of(
             "description", finished.getDescription(),
@@ -357,7 +395,7 @@ public class ChromeTraceBuildListener implements BuckEventListener {
         started.getCategory(),
         ChromeTraceEvent.Phase.BEGIN,
         ImmutableMap.of(
-            "rule_key", started.getRuleKey().toString()),
+            "rule_key", Joiner.on(", ").join(started.getRuleKeys())),
         started);
   }
 
@@ -365,7 +403,7 @@ public class ChromeTraceBuildListener implements BuckEventListener {
   public void artifactFetchFinished(ArtifactCacheEvent.Finished finished) {
     ImmutableMap.Builder<String, String> argumentsBuilder = ImmutableMap.<String, String>builder()
         .put("success", Boolean.toString(finished.isSuccess()))
-        .put("rule_key", finished.getRuleKey().toString());
+        .put("rule_key", Joiner.on(", ").join(finished.getRuleKeys()));
     Optionals.putIfPresent(finished.getCacheResult().transform(Functions.toStringFunction()),
         "cache_result",
         argumentsBuilder);
@@ -396,12 +434,74 @@ public class ChromeTraceBuildListener implements BuckEventListener {
   }
 
   @Subscribe
+  public void annotationProcessingStarted(AnnotationProcessingEvent.Started started) {
+    writeChromeTraceEvent(
+        started.getAnnotationProcessorName(),
+        started.getCategory(),
+        ChromeTraceEvent.Phase.BEGIN,
+        ImmutableMap.<String, String>of(),
+        started);
+  }
+
+  @Subscribe
+  public void annotationProcessingFinished(AnnotationProcessingEvent.Finished finished) {
+    writeChromeTraceEvent(
+        finished.getAnnotationProcessorName(),
+        finished.getCategory(),
+        ChromeTraceEvent.Phase.END,
+        ImmutableMap.<String, String>of(),
+        finished);
+  }
+
+  @Subscribe
+  public void compilerPluginDurationEventStarted(CompilerPluginDurationEvent.Started started) {
+    writeChromeTraceEvent(
+        started.getPluginName(),
+        started.getDurationName(),
+        ChromeTraceEvent.Phase.BEGIN,
+        started.getArgs(),
+        started);
+  }
+
+  @Subscribe
+  public void compilerPluginDurationEventFinished(CompilerPluginDurationEvent.Finished finished) {
+    writeChromeTraceEvent(
+        finished.getPluginName(),
+        finished.getDurationName(),
+        ChromeTraceEvent.Phase.END,
+        finished.getArgs(),
+        finished);
+  }
+
+  @Subscribe
   public void traceEvent(TraceEvent event) {
     writeChromeTraceEvent("buck",
         event.getEventName(),
         event.getPhase(),
         event.getProperties(),
         event);
+  }
+
+  @Subscribe
+  public void testStartedEvent(TestSummaryEvent.Started started) {
+    writeChromeTraceEvent("buck",
+        "test",
+        ChromeTraceEvent.Phase.BEGIN,
+        ImmutableMap.of(
+            "test_case_name", started.getTestCaseName(),
+            "test_name", started.getTestName()),
+        started);
+  }
+
+  @Subscribe
+  public void testFinishedEvent(TestSummaryEvent.Finished finished) {
+    writeChromeTraceEvent("buck",
+        "test",
+        ChromeTraceEvent.Phase.END,
+        ImmutableMap.of(
+            "test_case_name", finished.getTestCaseName(),
+            "test_name", finished.getTestName()),
+        finished);
   }
 
   private void writeChromeTraceEvent(String category,

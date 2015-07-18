@@ -16,11 +16,6 @@
 
 package com.facebook.buck.ocaml;
 
-import static com.facebook.buck.ocaml.OCamlBuildContext.DEFAULT_OCAML_BYTECODE_COMPILER;
-import static com.facebook.buck.ocaml.OCamlBuildContext.DEFAULT_OCAML_COMPILER;
-import static com.facebook.buck.ocaml.OCamlBuildContext.DEFAULT_OCAML_DEP_TOOL;
-import static com.facebook.buck.ocaml.OCamlBuildContext.DEFAULT_OCAML_LEX_COMPILER;
-import static com.facebook.buck.ocaml.OCamlBuildContext.DEFAULT_OCAML_YACC_COMPILER;
 import static com.facebook.buck.ocaml.OCamlRuleBuilder.createOCamlLinkTarget;
 import static com.facebook.buck.ocaml.OCamlRuleBuilder.createStaticLibraryBuildTarget;
 import static org.junit.Assert.assertEquals;
@@ -36,6 +31,7 @@ import com.facebook.buck.cxx.CxxSource;
 import com.facebook.buck.cxx.CxxSourceRuleFactory;
 import com.facebook.buck.cxx.CxxSourceRuleFactoryHelper;
 import com.facebook.buck.cxx.DefaultCxxPlatforms;
+import com.facebook.buck.cxx.HeaderVisibility;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
@@ -52,7 +48,6 @@ import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.nio.file.Files;
 
 public class OCamlIntegrationTest {
 
@@ -75,12 +70,11 @@ public class OCamlIntegrationTest {
         Platform.detect(),
         buckConfig);
 
-    assumeTrue(Files.exists(oCamlBuckConfig.getOCamlCompiler().or(DEFAULT_OCAML_COMPILER)));
-    assumeTrue(Files.exists(oCamlBuckConfig.getOCamlBytecodeCompiler().or(
-                DEFAULT_OCAML_BYTECODE_COMPILER)));
-    assumeTrue(Files.exists(oCamlBuckConfig.getOCamlDepTool().or(DEFAULT_OCAML_DEP_TOOL)));
-    assumeTrue(Files.exists(oCamlBuckConfig.getYaccCompiler().or(DEFAULT_OCAML_YACC_COMPILER)));
-    assumeTrue(Files.exists(oCamlBuckConfig.getLexCompiler().or(DEFAULT_OCAML_LEX_COMPILER)));
+    assumeTrue(oCamlBuckConfig.getOCamlCompiler().isPresent());
+    assumeTrue(oCamlBuckConfig.getOCamlBytecodeCompiler().isPresent());
+    assumeTrue(oCamlBuckConfig.getOCamlDepTool().isPresent());
+    assumeTrue(oCamlBuckConfig.getYaccCompiler().isPresent());
+    assumeTrue(oCamlBuckConfig.getLexCompiler().isPresent());
   }
 
   @Test
@@ -110,9 +104,9 @@ public class OCamlIntegrationTest {
     // date.
     workspace.runBuckCommand("build", target.toString()).assertSuccess();
     buildLog = workspace.getBuildLog();
-    assertTrue(buildLog.getAllTargets().containsAll(targets));
+    assertEquals(ImmutableSet.of(binary, target), buildLog.getAllTargets());
+    buildLog.assertTargetHadMatchingRuleKey(binary.toString());
     buildLog.assertTargetHadMatchingRuleKey(target.toString());
-    buildLog.assertTargetHadMatchingRuleKey(staticLib.toString());
 
     workspace.resetBuildLogFile();
 
@@ -195,11 +189,9 @@ public class OCamlIntegrationTest {
 
     workspace.runBuckCommand("build", target.toString()).assertSuccess();
     buildLog = workspace.getBuildLog();
-    assertEquals(
-        targets,
-        buildLog.getAllTargets());
-    buildLog.assertTargetHadMatchingRuleKey(target.toString());
+    assertEquals(ImmutableSet.of(binary, target), buildLog.getAllTargets());
     buildLog.assertTargetHadMatchingRuleKey(binary.toString());
+    buildLog.assertTargetHadMatchingRuleKey(target.toString());
 
     workspace.resetBuildLogFile();
 
@@ -247,9 +239,9 @@ public class OCamlIntegrationTest {
     workspace.resetBuildLogFile();
     workspace.runBuckCommand("build", target.toString()).assertSuccess();
     buildLog = workspace.getBuildLog();
-    assertTrue(buildLog.getAllTargets().containsAll(targets));
-    buildLog.assertTargetHadMatchingRuleKey(target.toString());
+    assertEquals(ImmutableSet.of(binary, target), buildLog.getAllTargets());
     buildLog.assertTargetHadMatchingRuleKey(binary.toString());
+    buildLog.assertTargetHadMatchingRuleKey(target.toString());
 
     workspace.resetBuildLogFile();
     workspace.replaceFileContents("ctest/ctest.c", "NATIVE PLUS", "Native Plus");
@@ -282,9 +274,9 @@ public class OCamlIntegrationTest {
     workspace.replaceFileContents("ctest/BUCK", "compiler_flags=[]", "compiler_flags=[]");
     workspace.runBuckCommand("build", target.toString()).assertSuccess();
     buildLog = workspace.getBuildLog();
-    assertTrue(buildLog.getAllTargets().containsAll(targets));
-    buildLog.assertTargetHadMatchingRuleKey(target.toString());
+    assertEquals(ImmutableSet.of(binary, target), buildLog.getAllTargets());
     buildLog.assertTargetHadMatchingRuleKey(binary.toString());
+    buildLog.assertTargetHadMatchingRuleKey(target.toString());
   }
 
   @Test
@@ -369,7 +361,10 @@ public class OCamlIntegrationTest {
         new CxxBuckConfig(new FakeBuckConfig()));
     CxxSourceRuleFactory cxxSourceRuleFactory = CxxSourceRuleFactoryHelper.of(cclib, cxxPlatform);
     BuildTarget cclibbin =
-        CxxDescriptionEnhancer.createStaticLibraryBuildTarget(cclib, cxxPlatform.getFlavor());
+        CxxDescriptionEnhancer.createStaticLibraryBuildTarget(
+            cclib,
+            cxxPlatform.getFlavor(),
+            CxxSourceRuleFactory.PicType.PDC);
     String sourceName = "cc/cc.cpp";
     BuildTarget ppObj =
         cxxSourceRuleFactory.createPreprocessBuildTarget(
@@ -384,12 +379,12 @@ public class OCamlIntegrationTest {
         CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
             cclib,
             cxxPlatform.getFlavor(),
-            CxxDescriptionEnhancer.HeaderVisibility.PRIVATE);
+            HeaderVisibility.PRIVATE);
     BuildTarget exportedHeaderSymlinkTreeTarget =
         CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
             cclib,
             cxxPlatform.getFlavor(),
-            CxxDescriptionEnhancer.HeaderVisibility.PUBLIC);
+            HeaderVisibility.PUBLIC);
 
     ImmutableSet<BuildTarget> targets = ImmutableSet.of(
         target,
@@ -419,17 +414,9 @@ public class OCamlIntegrationTest {
     workspace.resetBuildLogFile();
     workspace.runBuckCommand("build", target.toString()).assertSuccess();
     buildLog = workspace.getBuildLog();
-    assertTrue(buildLog.getAllTargets().containsAll(targets));
-
-    buildLog.assertTargetHadMatchingRuleKey(target.toString());
+    assertEquals(ImmutableSet.of(binary, target), buildLog.getAllTargets());
     buildLog.assertTargetHadMatchingRuleKey(binary.toString());
-    buildLog.assertTargetHadMatchingRuleKey(libplus.toString());
-    buildLog.assertTargetHadMatchingRuleKey(libplusStatic.toString());
-    buildLog.assertTargetHadMatchingRuleKey(cclibbin.toString());
-    buildLog.assertTargetHadMatchingRuleKey(ccObj.toString());
-    buildLog.assertTargetHadMatchingRuleKey(ppObj.toString());
-    buildLog.assertTargetHadMatchingRuleKey(headerSymlinkTreeTarget.toString());
-    buildLog.assertTargetHadMatchingRuleKey(exportedHeaderSymlinkTreeTarget.toString());
+    buildLog.assertTargetHadMatchingRuleKey(target.toString());
 
     workspace.resetBuildLogFile();
     workspace.replaceFileContents("clib/cc/cc.cpp", "Hi there", "hi there");

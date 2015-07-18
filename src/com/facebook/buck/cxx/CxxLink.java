@@ -17,25 +17,42 @@
 package com.facebook.buck.cxx;
 
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.RuleKeyAppendable;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.Tool;
+import com.facebook.buck.rules.keys.SupportsInputBasedRuleKey;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MkdirStep;
-import com.google.common.collect.ImmutableCollection;
+import com.google.common.base.Functions;
+import com.google.common.base.Optional;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 
 import java.nio.file.Path;
 
-public class CxxLink extends AbstractBuildRule {
+public class CxxLink
+    extends AbstractBuildRule
+    implements RuleKeyAppendable, SupportsInputBasedRuleKey {
 
+  @AddToRuleKey
   private final Tool linker;
+  @AddToRuleKey(stringify = true)
   private final Path output;
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey
   private final ImmutableList<SourcePath> inputs;
+  // We need to make sure we sanitize paths in the arguments, so add them to the rule key
+  // in `appendToRuleKey` where we can first filter the args through the sanitizer.
   private final ImmutableList<String> args;
+  private final ImmutableSet<Path> frameworkRoots;
+  private final DebugPathSanitizer sanitizer;
 
   public CxxLink(
       BuildRuleParams params,
@@ -43,41 +60,50 @@ public class CxxLink extends AbstractBuildRule {
       Tool linker,
       Path output,
       ImmutableList<SourcePath> inputs,
-      ImmutableList<String> args) {
+      ImmutableList<String> args,
+      ImmutableSet<Path> frameworkRoots,
+      DebugPathSanitizer sanitizer) {
     super(params, resolver);
     this.linker = linker;
     this.output = output;
     this.inputs = inputs;
     this.args = args;
+    this.frameworkRoots = frameworkRoots;
+    this.sanitizer = sanitizer;
   }
 
   @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return getResolver().filterInputsToCompareToOutput(inputs);
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
+  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
     return builder
-        .setReflectively("linker", linker)
-        .setReflectively("output", output.toString())
-        .setReflectively("args", args);
+        .setReflectively(
+            "args",
+            FluentIterable.from(args)
+                .transform(sanitizer.sanitize(Optional.<Path>absent(), /* expandPaths */ false))
+                .toList())
+        .setReflectively(
+            "frameworkRoots",
+            FluentIterable.from(frameworkRoots)
+                .transform(Functions.toStringFunction())
+                .transform(sanitizer.sanitize(Optional.<Path>absent(), /* expandPaths */ false))
+                .toList());
   }
 
   @Override
   public ImmutableList<Step> getBuildSteps(
-      BuildContext context, BuildableContext buildableContext) {
+      BuildContext context,
+      BuildableContext buildableContext) {
     buildableContext.recordArtifact(output);
     return ImmutableList.of(
         new MkdirStep(output.getParent()),
         new CxxLinkStep(
             linker.getCommandPrefix(getResolver()),
             output,
-            args));
+            args,
+            frameworkRoots));
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return output;
   }
 

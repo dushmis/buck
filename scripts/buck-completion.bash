@@ -185,10 +185,10 @@ function _buck_completion_try_targets() {
       --json
       --no-cache
       --num-threads
-      --referenced_file
-      --resolvealias
-      --show_output
-      --show_rulekey
+      --referenced-file
+      --resolve-alias
+      --show-output
+      --show-rulekey
       --type
       --verbose" \
     || _buck_completion_try_build_dependencies "$@" \
@@ -437,7 +437,7 @@ function _buck_completion_add_target_names() {
   if [[ -n "${BUCK_COMPLETION_HARDTARGETRESOLUTION-}" || -n "${BUCK_COMPLETION_USE_BUCK}" ]]; then
     target_names=( $(_buck_completion_buck_output audit rules "$buck_file" 2>/dev/null | sed -n -e "s/$pattern/\\1/ p") )
   else
-    target_names=( $(grep "$pattern" "$buck_file" | sed -n -e "s/$pattern/\\1/ p") )
+    target_names=( $(grep --color=none "$pattern" "$buck_file" | sed -n -e "s/$pattern/\\1/ p") )
   fi
 
   $log "target_names='${target_names[@]}'"

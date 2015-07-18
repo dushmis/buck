@@ -17,24 +17,26 @@
 package com.facebook.buck.ocaml;
 
 import com.facebook.buck.cxx.CxxPlatform;
-import com.facebook.buck.cxx.ImmutableNativeLinkableInput;
 import com.facebook.buck.cxx.Linker;
 import com.facebook.buck.cxx.NativeLinkableInput;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
+import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.google.common.base.Functions;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
 
@@ -42,11 +44,19 @@ import javax.annotation.Nullable;
 
 class PrebuiltOCamlLibrary extends AbstractBuildRule implements OCamlLibrary {
 
+  @AddToRuleKey
   private final String nativeLib;
+  @AddToRuleKey
   private final String bytecodeLib;
+  @AddToRuleKey
   private final SourcePath staticNativeLibraryPath;
+  @AddToRuleKey
   private final ImmutableList<SourcePath> staticCLibraryPaths;
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey
   private final SourcePath bytecodeLibraryPath;
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey(stringify = true)
   private final Path libPath;
   private final Path includeDir;
 
@@ -71,21 +81,6 @@ class PrebuiltOCamlLibrary extends AbstractBuildRule implements OCamlLibrary {
   }
 
   @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return getResolver().filterInputsToCompareToOutput(
-        Iterables.concat(
-            staticCLibraryPaths,
-            ImmutableList.of(staticNativeLibraryPath, bytecodeLibraryPath)));
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder.setReflectively("nativeLib", nativeLib)
-        .setReflectively("bytecodeLib", bytecodeLib)
-        .setReflectively("libPath", libPath.toString());
-  }
-
-  @Override
   public NativeLinkableInput getNativeLinkableInput(
       CxxPlatform cxxPlatform,
       Linker.LinkableDepType type) {
@@ -107,13 +102,11 @@ class PrebuiltOCamlLibrary extends AbstractBuildRule implements OCamlLibrary {
     ImmutableList.Builder<SourcePath> librariesBuilder = ImmutableList.builder();
     librariesBuilder.add(
         new BuildTargetSourcePath(
-            getProjectFilesystem(),
             getBuildTarget(),
             getResolver().getPath(staticNativeLibraryPath)));
     for (SourcePath staticCLibraryPath : staticCLibraryPaths) {
       librariesBuilder.add(
           new BuildTargetSourcePath(
-              getProjectFilesystem(),
               getBuildTarget(),
               getResolver().getPath(staticCLibraryPath)));
     }
@@ -126,9 +119,17 @@ class PrebuiltOCamlLibrary extends AbstractBuildRule implements OCamlLibrary {
             .transform(Functions.toStringFunction()));
     final ImmutableList<String> linkerArgs = linkerArgsBuilder.build();
 
-    return ImmutableNativeLinkableInput.of(
-        /* inputs */ libraries,
-        /* args */ linkerArgs);
+    return NativeLinkableInput.of(libraries, linkerArgs, ImmutableSet.<Path>of());
+  }
+
+  @Override
+  public Optional<Linker.LinkableDepType> getPreferredLinkage(CxxPlatform cxxPlatform) {
+    return Optional.absent();
+  }
+
+  @Override
+  public ImmutableMap<String, SourcePath> getSharedLibraries(CxxPlatform cxxPlatform) {
+    return ImmutableMap.of();
   }
 
   @Override
@@ -142,6 +143,24 @@ class PrebuiltOCamlLibrary extends AbstractBuildRule implements OCamlLibrary {
   }
 
   @Override
+  public ImmutableSortedSet<BuildRule> getCompileDeps() {
+    return ImmutableSortedSet.of();
+  }
+
+  @Override
+  public ImmutableSortedSet<BuildRule> getBytecodeCompileDeps() {
+    return ImmutableSortedSet.of();
+  }
+
+  @Override
+  public ImmutableSortedSet<BuildRule> getBytecodeLinkDeps() {
+    return ImmutableSortedSet.<BuildRule>naturalOrder()
+        .addAll(getResolver().filterBuildRuleInputs(ImmutableList.of(bytecodeLibraryPath)))
+        .addAll(getResolver().filterBuildRuleInputs(staticNativeLibraryPath))
+        .build();
+  }
+
+  @Override
   public ImmutableList<Step> getBuildSteps(
       BuildContext context, BuildableContext buildableContext) {
     return ImmutableList.of();
@@ -149,7 +168,7 @@ class PrebuiltOCamlLibrary extends AbstractBuildRule implements OCamlLibrary {
 
   @Nullable
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return null;
   }
 }

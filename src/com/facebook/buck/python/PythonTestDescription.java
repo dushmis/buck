@@ -17,6 +17,7 @@
 package com.facebook.buck.python;
 
 import com.facebook.buck.cxx.CxxPlatform;
+import com.facebook.buck.file.WriteFile;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
@@ -25,34 +26,25 @@ import com.facebook.buck.model.FlavorDomain;
 import com.facebook.buck.model.FlavorDomainException;
 import com.facebook.buck.model.HasSourceUnderTest;
 import com.facebook.buck.model.ImmutableFlavor;
-import com.facebook.buck.rules.AbstractBuildRule;
-import com.facebook.buck.rules.AddToRuleKey;
-import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.BuildTargetSourcePath;
-import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.Label;
 import com.facebook.buck.rules.PathSourcePath;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
-import com.facebook.buck.step.Step;
-import com.facebook.buck.step.fs.MkdirStep;
-import com.facebook.buck.step.fs.WriteFileStep;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
 import com.google.common.base.Suppliers;
-import com.google.common.collect.ImmutableCollection;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Sets;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -66,7 +58,8 @@ public class PythonTestDescription implements Description<PythonTestDescription.
   private final ProjectFilesystem projectFilesystem;
   private final Path pathToPex;
   private final Path pathToPexExecuter;
-  private final Optional<Path> pathToPythonTestMain;
+  private final String pexExtension;
+  private final Path pathToPythonTestMain;
   private final PythonEnvironment pythonEnvironment;
   private final CxxPlatform defaultCxxPlatform;
   private final FlavorDomain<CxxPlatform> cxxPlatforms;
@@ -75,13 +68,15 @@ public class PythonTestDescription implements Description<PythonTestDescription.
       ProjectFilesystem projectFilesystem,
       Path pathToPex,
       Path pathToPexExecuter,
-      Optional<Path> pathToPythonTestMain,
+      String pexExtension,
+      Path pathToPythonTestMain,
       PythonEnvironment pythonEnvironment,
       CxxPlatform defaultCxxPlatform,
       FlavorDomain<CxxPlatform> cxxPlatforms) {
     this.projectFilesystem = projectFilesystem;
     this.pathToPex = pathToPex;
     this.pathToPexExecuter = pathToPexExecuter;
+    this.pexExtension = pexExtension;
     this.pathToPythonTestMain = pathToPythonTestMain;
     this.pythonEnvironment = pythonEnvironment;
     this.defaultCxxPlatform = defaultCxxPlatform;
@@ -145,7 +140,6 @@ public class PythonTestDescription implements Description<PythonTestDescription.
 
     // Modify the build rule params to change the target, type, and remove all deps.
     BuildRuleParams newParams = params.copyWithChanges(
-        BuildRuleType.of("create_test_modules_list"),
         BuildTargets.createFlavoredBuildTarget(
             params.getBuildTarget().checkUnflavored(),
             ImmutableFlavor.of("test_module")),
@@ -154,49 +148,6 @@ public class PythonTestDescription implements Description<PythonTestDescription.
 
     String contents = getTestModulesListContents(testModules);
 
-    // TODO(simons): Consider moving to file package
-    class WriteFile extends AbstractBuildRule {
-      @AddToRuleKey
-      private final String fileContents;
-      @AddToRuleKey(stringify = true)
-      private final Path output;
-
-      public WriteFile(
-          BuildRuleParams buildRuleParams,
-          SourcePathResolver resolver,
-          String fileContents,
-          Path output) {
-        super(buildRuleParams, resolver);
-
-        this.fileContents = fileContents;
-        this.output = output;
-      }
-
-      @Override
-      protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-        return ImmutableList.of();
-      }
-
-      @Override
-      protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-        return builder;
-      }
-
-      @Override
-      public ImmutableList<Step> getBuildSteps(
-          BuildContext context, BuildableContext buildableContext) {
-        buildableContext.recordArtifact(output);
-        return ImmutableList.of(
-            new MkdirStep(output.getParent()),
-            new WriteFileStep(fileContents, output));
-      }
-
-      @Override
-      public Path getPathToOutputFile() {
-        return output;
-      }
-
-    }
     return new WriteFile(newParams, new SourcePathResolver(resolver), contents, outputPath);
   }
 
@@ -205,11 +156,6 @@ public class PythonTestDescription implements Description<PythonTestDescription.
       BuildRuleParams params,
       BuildRuleResolver resolver,
       A args) {
-
-    if (!pathToPythonTestMain.isPresent()) {
-      throw new HumanReadableException(
-          "Please configure python -> path_to_python_test_main in your .buckconfig");
-    }
 
     // Extract the platform from the flavor, falling back to the default platform if none are
     // found.
@@ -229,13 +175,15 @@ public class PythonTestDescription implements Description<PythonTestDescription.
         params.getBuildTarget(),
         pathResolver,
         "srcs",
-        baseModule, args.srcs);
+        baseModule,
+        args.srcs);
 
     ImmutableMap<Path, SourcePath> resources = PythonUtil.toModuleMap(
         params.getBuildTarget(),
         pathResolver,
         "resources",
-        baseModule, args.resources);
+        baseModule,
+        args.resources);
 
     // Convert the passed in module paths into test module names.
     ImmutableSet.Builder<String> testModulesBuilder = ImmutableSet.builder();
@@ -255,27 +203,26 @@ public class PythonTestDescription implements Description<PythonTestDescription.
     resolver.addToIndex(testModulesBuildRule);
 
     // Build up the list of everything going into the python test.
-    PythonPackageComponents testComponents = ImmutablePythonPackageComponents.of(
+    PythonPackageComponents testComponents = PythonPackageComponents.of(
         ImmutableMap
             .<Path, SourcePath>builder()
             .put(
                 getTestModulesListName(),
-                new BuildTargetSourcePath(
-                    testModulesBuildRule.getProjectFilesystem(),
-                    testModulesBuildRule.getBuildTarget()))
+                new BuildTargetSourcePath(testModulesBuildRule.getBuildTarget()))
             .put(
                 getTestMainName(),
-                new PathSourcePath(projectFilesystem, pathToPythonTestMain.get()))
+                new PathSourcePath(projectFilesystem, pathToPythonTestMain))
             .putAll(srcs)
             .build(),
         resources,
-        ImmutableMap.<Path, SourcePath>of());
+        ImmutableMap.<Path, SourcePath>of(),
+        ImmutableSet.<SourcePath>of(),
+        args.zipSafe);
     PythonPackageComponents allComponents =
         PythonUtil.getAllComponents(params, testComponents, cxxPlatform);
 
     // Build the PEX using a python binary rule with the minimum dependencies.
     BuildRuleParams binaryParams = params.copyWithChanges(
-        PythonBinaryDescription.TYPE,
         getBinaryBuildTarget(params.getBuildTarget()),
         Suppliers.ofInstance(PythonUtil.getDepsFromComponents(pathResolver, allComponents)),
         Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()));
@@ -284,6 +231,7 @@ public class PythonTestDescription implements Description<PythonTestDescription.
         pathResolver,
         pathToPex,
         pathToPexExecuter,
+        pexExtension,
         pythonEnvironment,
         PythonUtil.toModuleName(params.getBuildTarget(), getTestMainName().toString()),
         allComponents);
@@ -300,6 +248,7 @@ public class PythonTestDescription implements Description<PythonTestDescription.
             Suppliers.ofInstance(params.getExtraDeps())),
         pathResolver,
         binary,
+        ImmutableSortedSet.copyOf(Sets.difference(params.getDeps(), binaryParams.getDeps())),
         resolver.getAllRules(args.sourceUnderTest.or(ImmutableSortedSet.<BuildTarget>of())),
         args.labels.or(ImmutableSet.<Label>of()),
         args.contacts.or(ImmutableSet.<String>of()));

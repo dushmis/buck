@@ -10,12 +10,12 @@ java_test(
   ],
   deps = [
     '//src/com/facebook/buck/util/environment:environment',
+    '//src/com/facebook/buck/util/environment:env-filter',
     '//src/com/facebook/buck/util/environment:platform',
     '//src/com/facebook/buck/util:io',
     '//test/com/facebook/buck/util:testutil',
     '//third-party/java/guava:guava',
-    '//third-party/java/hamcrest:hamcrest-core',
-    '//third-party/java/hamcrest:hamcrest-library',
+    '//third-party/java/hamcrest:hamcrest',
     '//third-party/java/junit:junit',
   ],
 )

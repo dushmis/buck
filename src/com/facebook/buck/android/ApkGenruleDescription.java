@@ -17,7 +17,6 @@
 package com.facebook.buck.android;
 
 import com.facebook.buck.model.BuildTarget;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
@@ -29,6 +28,7 @@ import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.macros.ClasspathMacroExpander;
 import com.facebook.buck.rules.macros.ExecutableMacroExpander;
 import com.facebook.buck.rules.macros.LocationMacroExpander;
+import com.facebook.buck.rules.macros.MacroException;
 import com.facebook.buck.rules.macros.MacroExpander;
 import com.facebook.buck.rules.macros.MacroHandler;
 import com.facebook.buck.util.HumanReadableException;
@@ -43,13 +43,12 @@ public class ApkGenruleDescription implements Description<ApkGenruleDescription.
 
   public static final BuildRuleType TYPE = BuildRuleType.of("apk_genrule");
 
-  private static final BuildTargetParser BUILD_TARGET_PARSER = new BuildTargetParser();
   private static final MacroHandler MACRO_HANDLER =
       new MacroHandler(
           ImmutableMap.<String, MacroExpander>of(
-              "classpath", new ClasspathMacroExpander(BUILD_TARGET_PARSER),
-              "exe", new ExecutableMacroExpander(BUILD_TARGET_PARSER),
-              "location", new LocationMacroExpander(BUILD_TARGET_PARSER)));
+              "classpath", new ClasspathMacroExpander(),
+              "exe", new ExecutableMacroExpander(),
+              "location", new LocationMacroExpander()));
 
   @Override
   public BuildRuleType getBuildRuleType() {
@@ -84,7 +83,10 @@ public class ApkGenruleDescription implements Description<ApkGenruleDescription.
         .build();
 
     return new ApkGenrule(
-        params.copyWithExtraDeps(Suppliers.ofInstance(extraDeps)),
+        params
+            .copyWithExtraDeps(Suppliers.ofInstance(extraDeps))
+            // Attach any extra dependencies found from macro expansion.
+            .appendExtraDeps(findExtraDepsFromArgs(params.getBuildTarget(), resolver, args)),
         pathResolver,
         srcs,
         MACRO_HANDLER.getExpander(
@@ -96,6 +98,22 @@ public class ApkGenruleDescription implements Description<ApkGenruleDescription.
         args.cmdExe,
         params.getPathAbsolutifier(),
         (InstallableApk) installableApk);
+  }
+
+  private ImmutableList<BuildRule> findExtraDepsFromArgs(
+      BuildTarget target,
+      BuildRuleResolver resolver,
+      Arg arg) {
+    ImmutableList.Builder<BuildRule> deps = ImmutableList.builder();
+    try {
+      for (String val :
+            Optional.presentInstances(ImmutableList.of(arg.bash, arg.cmd, arg.cmdExe))) {
+        deps.addAll(MACRO_HANDLER.extractAdditionalBuildTimeDeps(target, resolver, val));
+      }
+    } catch (MacroException e) {
+      throw new HumanReadableException(e, "%s: %s", target, e.getMessage());
+    }
+    return deps.build();
   }
 
   @SuppressFieldNotInitialized

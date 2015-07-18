@@ -22,28 +22,13 @@ import com.google.common.base.CharMatcher;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 
+import java.io.File;
 import java.nio.file.Path;
+import java.util.Iterator;
 
 public final class Escaper {
 
-  private static final char POWER_SHELL_ESCAPE_CHAR = '`';
-  private static final String POWER_SHELL_SPECIAL_CHARS = "$`;\"'&<>(){}\\/| ";
-  public static final Function<String, String> POWER_SHELL_ESCAPER =
-      new Function<String, String>() {
-        @Override
-        public String apply(String input) {
-          return escapeAsPowerShellString(input);
-        }
-      };
-
   private static final char MAKEFILE_ESCAPE_CHAR = '\\';
-  public static final Function<String, String> MAKEFILE_VALUE_ESCAPER =
-      new Function<String, String>() {
-        @Override
-        public String apply(String input) {
-          return escapeAsMakefileValueString(input);
-        }
-      };
 
   /** Utility class: do not instantiate. */
   private Escaper() {}
@@ -140,14 +125,6 @@ public final class Escaper {
         }
       };
 
-  public static final Function<String, String> JAVA_ESCAPER =
-      new Function<String, String>() {
-        @Override
-        public String apply(String input) {
-          return escapeAsJavaString(input);
-        }
-      };
-
   /**
    * Platform-aware shell quoting {@link com.google.common.base.Function Function} which can be
    * passed to {@link com.google.common.collect.Iterables#transform Iterables.transform()}
@@ -155,6 +132,16 @@ public final class Escaper {
    */
   public static final Function<String, String> SHELL_ESCAPER =
       Platform.detect() == Platform.WINDOWS ? CREATE_PROCESS_ESCAPER : BASH_ESCAPER;
+
+  /**
+   * Quotes a string to be passed to the shell, if necessary.  This works for the appropriate shell
+   * regardless of the platform it is run on.
+   * @param str string to escape
+   * @return possibly escaped string
+   */
+  public static String escapeAsShellString(String str) {
+    return SHELL_ESCAPER.apply(str);
+  }
 
   /**
    * Quotes a string to be passed to Bash, if necessary. Uses single quotes to prevent variable
@@ -168,13 +155,6 @@ public final class Escaper {
 
   public static String escapeAsBashString(Path path) {
     return escapeAsBashString(path.toString());
-  }
-
-  public static String escapeAsXmlString(String str) {
-    return str.replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll("\\\"", "&quot;")
-        .replaceAll("\\\'", "&apos;");
   }
 
   // Adapted from org.apache.commons.lang.StringEscapeUtils
@@ -248,25 +228,6 @@ public final class Escaper {
     return builder.toString();
   }
 
-  public static String escapeAsJavaString(String str) {
-    // Until we start to find special cases where Java and Python differ, just use the same logic.
-    return escapeAsPythonString(str);
-  }
-
-  /**
-   * @return an escaped string ready to be passed to powershell.
-   */
-  public static String escapeAsPowerShellString(String str) {
-    StringBuilder builder = new StringBuilder();
-    for (char c : str.toCharArray()) {
-      if (POWER_SHELL_SPECIAL_CHARS.indexOf(c) != -1) {
-        builder.append(POWER_SHELL_ESCAPE_CHAR);
-      }
-      builder.append(c);
-    }
-    return builder.toString();
-  }
-
   private static boolean shouldEscapeMakefileString(
       String escapees,
       String blob,
@@ -305,6 +266,44 @@ public final class Escaper {
    */
   public static String escapeAsMakefileValueString(String str) {
     return escapeAsMakefileString("#", str);
+  }
+
+  /**
+   * Platform-aware Path escaping {@link com.google.common.base.Function Function} which can be
+   * passed to {@link com.google.common.collect.Iterables#transform Iterables.transform()}
+   */
+  public static final Function<Path, String> PATH_FOR_C_INCLUDE_STRING_ESCAPER =
+      new Function<Path, String>() {
+        @Override
+        public String apply(Path input) {
+          return escapePathForCIncludeString(input);
+        }
+      };
+
+  /**
+   * Escapes forward slashes in a Path as a String that is safe to consume with other tools (such
+   * as gcc).  On Unix systems, this is equivalent to {@link java.nio.file.Path Path.toString()}.
+   * @param path the Path to escape
+   * @return the escaped Path
+   */
+  public static String escapePathForCIncludeString(Path path) {
+    if (File.separatorChar != '\\') {
+      return path.toString();
+    }
+    StringBuilder result = new StringBuilder();
+    if (path.startsWith(File.separator)) {
+      result.append("\\\\");
+    }
+    for (Iterator<Path> iterator = path.iterator(); iterator.hasNext();) {
+      result.append(iterator.next());
+      if (iterator.hasNext()) {
+        result.append("\\\\");
+      }
+    }
+    if (path.getNameCount() > 0 && path.endsWith(File.separator)) {
+      result.append("\\\\");
+    }
+    return result.toString();
   }
 
   @VisibleForTesting

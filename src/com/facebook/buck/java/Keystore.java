@@ -17,13 +17,12 @@
 package com.facebook.buck.java;
 
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 
 import java.nio.file.Path;
@@ -32,10 +31,16 @@ import javax.annotation.Nullable;
 
 public class Keystore extends AbstractBuildRule {
 
+  @AddToRuleKey
   private final Path pathToStore;
+  @AddToRuleKey
   private final Path pathToProperties;
 
-  Keystore(BuildRuleParams params, SourcePathResolver resolver, Path store, Path properties) {
+  public Keystore(
+      BuildRuleParams params,
+      SourcePathResolver resolver,
+      Path store,
+      Path properties) {
     super(params, resolver);
     this.pathToStore = store;
     this.pathToProperties = properties;
@@ -43,18 +48,8 @@ public class Keystore extends AbstractBuildRule {
 
   @Nullable
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return null;
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableList.of(pathToStore, pathToProperties);
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
   }
 
   public Path getPathToStore() {

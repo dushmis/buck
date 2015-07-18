@@ -19,9 +19,9 @@ package com.facebook.buck.event.listener;
 import com.facebook.buck.test.TestCaseSummary;
 import com.facebook.buck.test.TestResultSummary;
 import com.facebook.buck.test.TestResults;
-import com.facebook.buck.test.result.type.ResultType;
 import com.facebook.buck.test.selectors.TestSelectorList;
 import com.facebook.buck.util.Ansi;
+import com.facebook.buck.util.Verbosity;
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ArrayListMultimap;
@@ -34,11 +34,18 @@ import java.util.List;
 public class TestResultFormatter {
 
   private final Ansi ansi;
-  private final boolean isTreatingAssumptionsAsErrors;
+  private final Verbosity verbosity;
 
-  public TestResultFormatter(Ansi ansi, boolean isTreatingAssumptionsAsErrors) {
-    this.isTreatingAssumptionsAsErrors = isTreatingAssumptionsAsErrors;
+  public enum FormatMode {
+      BEFORE_TEST_RUN,
+      AFTER_TEST_RUN
+  }
+
+  public TestResultFormatter(
+      Ansi ansi,
+      Verbosity verbosity) {
     this.ansi = ansi;
+    this.verbosity = verbosity;
   }
 
   public void runStarted(
@@ -46,28 +53,44 @@ public class TestResultFormatter {
       boolean isRunAllTests,
       TestSelectorList testSelectorList,
       boolean shouldExplainTestSelectorList,
-      ImmutableSet<String> targetNames) {
+      ImmutableSet<String> targetNames,
+      FormatMode formatMode) {
+    String prefix;
+    if (formatMode == FormatMode.BEFORE_TEST_RUN) {
+      prefix = "TESTING";
+    } else {
+      prefix = "RESULTS FOR";
+    }
     if (!testSelectorList.isEmpty()) {
-      addTo.add("TESTING SELECTED TESTS");
+      addTo.add(prefix + " SELECTED TESTS");
       if (shouldExplainTestSelectorList) {
         addTo.addAll(testSelectorList.getExplanation());
       }
     } else if (isRunAllTests) {
-      addTo.add("TESTING ALL TESTS");
+      addTo.add(prefix + " ALL TESTS");
     } else {
-      addTo.add("TESTING " + Joiner.on(' ').join(targetNames));
+      addTo.add(prefix + " " + Joiner.on(' ').join(targetNames));
     }
   }
 
   /** Writes a detailed summary that ends with a trailing newline. */
   public void reportResult(ImmutableList.Builder<String> addTo, TestResults results) {
+    if (
+        verbosity.shouldPrintBinaryRunInformation() &&
+            results.getTotalNumberOfTests() > 1) {
+      addTo.add("");
+      addTo.add(String.format(
+              "Results for %s (%d/%d) %s",
+              results.getBuildTarget().getFullyQualifiedName(),
+              results.getSequenceNumber(),
+              results.getTotalNumberOfTests(), verbosity));
+    }
     for (TestCaseSummary testCase : results.getTestCases()) {
       addTo.add(testCase.getOneLineSummary(results.getDependenciesPassTheirTests(), ansi));
 
-      // Don't print the full error if success and either (a) we aren't treating assumptions as
-      // errors, or (b) we *are*, and there were no assumption-violations...
-      if (testCase.isSuccess() &&
-          (!isTreatingAssumptionsAsErrors || !testCase.hasAssumptionViolations())) {
+      // Don't print the full error if there were no failures (so only successes and assumption
+      // violations)
+      if (testCase.isSuccess()) {
         continue;
       }
 
@@ -76,11 +99,8 @@ public class TestResultFormatter {
           continue;
         }
 
-        // Report on either (a) explicit failure or (b) assumption-violation, if we are treating
-        // assumptions as errors.
-        if (!testResult.isSuccess() || (
-            isTreatingAssumptionsAsErrors &&
-            testResult.getType().equals(ResultType.ASSUMPTION_VIOLATION))) {
+        // Report on either explicit failure
+        if (!testResult.isSuccess()) {
           reportResultSummary(addTo, testResult);
         }
       }
@@ -89,8 +109,9 @@ public class TestResultFormatter {
 
   public void reportResultSummary(ImmutableList.Builder<String> addTo,
                                   TestResultSummary testResult) {
-    addTo.add(String.format("%s %s: %s",
+    addTo.add(String.format("%s %s %s: %s",
         testResult.getType().toString(),
+        testResult.getTestCaseName(),
         testResult.getTestName(),
         testResult.getMessage()));
 
@@ -145,7 +166,8 @@ public class TestResultFormatter {
       }
     } else {
       addTo.add(ansi.asHighlightedFailureText(
-          String.format("TESTS FAILED: %d Failures", numFailures)));
+          String.format(
+              "TESTS FAILED: %d %s", numFailures, numFailures == 1 ? "FAILURE" : "FAILURES")));
       for (TestResults results : failingTests.keySet()) {
         addTo.add("Failed target: " + results.getBuildTarget().getFullyQualifiedName());
         for (TestCaseSummary summary : failingTests.get(results)) {

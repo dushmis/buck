@@ -44,6 +44,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
+import com.google.common.util.concurrent.ListeningExecutorService;
 
 import java.nio.file.Path;
 import java.util.EnumSet;
@@ -55,15 +56,18 @@ public class AndroidInstrumentationApkDescription
 
   private final ProGuardConfig proGuardConfig;
   private final JavacOptions javacOptions;
-  private final ImmutableMap<AndroidBinary.TargetCpuType, NdkCxxPlatform> nativePlatforms;
+  private final ImmutableMap<NdkCxxPlatforms.TargetCpuType, NdkCxxPlatform> nativePlatforms;
+  private final ListeningExecutorService dxExecutorService;
 
   public AndroidInstrumentationApkDescription(
       ProGuardConfig proGuardConfig,
       JavacOptions androidJavacOptions,
-      ImmutableMap<AndroidBinary.TargetCpuType, NdkCxxPlatform> nativePlatforms) {
+      ImmutableMap<NdkCxxPlatforms.TargetCpuType, NdkCxxPlatform> nativePlatforms,
+      ListeningExecutorService dxExecutorService) {
     this.proGuardConfig = proGuardConfig;
     this.javacOptions = androidJavacOptions;
     this.nativePlatforms = nativePlatforms;
+    this.dxExecutorService = dxExecutorService;
   }
 
   @Override
@@ -87,7 +91,7 @@ public class AndroidInstrumentationApkDescription
           "In %s, apk='%s' must be an android_binary() or apk_genrule() but was %s().",
           params.getBuildTarget(),
           installableApk.getFullyQualifiedName(),
-          installableApk.getType().getName());
+          installableApk.getType());
     }
     AndroidBinary apkUnderTest = getUnderlyingApk((InstallableApk) installableApk);
 
@@ -129,20 +133,24 @@ public class AndroidInstrumentationApkDescription
         apkUnderTest.getKeystore(),
         /* buildConfigValues */ BuildConfigFields.empty(),
         /* buildConfigValuesFile */ Optional.<SourcePath>absent(),
-        nativePlatforms);
+        /* xzCompressionLevel */ Optional.<Integer>absent(),
+        nativePlatforms,
+        dxExecutorService);
 
     AndroidGraphEnhancementResult enhancementResult =
         graphEnhancer.createAdditionalBuildables();
 
     return new AndroidInstrumentationApk(
-        params.copyWithExtraDeps(Suppliers.ofInstance(enhancementResult.getFinalDeps())),
+        params
+            .copyWithExtraDeps(Suppliers.ofInstance(enhancementResult.getFinalDeps()))
+            .appendExtraDeps(rulesToExcludeFromDex),
         new SourcePathResolver(resolver),
         proGuardConfig.getProguardJarOverride(),
         proGuardConfig.getProguardMaxHeapSize(),
-        args.manifest,
         apkUnderTest,
         rulesToExcludeFromDex,
-        enhancementResult);
+        enhancementResult,
+        dxExecutorService);
 
   }
 

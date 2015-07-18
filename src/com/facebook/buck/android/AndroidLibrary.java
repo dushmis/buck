@@ -21,6 +21,7 @@ import static com.facebook.buck.rules.BuildableProperties.Kind.LIBRARY;
 
 import com.facebook.buck.java.DefaultJavaLibrary;
 import com.facebook.buck.java.JavacOptions;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableProperties;
@@ -28,7 +29,6 @@ import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
@@ -44,6 +44,7 @@ public class AndroidLibrary extends DefaultJavaLibrary implements AndroidPackage
    * Manifest to associate with this rule. Ultimately, this will be used with the upcoming manifest
    * generation logic.
    */
+  @AddToRuleKey
   private final Optional<SourcePath> manifestFile;
 
   private final boolean isPrebuiltAar;
@@ -54,7 +55,7 @@ public class AndroidLibrary extends DefaultJavaLibrary implements AndroidPackage
       SourcePathResolver resolver,
       Set<? extends SourcePath> srcs,
       Set<? extends SourcePath> resources,
-      Optional<Path> proguardConfig,
+      Optional<SourcePath> proguardConfig,
       ImmutableList<String> postprocessClassesCommands,
       ImmutableSortedSet<BuildRule> exportedDeps,
       ImmutableSortedSet<BuildRule> providedDeps,
@@ -86,18 +87,6 @@ public class AndroidLibrary extends DefaultJavaLibrary implements AndroidPackage
 
   public Optional<SourcePath> getManifestFile() {
     return manifestFile;
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    if (manifestFile.isPresent()) {
-      return ImmutableList.<Path>builder()
-          .addAll(super.getInputsToCompareToOutput())
-          .addAll(getResolver().filterInputsToCompareToOutput(manifestFile.get()))
-          .build();
-    } else {
-      return super.getInputsToCompareToOutput();
-    }
   }
 
   /** @return whether this library was generated from an {@link AndroidPrebuiltAarDescription}. */

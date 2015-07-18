@@ -17,13 +17,13 @@
 package com.facebook.buck.android;
 
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 
@@ -43,11 +43,15 @@ import javax.annotation.Nullable;
  * )
  * </pre>
  */
+
 public class PrebuiltNativeLibrary extends AbstractBuildRule
     implements NativeLibraryBuildRule, AndroidPackageable {
 
+  @AddToRuleKey
   private final boolean isAsset;
   private final Path libraryPath;
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey
   private final ImmutableSortedSet<Path> librarySources;
 
   protected PrebuiltNativeLibrary(
@@ -73,19 +77,8 @@ public class PrebuiltNativeLibrary extends AbstractBuildRule
   }
 
   @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder
-        .setReflectively("is_asset", isAsset());
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return librarySources;
-  }
-
-  @Override
   @Nullable
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     // A prebuilt_native_library does not have a "primary output" at this time.
     return null;
   }
@@ -106,9 +99,13 @@ public class PrebuiltNativeLibrary extends AbstractBuildRule
   @Override
   public void addToCollector(AndroidPackageableCollector collector) {
     if (isAsset) {
-      collector.addNativeLibAssetsDirectory(getLibraryPath());
+      collector.addNativeLibAssetsDirectory(
+          getBuildTarget(),
+          new PathSourcePath(getProjectFilesystem(), getLibraryPath()));
     } else {
-      collector.addNativeLibsDirectory(getBuildTarget(), getLibraryPath());
+      collector.addNativeLibsDirectory(
+          getBuildTarget(),
+          new PathSourcePath(getProjectFilesystem(), getLibraryPath()));
     }
   }
 }

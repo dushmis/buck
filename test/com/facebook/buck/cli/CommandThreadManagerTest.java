@@ -16,6 +16,8 @@
 
 package com.facebook.buck.cli;
 
+import com.facebook.buck.util.concurrent.ConcurrencyLimit;
+
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -35,8 +37,10 @@ public class CommandThreadManagerTest {
     exception.expectMessage("Thread Test-0");
     exception.expectMessage(this.getClass().getName());
 
+    ConcurrencyLimit concurrencyLimit = new ConcurrencyLimit(1, Double.POSITIVE_INFINITY);
+
     try (CommandThreadManager pool =
-             new CommandThreadManager("Test", 1, 250, TimeUnit.MILLISECONDS)) {
+             new CommandThreadManager("Test", concurrencyLimit, 250, TimeUnit.MILLISECONDS)) {
       pool.getExecutor().submit(
           new Runnable() {
             @Override

@@ -42,6 +42,12 @@
 <!doctype html>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns#">
+<script>
+  var loc = new String(window.location);
+  if (loc.indexOf('facebook.github.io/buck') != -1) {lb}
+    window.location.replace(loc.replace('facebook.github.io/buck', 'buckbuild.com'));
+  {rb}
+</script>
   <title>{$fullTitle}</title>
   <link type="image/png" rel="shortcut icon" href="{ROOT}static/favicon.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no" />
@@ -55,17 +61,6 @@
   // List buck.css second to override prettify.
   <link type="text/css" rel="stylesheet" href="{ROOT}static/buck.css">
 
-// Google Analytics.
-<script>
-(function(i,s,o,g,r,a,m){lb}i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){lb}
-(i[r].q=i[r].q||[]).push(arguments){rb},i[r].l=1*new Date();a=s.createElement(o),
-m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
-{rb})(window,document,'script','//www.google-analytics.com/analytics.js','ga');
-
-ga('create', 'UA-40185670-1', 'github.io');
-ga('send', 'pageview');
-</script>
-
   // TODO(mbolin): Pass $og_type in as a parameter.
   {let $og_type}
     {if $ishome}
@@ -78,7 +73,7 @@ ga('send', 'pageview');
   <meta property="og:locale" content="en_US">
   <meta property="og:title" content="{$title}">
   <meta property="og:site_name" content="Buck: a build tool">
-  <meta property="og:image" content="http://facebook.github.io/buck/static/og.png">
+  <meta property="og:image" content="http://buckbuild.com/static/og.png">
   <meta property="og:type" content="{$og_type}">
   <meta property="og:description" content="{$description}">
   <meta property="fb:admins" content="{FB_APP_ID}">
@@ -95,12 +90,12 @@ ga('send', 'pageview');
   fjs.parentNode.insertBefore(js, fjs);
 {rb}(document, 'script', 'facebook-jssdk'));</script>
 
-	<header class='topbar'><nav class='width'>
-			<a href='http://facebook.github.io/buck/'><h1>Buck</h1></a>
+  <header class='topbar'><nav class='width'>
+      <a href='http://buckbuild.com/'><h1>Buck</h1></a>
       <ul class='menu'>
-        <li><a href='/buck/setup/quick_start.html'>Get Started</a>
+        <li><a href='{ROOT}setup/quick_start.html'>Get Started</a>
         <li><a href='https://groups.google.com/forum/#!forum/buck-build'>Group</a>
-        <li><a href='/buck/javadoc/'>API</a>
+        <li><a href='{ROOT}javadoc/'>API</a>
         <li><a href='https://github.com/facebook/buck'>GitHub</a>
       </ul>
 	</nav></header>
@@ -111,7 +106,7 @@ ga('send', 'pageview');
       <h1>
         A high-performance build tool
       </h1>
-      <a class='button' href='setup/quick_start.html'>Quick Start</a>&nbsp;
+      <a class='button' href='{ROOT}setup/quick_start.html'>Quick Start</a>&nbsp;
       <a class='button' href='https://github.com/facebook/buck'>GitHub</a>
     </hgroup>
     <aside>
@@ -134,10 +129,70 @@ ga('send', 'pageview');
 {/template}
 
 /**
+ * @param platform
+ * @param rules
+ */
+{template .platformBuildRuleLink}
+    <li><strong>{$platform}</strong></li>
+    {foreach $rule in $rules}
+        <li><a href="{ROOT}rule/{$rule}.html">{$rule}()</a>
+    {/foreach}
+{/template}
+
+/**
  * Consider passing in the path to the URL of the page that the user
  * is currently on and not hyperlinking that item in the table of contents.
  */
 {template .tableOfContents}
+    {let $platformRulesMap: [
+        'android': [
+            'android_aar',
+            'android_binary',
+            'android_build_config',
+            'android_instrumentation_apk',
+            'android_library',
+            'android_manifest',
+            'android_prebuilt_aar',
+            'android_resource',
+            'apk_genrule',
+            'cxx_library',
+            'gen_aidl',
+            'keystore',
+            'ndk_library',
+            'prebuilt_jar',
+            'prebuilt_native_library',
+            'project_config',
+        ],
+        'core': [
+            'genrule',
+            'remote_file',
+        ],
+        'cxx': [
+            'cxx_binary',
+            'cxx_library',
+            'cxx_test',
+            'prebuilt_native_library',
+        ],
+        'd': [
+            'd_binary',
+            'd_library',
+            'd_test',
+        ],
+        'java': [
+            'cxx_library',
+            'java_binary',
+            'java_library',
+            'java_test',
+            'prebuilt_jar',
+            'prebuilt_native_library',
+        ],
+        'python': [
+            'prebuilt_python_library',
+            'python_binary',
+            'python_library',
+            'python_test',
+        ],
+    ] /}
   <h3>Getting Started</h3>
   <ul>
     <li><a href="{ROOT}">Overview</a>
@@ -160,6 +215,7 @@ ga('send', 'pageview');
     <li><a href="{ROOT}concept/build_file.html">Build File</a>
     <li><a href="{ROOT}concept/buckversion.html">.buckversion</a>
     <li><a href="{ROOT}concept/nobuckcheck.html">.nobuckcheck</a>
+    <li><a href="{ROOT}concept/buckjavaargs.html">.buckjavaargs</a>
     <li><a href="{ROOT}concept/buckconfig.html">.buckconfig</a>
     <li><a href="{ROOT}concept/build_target_pattern.html">Build Target Pattern</a>
     <li><a href="{ROOT}concept/visibility.html">Visibility</a>
@@ -167,35 +223,32 @@ ga('send', 'pageview');
   </ul>
   <h3>Build Rules</h3>
   <ul>
-    // TODO(mbolin): document android_instrumentation_apk
-    // TODO(mbolin): document robolectric_test
-    {foreach $rule in [
-        'android_aar',
-        'android_binary',
-        'android_build_config',
-        'android_library',
-        'android_prebuilt_aar',
-        'android_resource',
-        'apk_genrule',
-        'cxx_binary',
-        'cxx_library',
-        'cxx_test',
-        'gen_aidl',
-        'genrule',
-        'java_binary',
-        'java_library',
-        'java_test',
-        'keystore',
-        'ndk_library',
-        'prebuilt_jar',
-        'prebuilt_native_library',
-        'project_config',
-        'python_binary',
-        'python_library',
-        'python_test',
-        ]}
-      <li><a href="{ROOT}rule/{$rule}.html">{$rule}()</a>
-    {/foreach}
+    // Ugh, closure doesn't have the concept of sorting, so we cannot control the order without
+    // listing it ourselves.
+    {call .platformBuildRuleLink}
+        {param platform: 'Core' /}
+        {param rules: $platformRulesMap['core'] /}
+    {/call}
+    {call .platformBuildRuleLink}
+        {param platform: 'Android' /}
+        {param rules: $platformRulesMap['android'] /}
+    {/call}
+    {call .platformBuildRuleLink}
+        {param platform: 'CXX' /}
+        {param rules: $platformRulesMap['cxx'] /}
+    {/call}
+    {call .platformBuildRuleLink}
+        {param platform: 'D' /}
+        {param rules: $platformRulesMap['d'] /}
+    {/call}
+    {call .platformBuildRuleLink}
+        {param platform: 'Java' /}
+        {param rules: $platformRulesMap['java'] /}
+    {/call}
+    {call .platformBuildRuleLink}
+        {param platform: 'Python' /}
+        {param rules: $platformRulesMap['python'] /}
+    {/call}
   </ul>
   <h3>Functions</h3>
   <ul>
@@ -209,13 +262,16 @@ ga('send', 'pageview');
   </ul>
   <h3>Commands</h3>
   <ul>
+    <li><a href="{ROOT}command/common_parameters.html">Common Parameters</a>
     {foreach $command in [
         'audit',
         'build',
         'clean',
+        'fetch',
         'install',
         'project',
         'quickstart',
+        'server',
         'targets',
         'test',
         'uninstall',
@@ -363,11 +419,12 @@ ga('send', 'pageview');
  * Used to format a parameter of a command.
  *
  * @param name Name of the parameter.
+ * @param? nodash If set, do not add "--" prefix to $name.
  * @param? alias The alias for this parameter.
  * @param desc Prose description of the parameter.
  */
 {template .param}
-  <li class="{css arg}"><code>--{$name}</code>
+  <li class="{css arg}"><code>{if not $nodash}--{/if}{$name}</code>
   {sp}
   {if $alias}
     <code>(-{$alias})</code>
@@ -423,6 +480,11 @@ ga('send', 'pageview');
 
 
 /***/
+{template .android_aar}
+{call .ruleLink}{param name : 'android_aar' /}{/call}
+{/template}
+
+/***/
 {template .android_binary}
 {call .ruleLink}{param name : 'android_binary' /}{/call}
 {/template}
@@ -438,6 +500,11 @@ ga('send', 'pageview');
 {/template}
 
 /***/
+{template .android_manifest}
+{call .ruleLink}{param name : 'android_manifest' /}{/call}
+{/template}
+
+/***/
 {template .android_prebuilt_aar}
 {call .ruleLink}{param name : 'android_prebuilt_aar' /}{/call}
 {/template}
@@ -445,6 +512,11 @@ ga('send', 'pageview');
 /***/
 {template .android_resource}
 {call .ruleLink}{param name : 'android_resource' /}{/call}
+{/template}
+
+/***/
+{template .apk_genrule}
+{call .ruleLink}{param name : 'apk_genrule' /}{/call}
 {/template}
 
 /***/
@@ -478,6 +550,11 @@ ga('send', 'pageview');
 {/template}
 
 /***/
+{template .prebuilt_python_library}
+{call .ruleLink}{param name : 'prebuilt_python_library' /}{/call}
+{/template}
+
+/***/
 {template .python_binary}
 {call .ruleLink}{param name : 'python_binary' /}{/call}
 {/template}
@@ -493,6 +570,16 @@ ga('send', 'pageview');
 {/template}
 
 /***/
+{template .remote_file}
+{call .ruleLink}{param name : 'remote_file' /}{/call}
+{/template}
+
+/***/
+{template .cxx_library}
+{call .ruleLink}{param name : 'cxx_library' /}{/call}
+{/template}
+
+/***/
 {template .fn_glob}
 <a href="{ROOT}function/glob.html"><code>glob()</code></a>
 {/template}
@@ -500,6 +587,19 @@ ga('send', 'pageview');
 /***/
 {template .string_parameter_macros}
 <a href="{ROOT}function/string_parameter_macros.html">string parameter macros</a>
+{/template}
+
+/**
+ * @param page
+ * @param name
+ */
+{template .concept_link}
+<a href="{ROOT}concept/{$page}.html">{$name}</a>
+{/template}
+
+/***/
+{template .build_target}
+{call .concept_link}{param page: 'build_target' /}{param name: 'build target' /}{/call}
 {/template}
 
 /**
@@ -517,6 +617,11 @@ ga('send', 'pageview');
 /***/
 {template .cmd_clean}
 {call .cmd_link}{param name : 'clean' /}{/call}
+{/template}
+
+/***/
+{template .cmd_fetch}
+{call .cmd_link}{param name : 'fetch' /}{/call}
 {/template}
 
 /***/

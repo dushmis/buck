@@ -18,7 +18,6 @@ package com.facebook.buck.android;
 
 import static org.junit.Assert.assertEquals;
 
-import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.BuildRule;
@@ -28,8 +27,6 @@ import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.FakeBuildRule;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.SourcePathResolver;
-import com.facebook.buck.shell.GenruleDescription;
-import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableSortedSet;
 
@@ -42,21 +39,17 @@ public class AndroidManifestDescriptionTest {
 
   @Test
   public void testGeneratedSkeletonAppearsInDeps() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver buildRuleResolver = new BuildRuleResolver();
 
     BuildRule ruleWithOutput = new FakeBuildRule(
-        GenruleDescription.TYPE,
         BuildTargetFactory.newInstance("//foo:bar"),
         new SourcePathResolver(buildRuleResolver)) {
       @Override
-      public Path getPathToOutputFile() {
+      public Path getPathToOutput() {
         return Paths.get("buck-out/gen/foo/bar/AndroidManifest.xml");
       }
     };
-    BuildTargetSourcePath skeleton = new BuildTargetSourcePath(
-        projectFilesystem,
-        ruleWithOutput.getBuildTarget());
+    BuildTargetSourcePath skeleton = new BuildTargetSourcePath(ruleWithOutput.getBuildTarget());
     buildRuleResolver.addToIndex(ruleWithOutput);
 
     AndroidManifestDescription.Arg arg = new AndroidManifestDescription.Arg();

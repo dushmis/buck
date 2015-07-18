@@ -18,14 +18,15 @@ package com.facebook.buck.java;
 
 import static org.junit.Assert.assertEquals;
 
-import com.facebook.buck.rules.NoopBuildRule;
+import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
+import com.facebook.buck.rules.NoopBuildRule;
 import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePathResolver;
-import com.facebook.buck.step.ExecutionContext;
-import com.facebook.buck.step.TestExecutionContext;
+import com.facebook.buck.rules.keys.DefaultRuleKeyBuilderFactory;
+import com.facebook.buck.rules.keys.RuleKeyBuilder;
 import com.facebook.buck.testutil.FakeFileHashCache;
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.google.common.base.Optional;
@@ -59,28 +60,23 @@ public class ExternalJavacTest extends EasyMockSupport {
 
   @Test
   public void testJavacCommand() {
-    ExecutionContext context = TestExecutionContext.newInstance();
-
     ExternalJavac firstOrder = createTestStep();
     ExternalJavac warn = createTestStep();
     ExternalJavac transitive = createTestStep();
 
     assertEquals("fakeJavac -source 6 -target 6 -g -d . -classpath foo.jar @" + PATH_TO_SRCS_LIST,
         firstOrder.getDescription(
-            context,
             getArgs().add("foo.jar").build(),
             SOURCE_PATHS,
             Optional.of(PATH_TO_SRCS_LIST)));
     assertEquals("fakeJavac -source 6 -target 6 -g -d . -classpath foo.jar @" + PATH_TO_SRCS_LIST,
         warn.getDescription(
-            context,
             getArgs().add("foo.jar").build(),
             SOURCE_PATHS,
             Optional.of(PATH_TO_SRCS_LIST)));
     assertEquals("fakeJavac -source 6 -target 6 -g -d . -classpath bar.jar" + File.pathSeparator +
         "foo.jar @" + PATH_TO_SRCS_LIST,
         transitive.getDescription(
-            context,
             getArgs().add("bar.jar" + File.pathSeparator + "foo.jar").build(),
             SOURCE_PATHS,
             Optional.of(PATH_TO_SRCS_LIST)));
@@ -96,20 +92,22 @@ public class ExternalJavacTest extends EasyMockSupport {
     FakeFileHashCache fileHashCache = new FakeFileHashCache(hashCodes);
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
     BuildRuleParams params = new FakeBuildRuleParamsBuilder("//example:target").build();
-    RuleKey.Builder builder = RuleKey.builder(
-        new NoopBuildRule(params, pathResolver),
-        pathResolver,
-        fileHashCache);
-    builder.setReflectively("key.javac", javac);
-    RuleKey.Builder.RuleKeyPair expected = builder.build();
+    BuildRule buildRule = new NoopBuildRule(params, pathResolver);
+    DefaultRuleKeyBuilderFactory fakeRuleKeyBuilderFactory =
+        new DefaultRuleKeyBuilderFactory(fileHashCache, pathResolver);
 
-    builder = RuleKey.builder(
-        new NoopBuildRule(params, pathResolver),
-        pathResolver,
-        fileHashCache);
+    RuleKey javacKey =
+        new RuleKeyBuilder(pathResolver, fileHashCache)
+            .setReflectively("javac", javac)
+            .build();
+    RuleKey.Builder builder = fakeRuleKeyBuilderFactory.newInstance(buildRule);
+    builder.setReflectively("key.appendableSubKey", javacKey);
+    RuleKey expected = builder.build();
+
+    builder = fakeRuleKeyBuilderFactory.newInstance(buildRule);
     ExternalJavac compiler = new ExternalJavac(javac, Optional.<JavacVersion>absent());
-    compiler.appendToRuleKey(builder, "key");
-    RuleKey.Builder.RuleKeyPair seen = builder.build();
+    builder.setReflectively("key", compiler);
+    RuleKey seen = builder.build();
 
     assertEquals(expected, seen);
   }
@@ -119,26 +117,28 @@ public class ExternalJavacTest extends EasyMockSupport {
       throws IOException {
     Path javac = Files.createTempFile("fake", "javac");
     javac.toFile().deleteOnExit();
-    JavacVersion javacVersion = ImmutableJavacVersion.of("mozzarella");
+    JavacVersion javacVersion = JavacVersion.of("mozzarella");
 
     Map<Path, HashCode> hashCodes = ImmutableMap.of(javac, Hashing.sha1().hashInt(42));
     FakeFileHashCache fileHashCache = new FakeFileHashCache(hashCodes);
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
     BuildRuleParams params = new FakeBuildRuleParamsBuilder("//example:target").build();
-    RuleKey.Builder builder = RuleKey.builder(
-        new NoopBuildRule(params, pathResolver),
-        pathResolver,
-        fileHashCache);
-    builder.setReflectively("key.javac.version", javacVersion.toString());
-    RuleKey.Builder.RuleKeyPair expected = builder.build();
+    BuildRule buildRule = new NoopBuildRule(params, pathResolver);
+    DefaultRuleKeyBuilderFactory fakeRuleKeyBuilderFactory =
+        new DefaultRuleKeyBuilderFactory(fileHashCache, pathResolver);
 
-    builder = RuleKey.builder(
-        new NoopBuildRule(params, pathResolver),
-        pathResolver,
-        fileHashCache);
+    RuleKey javacKey =
+        new RuleKeyBuilder(pathResolver, fileHashCache)
+            .setReflectively("javac.version", javacVersion.toString())
+            .build();
+    RuleKey.Builder builder = fakeRuleKeyBuilderFactory.newInstance(buildRule);
+    builder.setReflectively("key.appendableSubKey", javacKey);
+    RuleKey expected = builder.build();
+
+    builder = fakeRuleKeyBuilderFactory.newInstance(buildRule);
     ExternalJavac compiler = new ExternalJavac(javac, Optional.of(javacVersion));
-    compiler.appendToRuleKey(builder, "key");
-    RuleKey.Builder.RuleKeyPair seen = builder.build();
+    builder.setReflectively("key", compiler);
+    RuleKey seen = builder.build();
 
     assertEquals(expected, seen);
   }
@@ -155,7 +155,6 @@ public class ExternalJavacTest extends EasyMockSupport {
   private ExternalJavac createTestStep() {
     Path fakeJavac = Paths.get("fakeJavac");
     return new ExternalJavac(
-        fakeJavac, Optional.of((JavacVersion) ImmutableJavacVersion.of("unknown")));
+        fakeJavac, Optional.of(JavacVersion.of("unknown")));
   }
 }
-

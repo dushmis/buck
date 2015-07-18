@@ -35,7 +35,8 @@ public class JavaTestBuilder extends AbstractNodeBuilder<JavaTestDescription.Arg
     super(
         new JavaTestDescription(
             DEFAULT_JAVAC_OPTIONS,
-            /* testRuleTimeoutMs */ Optional.<Long>absent()),
+            /* testRuleTimeoutMs */ Optional.<Long>absent(),
+            null),
         target);
   }
 
@@ -45,6 +46,11 @@ public class JavaTestBuilder extends AbstractNodeBuilder<JavaTestDescription.Arg
 
   public JavaTestBuilder addDep(BuildTarget rule) {
     arg.deps = amend(arg.deps, rule);
+    return this;
+  }
+
+  public JavaTestBuilder addProvidedDep(BuildTarget rule) {
+    arg.providedDeps = amend(arg.providedDeps, rule);
     return this;
   }
 

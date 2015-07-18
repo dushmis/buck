@@ -7,9 +7,7 @@
       <excludeFolder url="file://$MODULE_DIR$/buck-cache" />
       <excludeFolder url="file://$MODULE_DIR$/buck-out/bin" />
       <excludeFolder url="file://$MODULE_DIR$/buck-out/log" />
-    </content>
-    <content url="file://$MODULE_DIR$/buck-out/android/gen">
-      <sourceFolder url="file://$MODULE_DIR$/buck-out/android/gen" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/buck-out/tmp" />
     </content>
     <orderEntry type="jdk" jdkName="1.7" jdkType="JavaSDK" />
   </component>

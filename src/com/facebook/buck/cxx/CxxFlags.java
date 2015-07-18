@@ -16,52 +16,49 @@
 
 package com.facebook.buck.cxx;
 
-import com.facebook.buck.model.Flavor;
-import com.facebook.buck.model.Pair;
+import com.facebook.buck.rules.coercer.PatternMatchedCollection;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.CacheLoader;
-import com.google.common.cache.LoadingCache;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.Iterables;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.Map;
 
 public class CxxFlags {
 
-  private static final LoadingCache<String, Pattern> patternCache =
-      CacheBuilder.newBuilder()
-      .build(
-          new CacheLoader<String, Pattern>() {
-            @Override
-            public Pattern load(String regex) throws Exception {
-              return Pattern.compile(regex);
-            }
-          });
-
   private CxxFlags() {}
+
+  public static Function<String, String> getTranslateMacrosFn(final CxxPlatform cxxPlatform) {
+    return new Function<String, String>() {
+      @Override
+      public String apply(String flag) {
+        // TODO(agallager): We're currently tied to `$VARIABLE` style of macros as much of the apple
+        // support relies on this.  Long-term though, we should make this consistent with the
+        // `$(macro ...)` style we use in the rest of the codebase.
+        for (Map.Entry<String, String> entry : cxxPlatform.getFlagMacros().entrySet()) {
+          flag = flag.replace("$" + entry.getKey(), entry.getValue());
+        }
+        return flag;
+      }
+    };
+  }
 
   public static ImmutableList<String> getFlags(
       Optional<ImmutableList<String>> flags,
-      Optional<ImmutableList<Pair<String, ImmutableList<String>>>> platformFlags,
-      Flavor platform) {
-    ImmutableList.Builder<String> flagsBuilder = ImmutableList.builder();
-
-    flagsBuilder.addAll(flags.or(ImmutableList.<String>of()));
-
-    for (Pair<String, ImmutableList<String>> pair :
-        platformFlags.or(ImmutableList.<Pair<String, ImmutableList<String>>>of())) {
-      Pattern pattern = patternCache.getUnchecked(pair.getFirst());
-      Matcher matcher = pattern.matcher(platform.toString());
-      if (matcher.find()) {
-        flagsBuilder.addAll(pair.getSecond());
-        break;
-      }
-    }
-
-    return flagsBuilder.build();
+      Optional<PatternMatchedCollection<ImmutableList<String>>> platformFlags,
+      CxxPlatform platform) {
+    return FluentIterable
+        .from(flags.or(ImmutableList.<String>of()))
+        .append(
+            Iterables.concat(
+                platformFlags
+                    .or(PatternMatchedCollection.<ImmutableList<String>>of())
+                    .getMatchingValues(platform.getFlavor().toString())))
+        .transform(getTranslateMacrosFn(platform))
+        .toList();
   }
 
   private static ImmutableMultimap<CxxSource.Type, String> toLanguageFlags(
@@ -78,9 +75,9 @@ public class CxxFlags {
 
   public static ImmutableMultimap<CxxSource.Type, String> getLanguageFlags(
       Optional<ImmutableList<String>> flags,
-      Optional<ImmutableList<Pair<String, ImmutableList<String>>>> platformFlags,
+      Optional<PatternMatchedCollection<ImmutableList<String>>> platformFlags,
       Optional<ImmutableMap<CxxSource.Type, ImmutableList<String>>> languageFlags,
-      Flavor platform) {
+      CxxPlatform platform) {
 
     ImmutableMultimap.Builder<CxxSource.Type, String> langFlags = ImmutableMultimap.builder();
 
@@ -88,7 +85,9 @@ public class CxxFlags {
 
     for (ImmutableMap.Entry<CxxSource.Type, ImmutableList<String>> entry :
          languageFlags.or(ImmutableMap.<CxxSource.Type, ImmutableList<String>>of()).entrySet()) {
-      langFlags.putAll(entry.getKey(), entry.getValue());
+      langFlags.putAll(
+          entry.getKey(),
+          Iterables.transform(entry.getValue(), getTranslateMacrosFn(platform)));
     }
 
     return langFlags.build();

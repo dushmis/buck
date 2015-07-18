@@ -18,14 +18,13 @@ package com.facebook.buck.shell;
 
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTargets;
-import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
-import com.facebook.buck.rules.BuildableContext;
+import com.facebook.buck.rules.HasRuntimeDeps;
 import com.facebook.buck.rules.Label;
-import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.NoopBuildRule;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TestRule;
@@ -41,40 +40,37 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Functions;
 import com.google.common.base.Optional;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.concurrent.Callable;
-
-import javax.annotation.Nullable;
 
 /**
  * Test whose correctness is determined by running a specified shell script. If running the shell
  * script returns a non-zero error code, the test is considered a failure.
  */
 @SuppressWarnings("PMD.TestClassWithoutTestCases")
-public class ShTest extends AbstractBuildRule implements TestRule {
+public class ShTest extends NoopBuildRule implements TestRule, HasRuntimeDeps {
 
   @AddToRuleKey
   private final SourcePath test;
+  @AddToRuleKey
+  private final ImmutableList<String> args;
   private final ImmutableSet<Label> labels;
 
   protected ShTest(
       BuildRuleParams params,
       SourcePathResolver resolver,
       SourcePath test,
+      ImmutableList<String> args,
       Set<Label> labels) {
     super(params, resolver);
     this.test = test;
+    this.args = args;
     this.labels = ImmutableSet.copyOf(labels);
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableSet.of();
   }
 
   @Override
@@ -93,20 +89,6 @@ public class ShTest extends AbstractBuildRule implements TestRule {
   }
 
   @Override
-  public ImmutableList<Step> getBuildSteps(
-      BuildContext context,
-      BuildableContext buildableContext) {
-    // Nothing to build: test is run directly.
-    return ImmutableList.of();
-  }
-
-  @Nullable
-  @Override
-  public Path getPathToOutputFile() {
-    return null;
-  }
-
-  @Override
   public boolean hasTestResultFiles(ExecutionContext executionContext) {
     // If result.json was not written, then the test needs to be run.
     ProjectFilesystem filesystem = executionContext.getProjectFilesystem();
@@ -119,7 +101,8 @@ public class ShTest extends AbstractBuildRule implements TestRule {
       ExecutionContext executionContext,
       boolean isDryRun,
       boolean isShufflingTests,
-      TestSelectorList testSelectorList) {
+      TestSelectorList testSelectorList,
+      TestRule.TestReportingCallback testReportingCallback) {
     if (isDryRun) {
       // Stop now if we are a dry-run: sh-tests have no concept of dry-run inside the test itself.
       return ImmutableList.of();
@@ -130,6 +113,7 @@ public class ShTest extends AbstractBuildRule implements TestRule {
     // Return a single command that runs an .sh file with no arguments.
     Step runTest = new RunShTestAndRecordResultStep(
         getResolver().getPath(test),
+        args,
         getPathToTestOutputResult());
 
     return ImmutableList.of(mkdirClean, runTest);
@@ -192,7 +176,19 @@ public class ShTest extends AbstractBuildRule implements TestRule {
   }
 
   @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
+  public boolean runTestSeparately() {
+    return false;
+  }
+
+  // A shell test has no real build dependencies.  Instead interpret the dependencies as runtime
+  // dependencies, as these are always components that the shell test needs available to run.
+  @Override
+  public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
+    return getDeps();
+  }
+
+  @Override
+  public boolean supportsStreamingTests() {
+    return false;
   }
 }

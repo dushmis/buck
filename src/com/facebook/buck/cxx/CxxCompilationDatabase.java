@@ -16,45 +16,29 @@
 
 package com.facebook.buck.cxx;
 
-import com.facebook.buck.graph.AbstractAcyclicDepthFirstPostOrderTraversal;
-import com.facebook.buck.graph.AbstractAcyclicDepthFirstPostOrderTraversal.CycleException;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.ImmutableFlavor;
-import com.facebook.buck.model.UnflavoredBuildTarget;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
-import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
-import com.facebook.buck.rules.TargetGraph;
-import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.step.AbstractExecutionStep;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MkdirStep;
-import com.facebook.buck.util.Escaper;
 import com.facebook.buck.util.HumanReadableException;
-import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Joiner;
-import com.google.common.base.MoreObjects;
-import com.google.common.base.Objects;
 import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Suppliers;
-import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.gson.Gson;
@@ -62,65 +46,66 @@ import com.google.gson.Gson;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Path;
-import java.util.Iterator;
 import java.util.List;
-
-import javax.annotation.Nullable;
+import java.util.Set;
 
 public class CxxCompilationDatabase extends AbstractBuildRule {
   public static final Flavor COMPILATION_DATABASE = ImmutableFlavor.of("compilation-database");
 
-  private final CxxSourceRuleFactory.Strategy compileStrategy;
+  private final CxxPreprocessMode preprocessMode;
   private final ImmutableSortedSet<CxxPreprocessAndCompile> compileRules;
   private final Path outputJsonFile;
 
   public static CxxCompilationDatabase createCompilationDatabase(
       BuildRuleParams params,
-      BuildRuleResolver buildRuleResolver,
       SourcePathResolver pathResolver,
-      CxxSourceRuleFactory.Strategy compileStrategy) {
-    CompilationDatabaseTraversal traversal = new CompilationDatabaseTraversal(
-        params.getTargetGraph(),
-        buildRuleResolver
-    );
-    try {
-      traversal.traverse(
-          ImmutableList.<TargetNode<?>>of(
-              params.getTargetGraph().get(params.getBuildTarget())));
-    } catch (CycleException | IOException | InterruptedException e) {
-      throw new RuntimeException(e);
+      CxxPreprocessMode preprocessMode,
+      Iterable<CxxPreprocessAndCompile> compileAndPreprocessRules) {
+    ImmutableSortedSet.Builder<BuildRule> deps = ImmutableSortedSet.naturalOrder();
+    ImmutableSortedSet.Builder<CxxPreprocessAndCompile> compileRules = ImmutableSortedSet
+        .naturalOrder();
+    for (CxxPreprocessAndCompile compileRule : compileAndPreprocessRules) {
+      if (CxxSourceRuleFactory.isCompileFlavoredBuildTarget(compileRule.getBuildTarget())) {
+        compileRules.add(compileRule);
+        deps.addAll(compileRule.getDeps());
+      }
     }
 
     return new CxxCompilationDatabase(
         params.copyWithDeps(
-            Suppliers.ofInstance(traversal.deps.build()),
+            Suppliers.ofInstance(deps.build()),
             Suppliers.ofInstance(params.getExtraDeps())),
         pathResolver,
-        traversal.compileRules.build(),
-        compileStrategy);
+        compileRules.build(),
+        preprocessMode);
+  }
+
+  static BuildRuleParams paramsWithoutCompilationDatabaseFlavor(BuildRuleParams params) {
+    Set<Flavor> flavors = Sets.newHashSet(params.getBuildTarget().getFlavors());
+    Preconditions.checkArgument(flavors.contains(CxxCompilationDatabase.COMPILATION_DATABASE));
+    flavors.remove(CxxCompilationDatabase.COMPILATION_DATABASE);
+    BuildTarget target = BuildTarget
+        .builder(params.getBuildTarget().getUnflavoredBuildTarget())
+        .addAllFlavors(flavors)
+        .build();
+
+    return params.copyWithChanges(
+        target,
+        Suppliers.ofInstance(params.getDeclaredDeps()),
+        Suppliers.ofInstance(params.getExtraDeps()));
   }
 
   CxxCompilationDatabase(
       BuildRuleParams buildRuleParams,
       SourcePathResolver pathResolver,
       ImmutableSortedSet<CxxPreprocessAndCompile> compileRules,
-      CxxSourceRuleFactory.Strategy compileStrategy) {
+      CxxPreprocessMode preprocessMode) {
     super(buildRuleParams, pathResolver);
     this.compileRules = compileRules;
-    this.compileStrategy = compileStrategy;
+    this.preprocessMode = preprocessMode;
     this.outputJsonFile = BuildTargets.getGenPath(
         buildRuleParams.getBuildTarget(),
         "__%s.json");
-  }
-
-  @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableSet.<Path>of();
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
   }
 
   @Override
@@ -132,76 +117,9 @@ public class CxxCompilationDatabase extends AbstractBuildRule {
     return steps.build();
   }
 
-  @Nullable
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return outputJsonFile;
-  }
-
-  private static FluentIterable<TargetNode<?>>
-  filterCxxNativeTargetNodes(FluentIterable<TargetNode<?>> fluentIterable) {
-    return fluentIterable
-        .filter(
-            new Predicate<TargetNode<?>>() {
-              @Override
-              public boolean apply(TargetNode<?> input) {
-                return ImmutableSet
-                    .of(CxxLibraryDescription.TYPE, CxxBinaryDescription.TYPE)
-                    .contains(input.getType());
-              }
-            });
-  }
-
-  private static class CompilationDatabaseTraversal
-      extends AbstractAcyclicDepthFirstPostOrderTraversal<TargetNode<?>> {
-
-    private static final ImmutableSet<Flavor> HEADER_SYMLINK_FLAVORS = ImmutableSet.of(
-        CxxDescriptionEnhancer.HEADER_SYMLINK_TREE_FLAVOR,
-        CxxDescriptionEnhancer.EXPORTED_HEADER_SYMLINK_TREE_FLAVOR);
-    private final TargetGraph targetGraph;
-    private final ImmutableSortedSet.Builder<BuildRule> deps;
-    private final ImmutableSortedSet.Builder<CxxPreprocessAndCompile> compileRules;
-    private final BuildRuleResolver buildRuleResolver;
-
-    private CompilationDatabaseTraversal(
-        TargetGraph targetGraph,
-        BuildRuleResolver buildRuleResolver) {
-      this.targetGraph = targetGraph;
-      this.buildRuleResolver = buildRuleResolver;
-      this.deps = ImmutableSortedSet.naturalOrder();
-      this.compileRules = ImmutableSortedSet.naturalOrder();
-    }
-
-    @Override
-    protected Iterator<TargetNode<?>> findChildren(TargetNode<?> node) throws IOException,
-        InterruptedException {
-      return filterCxxNativeTargetNodes(
-          FluentIterable.from(node.getDeclaredDeps()).transform(targetGraph.get())).iterator();
-    }
-
-    @Override
-    protected void onNodeExplored(TargetNode<?> node) throws IOException, InterruptedException {
-      UnflavoredBuildTarget unflavoredTarget = node.getBuildTarget().getUnflavoredBuildTarget();
-      Iterator<BuildRule> allBuildRulesIterator = buildRuleResolver.getBuildRules().iterator();
-
-      while (allBuildRulesIterator.hasNext()) {
-        BuildRule buildRule = allBuildRulesIterator.next();
-        BuildTarget target = buildRule.getBuildTarget();
-        if (unflavoredTarget.equals(target.getUnflavoredBuildTarget())) {
-          if (CxxSourceRuleFactory.isCompileFlavoredBuildTarget(target)) {
-            compileRules.add((CxxPreprocessAndCompile) buildRule);
-          } else if (!Sets.intersection(HEADER_SYMLINK_FLAVORS, target.getFlavors()).isEmpty()) {
-            deps.add(buildRule);
-          }
-        }
-      }
-    }
-
-    @Override
-    protected void onTraversalComplete(Iterable<TargetNode<?>> nodesInExplorationOrder) {
-      // Nothing to do: work is done in onNodeExplored.
-    }
-
   }
 
   class GenerateCompilationCommandsJson extends AbstractExecutionStep {
@@ -212,17 +130,17 @@ public class CxxCompilationDatabase extends AbstractBuildRule {
 
     @Override
     public int execute(ExecutionContext context) {
-      Iterable<JsonSerializableDatabaseEntry> entries = createEntries(context);
+      Iterable<CxxCompilationDatabaseEntry> entries = createEntries(context);
       return writeOutput(entries, context);
     }
 
     @VisibleForTesting
-    Iterable<JsonSerializableDatabaseEntry> createEntries(ExecutionContext context) {
-      List<JsonSerializableDatabaseEntry> entries = Lists.newArrayList();
+    Iterable<CxxCompilationDatabaseEntry> createEntries(ExecutionContext context) {
+      List<CxxCompilationDatabaseEntry> entries = Lists.newArrayList();
       for (CxxPreprocessAndCompile compileRule : compileRules) {
         Optional<CxxPreprocessAndCompile> preprocessRule = Optional
             .<CxxPreprocessAndCompile>absent();
-        if (compileStrategy == CxxSourceRuleFactory.Strategy.SEPARATE_PREPROCESS_AND_COMPILE) {
+        if (preprocessMode == CxxPreprocessMode.SEPARATE) {
           for (BuildRule buildRule : compileRule.getDeclaredDeps()) {
             if (CxxSourceRuleFactory.isPreprocessFlavoredBuildTarget(buildRule.getBuildTarget())) {
               preprocessRule = Optional
@@ -239,7 +157,7 @@ public class CxxCompilationDatabase extends AbstractBuildRule {
       return entries;
     }
 
-    private JsonSerializableDatabaseEntry createEntry(
+    private CxxCompilationDatabaseEntry createEntry(
         ExecutionContext context,
         Optional<CxxPreprocessAndCompile> preprocessRule,
         CxxPreprocessAndCompile compileRule) {
@@ -249,26 +167,22 @@ public class CxxCompilationDatabase extends AbstractBuildRule {
       String fileToCompile = projectFilesystem
           .resolve(getResolver().getPath(inputSourcePath))
           .toString();
-      ImmutableList<String> commands = preprocessRule.isPresent() ?
+      ImmutableList<String> args = preprocessRule.isPresent() ?
           compileRule.getCompileCommandCombinedWithPreprocessBuildRule(preprocessRule.get()) :
           compileRule.getCommand();
-      String command = Joiner.on(' ').join(
-          Iterables.transform(
-              commands,
-              Escaper.SHELL_ESCAPER));
-      return new JsonSerializableDatabaseEntry(
+      return new CxxCompilationDatabaseEntry(
           /* directory */ projectFilesystem.resolve(getBuildTarget().getBasePath()).toString(),
           fileToCompile,
-          command);
+          args);
     }
 
     private int writeOutput(
-        Iterable<JsonSerializableDatabaseEntry> entries,
+        Iterable<CxxCompilationDatabaseEntry> entries,
         ExecutionContext context) {
       Gson gson = new Gson();
       try {
         OutputStream outputStream = context.getProjectFilesystem().newFileOutputStream(
-            getPathToOutputFile());
+            getPathToOutput());
         outputStream.write(gson.toJson(entries).getBytes());
         outputStream.close();
       } catch (IOException e) {
@@ -283,50 +197,8 @@ public class CxxCompilationDatabase extends AbstractBuildRule {
       context.logError(
           throwable,
           "Failed writing to %s in %s.",
-          getPathToOutputFile(),
+          getPathToOutput(),
           getBuildTarget());
-    }
-  }
-
-  @VisibleForTesting
-  @SuppressFieldNotInitialized
-  static class JsonSerializableDatabaseEntry {
-
-    public String directory;
-    public String file;
-    public String command;
-
-    public JsonSerializableDatabaseEntry(String directory, String file, String command) {
-      this.directory = directory;
-      this.file = file;
-      this.command = command;
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-      if (!(obj instanceof JsonSerializableDatabaseEntry)) {
-        return false;
-      }
-
-      JsonSerializableDatabaseEntry that = (JsonSerializableDatabaseEntry) obj;
-      return Objects.equal(this.directory, that.directory) &&
-          Objects.equal(this.file, that.file) &&
-          Objects.equal(this.command, that.command);
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hashCode(directory, file, command);
-    }
-
-    // Useful if CompilationDatabaseTest fails when comparing JsonSerializableDatabaseEntry objects.
-    @Override
-    public String toString() {
-      return MoreObjects.toStringHelper(this)
-          .add("directory", directory)
-          .add("file", file)
-          .add("command", command)
-          .toString();
     }
   }
 }

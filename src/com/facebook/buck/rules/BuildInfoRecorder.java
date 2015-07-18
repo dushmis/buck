@@ -18,33 +18,41 @@ package com.facebook.buck.rules;
 
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.ConsoleEvent;
-import com.facebook.buck.io.DefaultDirectoryTraverser;
-import com.facebook.buck.io.DirectoryTraversal;
-import com.facebook.buck.io.DirectoryTraverser;
 import com.facebook.buck.io.MoreFiles;
+import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildId;
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.model.Pair;
 import com.facebook.buck.timing.Clock;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Charsets;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.common.hash.Funnels;
+import com.google.common.hash.HashCode;
+import com.google.common.hash.HashFunction;
+import com.google.common.hash.Hasher;
+import com.google.common.io.ByteStreams;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonPrimitive;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.List;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -63,9 +71,6 @@ public class BuildInfoRecorder {
   static final String ABSOLUTE_PATH_ERROR_FORMAT =
       "Error! '%s' is trying to record artifacts with absolute path: '%s'.";
 
-  private static final DirectoryTraverser DEFAULT_DIRECTORY_TRAVERSER =
-      new DefaultDirectoryTraverser();
-  private static final Path PATH_TO_ARTIFACT_INFO = Paths.get("buck-out/log/cache_artifact.txt");
   private static final String BUCK_CACHE_DATA_ENV_VAR = "BUCK_CACHE_DATA";
 
   private final BuildTarget buildTarget;
@@ -73,44 +78,20 @@ public class BuildInfoRecorder {
   private final ProjectFilesystem projectFilesystem;
   private final Clock clock;
   private final BuildId buildId;
-  private final String artifactExtraData;
+  private final ImmutableMap<String, String> artifactExtraData;
   private final Map<String, String> metadataToWrite;
-  private final RuleKey ruleKey;
+  private final Map<String, String> buildMetadata;
 
   /**
    * Every value in this set is a path relative to the project root.
    */
-  private final Set<Path> pathsToOutputFiles;
-
-  private final Set<Path> pathsToOutputDirectories;
-  private final DirectoryTraverser directoryTraverser;
+  private final Set<Path> pathsToOutputs;
 
   BuildInfoRecorder(BuildTarget buildTarget,
       ProjectFilesystem projectFilesystem,
       Clock clock,
       BuildId buildId,
-      ImmutableMap<String, String> environment,
-      RuleKey ruleKey,
-      RuleKey rukeKeyWithoutDeps) {
-    this(
-        buildTarget,
-        projectFilesystem,
-        clock,
-        buildId,
-        environment,
-        ruleKey,
-        rukeKeyWithoutDeps,
-        DEFAULT_DIRECTORY_TRAVERSER);
-  }
-
-  BuildInfoRecorder(BuildTarget buildTarget,
-      ProjectFilesystem projectFilesystem,
-      Clock clock,
-      BuildId buildId,
-      ImmutableMap<String, String> environment,
-      RuleKey ruleKey,
-      RuleKey rukeKeyWithoutDeps,
-      DirectoryTraverser directoryTraverser) {
+      ImmutableMap<String, String> environment) {
     this.buildTarget = buildTarget;
     this.pathToMetadataDirectory = BuildInfo.getPathToMetadataDirectory(buildTarget);
     this.projectFilesystem = projectFilesystem;
@@ -118,18 +99,43 @@ public class BuildInfoRecorder {
     this.buildId = buildId;
 
     this.artifactExtraData =
-        String.format("artifact_data=%s", environment.get(BUCK_CACHE_DATA_ENV_VAR));
+        ImmutableMap.<String, String>builder()
+            .put(
+                "artifact_data",
+                Optional.fromNullable(environment.get(BUCK_CACHE_DATA_ENV_VAR)).or("null"))
+            .build();
 
-    this.metadataToWrite = Maps.newHashMap();
+    this.metadataToWrite = Maps.newLinkedHashMap();
+    this.buildMetadata = Maps.newLinkedHashMap();
+    this.pathsToOutputs = Sets.newHashSet();
+  }
 
-    metadataToWrite.put(BuildInfo.METADATA_KEY_FOR_RULE_KEY,
-        ruleKey.toString());
-    metadataToWrite.put(BuildInfo.METADATA_KEY_FOR_RULE_KEY_WITHOUT_DEPS,
-        rukeKeyWithoutDeps.toString());
-    this.ruleKey = ruleKey;
-    this.pathsToOutputFiles = Sets.newHashSet();
-    this.pathsToOutputDirectories = Sets.newHashSet();
-    this.directoryTraverser = directoryTraverser;
+  private String formatAdditionalArtifactInfo(Map<String, String> entries) {
+    StringBuilder builder = new StringBuilder();
+    for (Map.Entry<String, String> entry : entries.entrySet()) {
+      builder.append(entry.getKey());
+      builder.append('=');
+      builder.append(entry.getValue());
+      builder.append('\n');
+    }
+    return builder.toString();
+  }
+
+  private ImmutableMap<String, String> getBuildMetadata() {
+    return ImmutableMap.<String, String>builder()
+        .put(
+            BuildInfo.METADATA_KEY_FOR_ADDITIONAL_INFO,
+            formatAdditionalArtifactInfo(
+                ImmutableMap.<String, String>builder()
+                    .put("build_id", buildId.toString())
+                    .put(
+                        "timestamp",
+                        String.valueOf(
+                            TimeUnit.MILLISECONDS.toSeconds(clock.currentTimeMillis())))
+                    .putAll(artifactExtraData)
+                    .build()))
+        .putAll(buildMetadata)
+        .build();
   }
 
   /**
@@ -138,15 +144,33 @@ public class BuildInfoRecorder {
    */
   public void writeMetadataToDisk(boolean clearExistingMetadata) throws IOException {
     if (clearExistingMetadata) {
-      projectFilesystem.rmdir(pathToMetadataDirectory);
+      projectFilesystem.deleteRecursivelyIfExists(pathToMetadataDirectory);
     }
     projectFilesystem.mkdirs(pathToMetadataDirectory);
 
-    for (Map.Entry<String, String> entry : metadataToWrite.entrySet()) {
+    for (Map.Entry<String, String> entry :
+         Iterables.concat(metadataToWrite.entrySet(), getBuildMetadata().entrySet())) {
       projectFilesystem.writeContentsToPath(
           entry.getValue(),
           pathToMetadataDirectory.resolve(entry.getKey()));
     }
+  }
+
+  /**
+   * Used by the build engine to record metadata describing the build (e.g. rule key, build UUID).
+   */
+  public BuildInfoRecorder addBuildMetadata(String key, String value) {
+    buildMetadata.put(key, value);
+    return this;
+  }
+
+  public BuildInfoRecorder addBuildMetadata(String key, Iterable<String> value) {
+    JsonArray values = new JsonArray();
+    for (String str : value) {
+      values.add(new JsonPrimitive(str));
+    }
+    addBuildMetadata(key, values.toString());
+    return this;
   }
 
   /**
@@ -164,55 +188,92 @@ public class BuildInfoRecorder {
     addMetadata(key, values.toString());
   }
 
+  private ImmutableSet<Path> getRecordedPaths() throws IOException {
+    final ImmutableSet.Builder<Path> paths = ImmutableSortedSet.naturalOrder();
+
+    // Add metadata files.
+    paths.addAll(
+        FluentIterable.from(metadataToWrite.keySet())
+            .transform(MorePaths.TO_PATH)
+            .transform(
+                new Function<Path, Path>() {
+                  @Override
+                  public Path apply(Path input) {
+                    return pathToMetadataDirectory.resolve(input);
+                  }
+                }));
+
+    // Add files from output directories.
+    for (final Path output : pathsToOutputs) {
+      projectFilesystem.walkRelativeFileTree(
+          output,
+          new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(
+                Path file,
+                BasicFileAttributes attrs)
+                throws IOException {
+              paths.add(file);
+              return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult preVisitDirectory(
+                Path dir,
+                BasicFileAttributes attrs)
+                throws IOException {
+              paths.add(dir);
+              return FileVisitResult.CONTINUE;
+            }
+          });
+    }
+
+    return paths.build();
+  }
+
+  public Pair<Long, HashCode> getOutputSizeAndHash(HashFunction hashFunction) throws IOException {
+    long size = 0;
+    Hasher hasher = hashFunction.newHasher();
+    for (Path path : getRecordedPaths()) {
+      if (projectFilesystem.isFile(path)) {
+        size += projectFilesystem.getFileSize(path);
+        hasher.putString(path.toString(), Charsets.UTF_8);
+        try (InputStream input = projectFilesystem.newFileInputStream(path)) {
+          ByteStreams.copy(input, Funnels.asOutputStream(hasher));
+        }
+      }
+    }
+    return new Pair<>(size, hasher.hash());
+  }
+
   /**
    * Creates a zip file of the metadata and recorded artifacts and stores it in the artifact cache.
    */
-  public void performUploadToArtifactCache(ArtifactCache artifactCache, BuckEventBus eventBus)
+  public void performUploadToArtifactCache(
+      ImmutableSet<RuleKey> ruleKeys,
+      ArtifactCache artifactCache,
+      BuckEventBus eventBus)
       throws InterruptedException {
+
     // Skip all of this if caching is disabled. Although artifactCache.store() will be a noop,
     // building up the zip is wasted I/O.
     if (!artifactCache.isStoreSupported()) {
       return;
     }
 
-    ImmutableSet.Builder<Path> pathsToIncludeInZipBuilder = ImmutableSet.<Path>builder()
-        .addAll(Iterables.transform(metadataToWrite.keySet(),
-            new Function<String, Path>() {
-              @Override
-              public Path apply(String key) {
-                return pathToMetadataDirectory.resolve(key);
-              }
-            }))
-        .addAll(pathsToOutputFiles);
-
-    try {
-      for (Path outputDirectory : pathsToOutputDirectories) {
-        pathsToIncludeInZipBuilder.addAll(getEntries(outputDirectory));
-      }
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
-
-    ImmutableSet<Path> pathsToIncludeInZip = pathsToIncludeInZipBuilder.build();
     eventBus.post(
         ArtifactCacheEvent.started(
             ArtifactCacheEvent.Operation.COMPRESS,
-            ruleKey));
+            ruleKeys));
+
     File zip;
+    ImmutableSet<Path> pathsToIncludeInZip = ImmutableSet.of();
     try {
+      pathsToIncludeInZip = getRecordedPaths();
       zip = File.createTempFile(
-          MoreFiles.sanitize(buildTarget.getFullyQualifiedName()),
+          "buck_artifact_" + MoreFiles.sanitize(buildTarget.getShortName()),
           ".zip");
-      long time = TimeUnit.MILLISECONDS.toSeconds(clock.currentTimeMillis());
-      String additionalArtifactInfo = String.format(
-          "build_id=%s\ntimestamp=%d\n%s\n",
-          buildId,
-          time,
-          artifactExtraData);
-      projectFilesystem.createZip(
-          pathsToIncludeInZip,
-          zip,
-          ImmutableMap.of(PATH_TO_ARTIFACT_INFO, additionalArtifactInfo));
+      projectFilesystem.createZip(pathsToIncludeInZip, zip, ImmutableMap.<Path, String>of());
     } catch (IOException e) {
       eventBus.post(ConsoleEvent.info("Failed to create zip for %s containing:\n%s",
           buildTarget,
@@ -223,34 +284,22 @@ public class BuildInfoRecorder {
       eventBus.post(
           ArtifactCacheEvent.finished(
               ArtifactCacheEvent.Operation.COMPRESS,
-              ruleKey));
+              ruleKeys));
     }
-    artifactCache.store(ruleKey, zip);
-    zip.delete();
-  }
 
-  private List<Path> getEntries(final Path outputDirectory) throws IOException {
-    final ImmutableList.Builder<Path> entries = ImmutableList.builder();
-    DirectoryTraversal traversal = new DirectoryTraversal(
-        projectFilesystem.getFileForRelativePath(outputDirectory)) {
-          @Override
-          public void visit(File file, String relativePath) throws IOException {
-            entries.add(outputDirectory.resolve(relativePath));
-          }
-          @Override
-          public void visitDirectory(File directory, String relativePath) throws IOException {
-            entries.add(outputDirectory.resolve(relativePath));
-          }
-    };
-    directoryTraverser.traverse(traversal);
-    return entries.build();
+    // Store the artifact, including any additional metadata.
+    artifactCache.store(ruleKeys, getBuildMetadata(), zip);
+    zip.delete();
   }
 
   /**
    * Fetches the artifact associated with the {@link #buildTarget} for this class and writes it to
    * the specified {@code outputFile}.
    */
-  public CacheResult fetchArtifactForBuildable(File outputFile, ArtifactCache artifactCache)
+  public CacheResult fetchArtifactForBuildable(
+      RuleKey ruleKey,
+      File outputFile,
+      ArtifactCache artifactCache)
       throws InterruptedException {
     return artifactCache.fetch(ruleKey, outputFile);
   }
@@ -264,16 +313,7 @@ public class BuildInfoRecorder {
         ABSOLUTE_PATH_ERROR_FORMAT,
         buildTarget,
         pathToArtifact);
-    pathsToOutputFiles.add(pathToArtifact);
-  }
-
-  public void recordArtifactsInDirectory(Path pathToArtifactsDirectory) {
-    Preconditions.checkArgument(
-        !pathToArtifactsDirectory.isAbsolute(),
-        ABSOLUTE_PATH_ERROR_FORMAT,
-        buildTarget,
-        pathToArtifactsDirectory);
-    pathsToOutputDirectories.add(pathToArtifactsDirectory);
+    pathsToOutputs.add(pathToArtifact);
   }
 
   @Nullable

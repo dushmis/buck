@@ -16,23 +16,26 @@
 
 package com.facebook.buck.android;
 
+import static com.facebook.buck.android.AndroidBinaryGraphEnhancer.PACKAGE_STRING_ASSETS_FLAVOR;
+
 import com.facebook.buck.android.AndroidBinary.ExopackageMode;
 import com.facebook.buck.android.AndroidBinary.PackageType;
-import com.facebook.buck.android.AndroidBinary.TargetCpuType;
 import com.facebook.buck.android.FilterResourcesStep.ResourceFilter;
+import com.facebook.buck.android.NdkCxxPlatforms.TargetCpuType;
 import com.facebook.buck.android.ResourcesFilter.ResourceCompressionMode;
 import com.facebook.buck.dalvik.ZipSplitter.DexSplitStrategy;
 import com.facebook.buck.java.JavaLibrary;
 import com.facebook.buck.java.JavacOptions;
 import com.facebook.buck.java.Keystore;
+import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.model.Flavor;
+import com.facebook.buck.model.Flavored;
 import com.facebook.buck.model.HasBuildTarget;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
-import com.facebook.buck.rules.BuildRules;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.Hint;
 import com.facebook.buck.rules.SourcePath;
@@ -52,6 +55,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.util.concurrent.ListeningExecutorService;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -59,9 +63,11 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class AndroidBinaryDescription implements Description<AndroidBinaryDescription.Arg> {
+public class AndroidBinaryDescription
+    implements Description<AndroidBinaryDescription.Arg>, Flavored {
 
   public static final BuildRuleType TYPE = BuildRuleType.of("android_binary");
+  private static final Logger LOG = Logger.get(AndroidBinaryDescription.class);
 
   /**
    * By default, assume we have 5MB of linear alloc,
@@ -69,26 +75,31 @@ public class AndroidBinaryDescription implements Description<AndroidBinaryDescri
    */
   private static final long DEFAULT_LINEAR_ALLOC_HARD_LIMIT = 4 * 1024 * 1024;
 
-  private static final BuildTargetParser BUILD_TARGET_PARSER = new BuildTargetParser();
   private static final MacroHandler MACRO_HANDLER =
       new MacroHandler(
           ImmutableMap.<String, MacroExpander>of(
-              "exe", new ExecutableMacroExpander(BUILD_TARGET_PARSER),
-              "location", new LocationMacroExpander(BUILD_TARGET_PARSER)));
+              "exe", new ExecutableMacroExpander(),
+              "location", new LocationMacroExpander()));
 
   private static final Pattern COUNTRY_LOCALE_PATTERN = Pattern.compile("([a-z]{2})-[A-Z]{2}");
+
+  private static final ImmutableSet<Flavor> FLAVORS = ImmutableSet.of(
+      PACKAGE_STRING_ASSETS_FLAVOR);
 
   private final JavacOptions javacOptions;
   private final ProGuardConfig proGuardConfig;
   private final ImmutableMap<TargetCpuType, NdkCxxPlatform> nativePlatforms;
+  private final ListeningExecutorService dxExecutorService;
 
   public AndroidBinaryDescription(
       JavacOptions javacOptions,
       ProGuardConfig proGuardConfig,
-      ImmutableMap<TargetCpuType, NdkCxxPlatform> nativePlatforms) {
+      ImmutableMap<TargetCpuType, NdkCxxPlatform> nativePlatforms,
+      ListeningExecutorService dxExecutorService) {
     this.javacOptions = javacOptions;
     this.proGuardConfig = proGuardConfig;
     this.nativePlatforms = nativePlatforms;
+    this.dxExecutorService = dxExecutorService;
   }
 
   @Override
@@ -102,17 +113,31 @@ public class AndroidBinaryDescription implements Description<AndroidBinaryDescri
   }
 
   @Override
-  public <A extends Arg> AndroidBinary createBuildRule(
-      final BuildRuleParams params,
-      final BuildRuleResolver resolver,
+  public <A extends Arg> BuildRule createBuildRule(
+      BuildRuleParams params,
+      BuildRuleResolver resolver,
       A args) {
+    ResourceCompressionMode compressionMode = getCompressionMode(args);
+
+    BuildTarget target = params.getBuildTarget();
+    boolean isFlavored = target.isFlavored();
+    if (isFlavored) {
+      if (target.getFlavors().contains(PACKAGE_STRING_ASSETS_FLAVOR) &&
+          !compressionMode.isStoreStringsAsAssets()) {
+        throw new HumanReadableException(
+            "'package_string_assets' flavor does not exist for %s.",
+            target.getUnflavoredBuildTarget());
+      }
+      params = params.copyWithBuildTarget(BuildTarget.of(target.getUnflavoredBuildTarget()));
+    }
+
     BuildRule keystore = resolver.getRule(args.keystore);
     if (!(keystore instanceof Keystore)) {
       throw new HumanReadableException(
           "In %s, keystore='%s' must be a keystore() but was %s().",
           params.getBuildTarget(),
           keystore.getFullyQualifiedName(),
-          keystore.getType().getName());
+          keystore.getType());
     }
 
     ProGuardObfuscateStep.SdkProguardType androidSdkProguardConfig =
@@ -139,24 +164,11 @@ public class AndroidBinaryDescription implements Description<AndroidBinaryDescri
 
     DexSplitMode dexSplitMode = createDexSplitMode(args, exopackageModes);
 
-    boolean allowNonExistentRule =
-          false;
-    ImmutableSortedSet<BuildRule> buildRulesToExcludeFromDex = BuildRules.toBuildRulesFor(
-        params.getBuildTarget(),
-        resolver,
-        args.noDx.or(ImmutableSet.<BuildTarget>of()),
-        allowNonExistentRule);
-    ImmutableSortedSet<JavaLibrary> rulesToExcludeFromDex =
-        FluentIterable.from(buildRulesToExcludeFromDex)
-            .filter(JavaLibrary.class)
-            .toSortedSet(HasBuildTarget.BUILD_TARGET_COMPARATOR);
-
     PackageType packageType = getPackageType(args);
     boolean shouldPreDex = !args.disablePreDex.or(false) &&
         PackageType.DEBUG.equals(packageType) &&
         !args.preprocessJavaClassesBash.isPresent();
 
-    ResourceCompressionMode compressionMode = getCompressionMode(args);
     ResourceFilter resourceFilter =
         new ResourceFilter(args.resourceFilter.or(ImmutableList.<String>of()));
 
@@ -181,16 +193,46 @@ public class AndroidBinaryDescription implements Description<AndroidBinaryDescri
         (Keystore) keystore,
         args.buildConfigValues.get(),
         args.buildConfigValuesFile,
-        nativePlatforms);
-    AndroidGraphEnhancementResult result =
-        graphEnhancer.createAdditionalBuildables();
+        Optional.<Integer>absent(),
+        nativePlatforms,
+        dxExecutorService);
+    AndroidGraphEnhancementResult result = graphEnhancer.createAdditionalBuildables();
 
+    if (target.getFlavors().contains(PACKAGE_STRING_ASSETS_FLAVOR)) {
+      Optional<PackageStringAssets> packageStringAssets = result.getPackageStringAssets();
+      Preconditions.checkState(packageStringAssets.isPresent());
+      return packageStringAssets.get();
+    }
+
+    // Build rules added to "no_dx" are only hints, not hard dependencies. Therefore, although a
+    // target may be mentioned in that parameter, it may not be present as a build rule.
+    ImmutableSortedSet.Builder<BuildRule> builder = ImmutableSortedSet.naturalOrder();
+    for (BuildTarget noDxTarget : args.noDx.or(ImmutableSet.<BuildTarget>of())) {
+      Optional<BuildRule> ruleOptional = resolver.getRuleOptional(noDxTarget);
+      if (ruleOptional.isPresent()) {
+        builder.add(ruleOptional.get());
+      } else {
+        LOG.info("%s: no_dx target not a dependency: %s", target, noDxTarget);
+      }
+    }
+
+    ImmutableSortedSet<BuildRule> buildRulesToExcludeFromDex = builder.build();
+    ImmutableSortedSet<JavaLibrary> rulesToExcludeFromDex =
+        FluentIterable.from(buildRulesToExcludeFromDex)
+            .filter(JavaLibrary.class)
+            .toSortedSet(HasBuildTarget.BUILD_TARGET_COMPARATOR);
+
+    SourcePathResolver pathResolver = new SourcePathResolver(resolver);
     return new AndroidBinary(
-        params.copyWithExtraDeps(Suppliers.ofInstance(result.getFinalDeps())),
-        new SourcePathResolver(resolver),
+        params
+            .copyWithExtraDeps(Suppliers.ofInstance(result.getFinalDeps()))
+            .appendExtraDeps(
+                pathResolver.filterBuildRuleInputs(
+                    result.getPackageableCollection().getProguardConfigs()))
+            .appendExtraDeps(rulesToExcludeFromDex),
+        pathResolver,
         proGuardConfig.getProguardJarOverride(),
         proGuardConfig.getProguardMaxHeapSize(),
-        args.manifest,
         (Keystore) keystore,
         packageType,
         dexSplitMode,
@@ -202,8 +244,6 @@ public class AndroidBinaryDescription implements Description<AndroidBinaryDescri
         args.cpuFilters.get(),
         resourceFilter,
         exopackageModes,
-        resolver.getAllRules(
-            args.preprocessJavaClassesDeps.or(ImmutableSortedSet.<BuildTarget>of())),
         MACRO_HANDLER.getExpander(
             params.getBuildTarget(),
             resolver,
@@ -213,7 +253,9 @@ public class AndroidBinaryDescription implements Description<AndroidBinaryDescri
         result,
         args.reorderClassesIntraDex,
         args.dexReorderToolFile,
-        args.dexReorderDataDumpFile);
+        args.dexReorderDataDumpFile,
+        args.xzCompressionLevel,
+        dxExecutorService);
   }
 
   private DexSplitMode createDexSplitMode(Arg args, EnumSet<ExopackageMode> exopackageModes) {
@@ -264,12 +306,19 @@ public class AndroidBinaryDescription implements Description<AndroidBinaryDescri
     return allLocales.build();
   }
 
+  @Override
+  public boolean hasFlavors(ImmutableSet<Flavor> flavors) {
+    for (Flavor flavor : flavors) {
+      if (!FLAVORS.contains(flavor)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   @SuppressFieldNotInitialized
   public static class Arg {
     public SourcePath manifest;
-    // TODO(mbolin): Support for this field will be dropped as it is no longer used. Keeping it
-    // around is misleading. A deprecation warning should be printed if it is set.
-    public Optional<String> target;
     public BuildTarget keystore;
     public Optional<String> packageType;
     @Hint(isDep = false) public Optional<Set<BuildTarget>> noDx;
@@ -303,6 +352,7 @@ public class AndroidBinaryDescription implements Description<AndroidBinaryDescri
     public Optional<Boolean> reorderClassesIntraDex;
     public Optional<SourcePath> dexReorderToolFile;
     public Optional<SourcePath> dexReorderDataDumpFile;
+    public Optional<Integer> xzCompressionLevel;
 
     /** This will never be absent after this Arg is populated. */
     public Optional<BuildConfigFields> buildConfigValues;

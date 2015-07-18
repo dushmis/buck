@@ -20,14 +20,14 @@ import com.facebook.buck.java.AnnotationProcessingParams;
 import com.facebook.buck.java.JavacOptions;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.Flavor;
-import com.facebook.buck.model.ImmutableBuildTarget;
 import com.facebook.buck.model.ImmutableFlavor;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
-import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
@@ -40,7 +40,7 @@ public class AndroidLibraryGraphEnhancer {
     TRANSITIVE,
   }
 
-  private static final Flavor DUMMY_R_DOT_JAVA_FLAVOR = ImmutableFlavor.of("dummy_r_dot_java");
+  public static final Flavor DUMMY_R_DOT_JAVA_FLAVOR = ImmutableFlavor.of("dummy_r_dot_java");
 
   private final BuildTarget dummyRDotJavaBuildTarget;
   private final BuildRuleParams originalBuildRuleParams;
@@ -61,15 +61,25 @@ public class AndroidLibraryGraphEnhancer {
     this.resourceDependencyMode = resourceDependencyMode;
   }
 
-  public static ImmutableBuildTarget getDummyRDotJavaTarget(BuildTarget buildTarget) {
+  public static BuildTarget getDummyRDotJavaTarget(BuildTarget buildTarget) {
     return BuildTarget.builder(buildTarget)
         .addFlavors(DUMMY_R_DOT_JAVA_FLAVOR)
         .build();
   }
 
-  public Optional<DummyRDotJava> createBuildableForAndroidResources(
+  public Optional<DummyRDotJava> getBuildableForAndroidResources(
       BuildRuleResolver ruleResolver,
       boolean createBuildableIfEmptyDeps) {
+    Optional<BuildRule> previouslyCreated = ruleResolver.getRuleOptional(dummyRDotJavaBuildTarget);
+    if (previouslyCreated.isPresent()) {
+      return previouslyCreated.transform(
+          new Function<BuildRule, DummyRDotJava>() {
+            @Override
+            public DummyRDotJava apply(BuildRule input) {
+              return (DummyRDotJava) input;
+            }
+          });
+    }
     ImmutableSortedSet<BuildRule> originalDeps = originalBuildRuleParams.getDeps();
     ImmutableSet<HasAndroidResourceDeps> androidResourceDeps;
 
@@ -95,24 +105,25 @@ public class AndroidLibraryGraphEnhancer {
       return Optional.absent();
     }
 
-    // The androidResourceDeps may contain Buildables, but we need the actual BuildRules. Since this
-    // is going to be used to modify the build graph, we can't just wrap the buildables. Fortunately
-    // we know that the buildables come from the originalDeps.
+    SourcePathResolver pathResolver = new SourcePathResolver(ruleResolver);
+
     ImmutableSortedSet.Builder<BuildRule> actualDeps = ImmutableSortedSet.naturalOrder();
     for (HasAndroidResourceDeps dep : androidResourceDeps) {
-      // If this ever returns null, something has gone horrifically awry.
-      actualDeps.add(ruleResolver.getRule(dep.getBuildTarget()));
+      actualDeps.add(Preconditions.checkNotNull(ruleResolver.getRule(dep.getBuildTarget())));
     }
 
+    // Add dependencies from `SourcePaths` in `JavacOptions`.
+    actualDeps.addAll(pathResolver.filterBuildRuleInputs(
+            javacOptions.getInputs(pathResolver)));
+
     BuildRuleParams dummyRDotJavaParams = originalBuildRuleParams.copyWithChanges(
-        BuildRuleType.DUMMY_R_DOT_JAVA,
         dummyRDotJavaBuildTarget,
         Suppliers.ofInstance(actualDeps.build()),
         /* extraDeps */ Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()));
 
     DummyRDotJava dummyRDotJava = new DummyRDotJava(
         dummyRDotJavaParams,
-        new SourcePathResolver(ruleResolver),
+        pathResolver,
         androidResourceDeps,
         javacOptions);
     ruleResolver.addToIndex(dummyRDotJava);

@@ -33,7 +33,8 @@ public class RobolectricTestBuilder
     super(
         new RobolectricTestDescription(
             ANDROID_JAVAC_OPTIONS,
-            /* testRuleTimeoutMs */ Optional.<Long>absent()),
+            /* testRuleTimeoutMs */ Optional.<Long>absent(),
+            null),
         target);
   }
 
@@ -45,4 +46,15 @@ public class RobolectricTestBuilder
     arg.srcs = amend(arg.srcs, new PathSourcePath(new FakeProjectFilesystem(), path));
     return this;
   }
+
+  public RobolectricTestBuilder addDep(BuildTarget rule) {
+    arg.deps = amend(arg.deps, rule);
+    return this;
+  }
+
+  public RobolectricTestBuilder addProvidedDep(BuildTarget rule) {
+    arg.providedDeps = amend(arg.providedDeps, rule);
+    return this;
+  }
+
 }

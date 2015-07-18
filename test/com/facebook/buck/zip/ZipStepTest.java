@@ -24,25 +24,34 @@ import static org.junit.Assume.assumeTrue;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.TestExecutionContext;
+import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.testutil.Zip;
 import com.facebook.buck.util.environment.Platform;
 import com.google.common.base.Charsets;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.ByteStreams;
 import com.google.common.io.Files;
 
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipUtil;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Date;
 import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class ZipStepTest {
 
@@ -256,6 +265,121 @@ public class ZipStepTest {
       ZipArchiveEntry entry3 = entries.nextElement();
       assertArrayEquals(contents, ByteStreams.toByteArray(zip.getInputStream(entry3)));
     }
+  }
+
+  @Test
+  public void timesAreSanitized() throws IOException {
+    File parent = tmp.newFolder("zipstep");
+
+    // Create a zip file with a file and a directory.
+    File toZip = tmp.newFolder("zipdir");
+    assertTrue(new File(toZip, "child").mkdir());
+    Files.touch(new File(toZip, "child/file.txt"));
+    Path outputZip = parent.toPath().resolve("output.zip");
+    ZipStep step = new ZipStep(
+        outputZip,
+        ImmutableSet.<Path>of(),
+        false,
+        ZipStep.DEFAULT_COMPRESSION_LEVEL,
+        Paths.get("zipdir"));
+    assertEquals(0, step.execute(executionContext));
+
+    // Iterate over each of the entries, expecting to see all zeros in the time fields.
+    assertTrue(java.nio.file.Files.exists(outputZip));
+    Date dosEpoch = new Date(ZipUtil.dosToJavaTime(ZipConstants.DOS_EPOCH_START));
+    try (ZipInputStream is = new ZipInputStream(new FileInputStream(outputZip.toFile()))) {
+      for (ZipEntry entry = is.getNextEntry(); entry != null; entry = is.getNextEntry()) {
+        assertEquals(entry.getName(), dosEpoch, new Date(entry.getTime()));
+      }
+    }
+  }
+
+  @Test
+  public void zipMaintainsExecutablePermissions() throws IOException {
+    assumeTrue(Platform.detect() != Platform.WINDOWS);
+
+    Path parent = tmp.newFolder("zipstep").toPath();
+    Path toZip = tmp.newFolder("zipdir").toPath();
+    Path file = toZip.resolve("foo.sh");
+    ImmutableSet<PosixFilePermission> filePermissions =
+        ImmutableSet.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OWNER_EXECUTE,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.OTHERS_READ);
+    java.nio.file.Files.createFile(
+        file,
+        PosixFilePermissions.asFileAttribute(filePermissions));
+    Path outputZip = parent.resolve("output.zip");
+    ZipStep step = new ZipStep(
+        outputZip,
+        ImmutableSet.<Path>of(),
+        false,
+        ZipStep.MIN_COMPRESSION_LEVEL,
+        Paths.get("zipdir"));
+    assertEquals(0, step.execute(executionContext));
+
+    Path destination = tmp.newFolder("output").toPath();
+    Unzip.extractZipFile(outputZip, destination, Unzip.ExistingFileMode.OVERWRITE);
+    assertTrue(java.nio.file.Files.isExecutable(destination.resolve("foo.sh")));
+  }
+
+  @Test
+  public void zipEntryOrderingIsFilesystemAgnostic() throws IOException {
+    Path output = Paths.get("output");
+    Path zipdir = Paths.get("zipdir");
+
+    // Run the zip step on a filesystem with a particular ordering.
+    FakeProjectFilesystem filesystem = new FakeProjectFilesystem();
+    ExecutionContext context =
+        TestExecutionContext.newBuilder()
+            .setProjectFilesystem(filesystem)
+            .build();
+    filesystem.mkdirs(zipdir);
+    filesystem.touch(zipdir.resolve("file1"));
+    filesystem.touch(zipdir.resolve("file2"));
+    ZipStep step =
+        new ZipStep(
+            output,
+            ImmutableSet.<Path>of(),
+            false,
+            ZipStep.MIN_COMPRESSION_LEVEL,
+            zipdir);
+    assertEquals(0, step.execute(context));
+    ImmutableList<String> entries1 = getEntries(filesystem, output);
+
+    // Run the zip step on a filesystem with a different ordering.
+    filesystem = new FakeProjectFilesystem();
+    context =
+        TestExecutionContext.newBuilder()
+            .setProjectFilesystem(filesystem)
+            .build();
+    filesystem.mkdirs(zipdir);
+    filesystem.touch(zipdir.resolve("file2"));
+    filesystem.touch(zipdir.resolve("file1"));
+    step =
+        new ZipStep(
+            output,
+            ImmutableSet.<Path>of(),
+            false,
+            ZipStep.MIN_COMPRESSION_LEVEL,
+            zipdir);
+    assertEquals(0, step.execute(context));
+    ImmutableList<String> entries2 = getEntries(filesystem, output);
+
+    assertEquals(entries1, entries2);
+  }
+
+  private ImmutableList<String> getEntries(ProjectFilesystem filesystem, Path zip)
+      throws IOException {
+    ImmutableList.Builder<String> entries = ImmutableList.builder();
+    try (ZipInputStream is = new ZipInputStream(filesystem.newFileInputStream(zip))) {
+      for (ZipEntry entry = is.getNextEntry(); entry != null; entry = is.getNextEntry()) {
+        entries.add(entry.getName());
+      }
+    }
+    return entries.build();
   }
 
 }

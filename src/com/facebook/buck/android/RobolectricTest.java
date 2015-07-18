@@ -20,7 +20,6 @@ import static com.facebook.buck.rules.BuildableProperties.Kind.ANDROID;
 import static com.facebook.buck.rules.BuildableProperties.Kind.LIBRARY;
 import static com.facebook.buck.rules.BuildableProperties.Kind.TEST;
 
-import com.android.common.annotations.Nullable;
 import com.facebook.buck.java.JavaTest;
 import com.facebook.buck.java.JavacOptions;
 import com.facebook.buck.java.TestType;
@@ -38,9 +37,9 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 
 import java.io.File;
@@ -62,12 +61,14 @@ public class RobolectricTest extends JavaTest {
   static final String LIST_OF_RESOURCE_DIRECTORIES_PROPERTY_NAME =
       "buck.robolectric_res_directories";
 
-  private static final Function<HasAndroidResourceDeps, Path> RESOURCE_DIRECTORY_FUNCTION =
-      new Function<HasAndroidResourceDeps, Path>() {
+  private final Function<HasAndroidResourceDeps, String> resourceDirectoryFunction =
+      new Function<HasAndroidResourceDeps, String>() {
     @Override
-    @Nullable
-    public Path apply(HasAndroidResourceDeps input) {
-      return input.getRes();
+    public String apply(HasAndroidResourceDeps input) {
+      return Optional.fromNullable(input.getRes())
+          .transform(getResolver().getPathFunction())
+          .get()
+          .toString();
     }
   };
 
@@ -78,14 +79,15 @@ public class RobolectricTest extends JavaTest {
       Set<SourcePath> resources,
       Set<Label> labels,
       Set<String> contacts,
-      Optional<Path> proguardConfig,
+      Optional<SourcePath> proguardConfig,
       ImmutableSet<Path> additionalClasspathEntries,
       JavacOptions javacOptions,
       List<String> vmArgs,
       ImmutableSet<BuildRule> sourceTargetsUnderTest,
       Optional<Path> resourcesRoot,
       Optional<DummyRDotJava> optionalDummyRDotJava,
-      Optional<Long> testRuleTimeoutMs) {
+      Optional<Long> testRuleTimeoutMs,
+      boolean runTestSeparately) {
     super(
         buildRuleParams,
         resolver,
@@ -100,18 +102,14 @@ public class RobolectricTest extends JavaTest {
         vmArgs,
         sourceTargetsUnderTest,
         resourcesRoot,
-        testRuleTimeoutMs);
+        testRuleTimeoutMs,
+        runTestSeparately);
     this.optionalDummyRDotJava = optionalDummyRDotJava;
   }
 
   @Override
   public BuildableProperties getProperties() {
     return PROPERTIES;
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return super.getInputsToCompareToOutput();
   }
 
   @Override
@@ -128,15 +126,34 @@ public class RobolectricTest extends JavaTest {
         "DummyRDotJava must have been created!");
     vmArgsBuilder.add(getRobolectricResourceDirectories(
         optionalDummyRDotJava.get().getAndroidResourceDeps()));
+
+    // Force robolectric to only use local dependency resolution.
+    vmArgsBuilder.add("-Drobolectric.offline=true");
   }
 
   @VisibleForTesting
   String getRobolectricResourceDirectories(List<HasAndroidResourceDeps> resourceDeps) {
     String resourceDirectories = Joiner.on(File.pathSeparator)
-        .join(Iterables.transform(resourceDeps, RESOURCE_DIRECTORY_FUNCTION));
+        .join(Iterables.transform(resourceDeps, resourceDirectoryFunction));
 
     return String.format("-D%s=%s",
         LIST_OF_RESOURCE_DIRECTORIES_PROPERTY_NAME,
         resourceDirectories);
   }
+
+  @Override
+  public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
+    return ImmutableSortedSet.<BuildRule>naturalOrder()
+        // Inherit any runtime deps from `JavaTest`.
+        .addAll(super.getRuntimeDeps())
+        // On top of the runtime dependencies of a normal {@link JavaTest}, we need to make the
+        // {@link DummyRDotJava} is available locally, if it exists, to run this test.
+        .addAll(Optional.presentInstances(ImmutableList.of(optionalDummyRDotJava)))
+        // It's possible that the user added some tool as a dependency, so make sure we promote
+        // this rules first-order deps to runtime deps, so that these potential tools are available
+        // when this test runs.
+        .addAll(getDeps())
+        .build();
+  }
+
 }

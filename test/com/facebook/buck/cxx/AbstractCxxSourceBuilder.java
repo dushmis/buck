@@ -19,11 +19,13 @@ package com.facebook.buck.cxx;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.SourcePath;
-import com.facebook.buck.rules.coercer.Either;
+import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
+import com.facebook.buck.rules.coercer.SourceWithFlagsList;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
@@ -37,43 +39,31 @@ public class AbstractCxxSourceBuilder<T extends CxxConstructorArg> extends Abstr
   }
 
   public AbstractCxxSourceBuilder<T> setSrcs(ImmutableList<SourceWithFlags> srcs)  {
-    arg.srcs =
-        Optional.of(
-            Either.<ImmutableList<SourceWithFlags>, ImmutableMap<String, SourceWithFlags>>ofLeft(
-                srcs));
+    arg.srcs = Optional.of(SourceWithFlagsList.ofUnnamedSources(srcs));
     return this;
   }
 
   public AbstractCxxSourceBuilder<T> setSrcs(ImmutableMap<String, SourceWithFlags> srcs)  {
-    arg.srcs =
-        Optional.of(
-            Either.<ImmutableList<SourceWithFlags>, ImmutableMap<String, SourceWithFlags>>ofRight(
-                srcs));
+    arg.srcs = Optional.of(SourceWithFlagsList.ofNamedSources(srcs));
     return this;
   }
 
-  public AbstractCxxSourceBuilder<T> setSrcs(
-      Either<ImmutableList<SourceWithFlags>, ImmutableMap<String, SourceWithFlags>> srcs)  {
+  public AbstractCxxSourceBuilder<T> setSrcs(SourceWithFlagsList srcs)  {
     arg.srcs = Optional.of(srcs);
     return this;
   }
 
-  public AbstractCxxSourceBuilder<T> setHeaders(ImmutableList<SourcePath> headers)  {
-    arg.headers =
-        Optional.of(
-            Either.<ImmutableList<SourcePath>, ImmutableMap<String, SourcePath>>ofLeft(headers));
+  public AbstractCxxSourceBuilder<T> setHeaders(ImmutableSortedSet<SourcePath> headers)  {
+    arg.headers = Optional.of(SourceList.ofUnnamedSources(headers));
     return this;
   }
 
   public AbstractCxxSourceBuilder<T> setHeaders(ImmutableMap<String, SourcePath> headers)  {
-    arg.headers =
-        Optional.of(
-            Either.<ImmutableList<SourcePath>, ImmutableMap<String, SourcePath>>ofRight(headers));
+    arg.headers = Optional.of(SourceList.ofNamedSources(headers));
     return this;
   }
 
-  public AbstractCxxSourceBuilder<T> setHeaders(
-      Either<ImmutableList<SourcePath>, ImmutableMap<String, SourcePath>> headers)  {
+  public AbstractCxxSourceBuilder<T> setHeaders(SourceList headers)  {
     arg.headers = Optional.of(headers);
     return this;
   }
@@ -94,7 +84,7 @@ public class AbstractCxxSourceBuilder<T extends CxxConstructorArg> extends Abstr
   }
 
   public AbstractCxxSourceBuilder<T> setFrameworkSearchPaths(
-      ImmutableList<Path> frameworkSearchPaths) {
+      ImmutableSet<Path> frameworkSearchPaths) {
     arg.frameworkSearchPaths = Optional.of(frameworkSearchPaths);
     return this;
   }

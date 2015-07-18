@@ -71,7 +71,7 @@ public class TargetNode<T> implements Comparable<TargetNode<?>>, HasBuildTarget 
     T arg = description.createUnpopulatedConstructorArg();
     for (Field field : arg.getClass().getFields()) {
       ParamInfo<T> info = new ParamInfo<>(typeCoercerFactory, field);
-      if (info.isDep() &&
+      if (info.isDep() && info.isInput() &&
           info.hasElementTypes(BuildTarget.class, SourcePath.class, Path.class)) {
         detectBuildTargetsAndPathsForConstructorArg(extraDeps, paths, info, constructorArg);
       }
@@ -82,6 +82,13 @@ public class TargetNode<T> implements Comparable<TargetNode<?>>, HasBuildTarget 
           .addAll(
               ((ImplicitDepsInferringDescription<T>) description)
                   .findDepsForTargetFromConstructorArgs(params.target, constructorArg));
+    }
+
+    if (description instanceof ImplicitInputsInferringDescription) {
+      paths
+          .addAll(
+              ((ImplicitInputsInferringDescription<T>) description)
+                  .inferInputsFromConstructorArgs(params.target, constructorArg));
     }
 
     this.extraDeps = ImmutableSortedSet.copyOf(Sets.difference(extraDeps.build(), declaredDeps));

@@ -23,6 +23,7 @@ import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.parser.BuildTargetPatternParser;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.SourcePathResolver;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 
@@ -34,27 +35,23 @@ import com.google.common.collect.ImmutableList;
  */
 public abstract class BuildTargetMacroExpander implements MacroExpander {
 
-  protected final BuildTargetParser parser;
-
-  public BuildTargetMacroExpander(BuildTargetParser parser) {
-    this.parser = parser;
-  }
-
-  protected abstract String expand(ProjectFilesystem filesystem, BuildRule rule)
+  protected abstract String expand(
+      SourcePathResolver resolver,
+      ProjectFilesystem filesystem,
+      BuildRule rule)
       throws MacroException;
 
-  @Override
-  public String expand(
+  protected BuildRule resolve(
       BuildTarget target,
       BuildRuleResolver resolver,
-      ProjectFilesystem filesystem,
-      String input) throws MacroException {
+      String input)
+      throws MacroException {
 
     BuildTarget other;
     try {
-      other = parser.parse(input, BuildTargetPatternParser.forBaseName(
-              parser,
-              target.getBaseName()));
+      other = BuildTargetParser.INSTANCE.parse(
+          input,
+          BuildTargetPatternParser.forBaseName(target.getBaseName()));
     } catch (BuildTargetParseException e) {
       throw new MacroException(e.getMessage(), e);
     }
@@ -62,17 +59,43 @@ public abstract class BuildTargetMacroExpander implements MacroExpander {
     if (!rule.isPresent()) {
       throw new MacroException(String.format("no rule %s", other));
     }
-    return expand(filesystem, rule.get());
+    return rule.get();
   }
 
   @Override
-  public ImmutableList<BuildTarget> extractTargets(
+  public String expand(
+      BuildTarget target,
+      BuildRuleResolver resolver,
+      ProjectFilesystem filesystem,
+      String input)
+      throws MacroException {
+    return expand(new SourcePathResolver(resolver), filesystem, resolve(target, resolver, input));
+  }
+
+  protected ImmutableList<BuildRule> extractAdditionalBuildTimeDeps(
+      @SuppressWarnings("unused") BuildRuleResolver resolver,
+      BuildRule rule)
+      throws MacroException {
+    return ImmutableList.of(rule);
+  }
+
+  @Override
+  public ImmutableList<BuildRule> extractAdditionalBuildTimeDeps(
+      BuildTarget target,
+      BuildRuleResolver resolver,
+      String input)
+      throws MacroException {
+    return extractAdditionalBuildTimeDeps(resolver, resolve(target, resolver, input));
+  }
+
+  @Override
+  public ImmutableList<BuildTarget> extractParseTimeDeps(
       BuildTarget target,
       String input) {
     return ImmutableList.of(
-        parser.parse(input, BuildTargetPatternParser.forBaseName(
-                parser,
-                target.getBaseName())));
+        BuildTargetParser.INSTANCE.parse(
+            input,
+            BuildTargetPatternParser.forBaseName(target.getBaseName())));
   }
 
 }

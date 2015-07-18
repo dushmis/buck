@@ -16,98 +16,119 @@
 
 package com.facebook.buck.apple;
 
+import com.facebook.buck.rules.Tool;
+import com.facebook.buck.model.BuildTargets;
+import com.facebook.buck.model.Flavor;
+import com.facebook.buck.model.ImmutableFlavor;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
+import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
-import com.google.common.base.Supplier;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 
 import java.nio.file.Path;
+import java.util.SortedSet;
 
 import javax.annotation.Nullable;
 
-/**
- * Captures information about an asset catalog.
- * <p>
- * Example rule:
- * <pre>
- * apple_asset_catalog(
- *   name='asset_catalog',
- *   dirs=['Backgrounds.xcassets', 'OtherImages.xcassets'],
- *   copy_to_bundles=True
- * )
- * </pre>
- */
 public class AppleAssetCatalog extends AbstractBuildRule {
 
-  private final Supplier<ImmutableCollection<Path>> inputPathsSupplier;
-  private final ImmutableSet<Path> dirs;
-  private final boolean copyToBundles;
+  private static final String MERGED_FLAVOR_PREFIX = "merged-apple-asset-catalog-";
+  private static final String SEPARATE_FLAVOR_PREFIX = "separate-apple-asset-catalog-";
+  private static final String BUNDLE_DIRECTORY_EXTENSION = ".bundle";
+
+  @AddToRuleKey
+  private final String applePlatformName;
+
+  @AddToRuleKey
+  private final Tool actool;
+
+  @AddToRuleKey
+  private final ImmutableSortedSet<Path> assetCatalogDirs;
+
+  @AddToRuleKey
+  private final ActoolStep.BundlingMode bundlingMode;
+
+  @AddToRuleKey(stringify = true)
+  private final Path outputDir;
 
   AppleAssetCatalog(
       BuildRuleParams params,
       SourcePathResolver resolver,
-      Supplier<ImmutableCollection<Path>> inputPathsSupplier,
-      AppleAssetCatalogDescription.Arg args) {
+      String applePlatformName,
+      Tool actool,
+      SortedSet<Path> assetCatalogDirs,
+      ActoolStep.BundlingMode bundlingMode,
+      String bundleName) {
     super(params, resolver);
-    Preconditions.checkArgument(Iterables.all(args.dirs, new Predicate<Path>() {
+    Preconditions.checkArgument(
+        Iterables.all(
+            assetCatalogDirs,
+            new Predicate<Path>() {
               @Override
               public boolean apply(Path input) {
-                return input.toString().endsWith(".xcassets");
+                return input.toString().endsWith(AppleDescriptions.XCASSETS_DIRECTORY_EXTENSION);
               }
             }));
-    this.inputPathsSupplier = inputPathsSupplier;
-    this.dirs = ImmutableSet.copyOf(args.dirs);
-    this.copyToBundles = args.copyToBundles.or(Boolean.FALSE);
-  }
-
-  /**
-   * @return the path to the asset catalog.
-   */
-  public ImmutableSet<Path> getDirs() {
-    return dirs;
-  }
-
-  /**
-   * @return whether this asset catalog should be copied to its sibling bundle rather than the root
-   *   resource output directory (or to Assets.car)
-   */
-  public boolean getCopyToBundles() {
-    return copyToBundles;
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return inputPathsSupplier.get();
+    this.applePlatformName = applePlatformName;
+    this.actool = actool;
+    this.assetCatalogDirs = ImmutableSortedSet.copyOf(assetCatalogDirs);
+    this.bundlingMode = bundlingMode;
+    this.outputDir = BuildTargets.getGenPath(params.getBuildTarget(), "%s")
+        .resolve(bundleName + BUNDLE_DIRECTORY_EXTENSION);
   }
 
   @Override
   public ImmutableList<Step> getBuildSteps(
-      BuildContext context,
-      BuildableContext buildableContext) {
-    // This rule does not perform any build steps. Rather, the top-level binary target will
-    // coalesce all asset catalog rules and build them together.
-    return ImmutableList.of();
-  }
+      BuildContext context, BuildableContext buildableContext) {
+    ImmutableList.Builder<Step> stepsBuilder = ImmutableList.builder();
 
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    builder.setReflectively("copyToBundles", copyToBundles);
-    return builder;
+    stepsBuilder.add(new MakeCleanDirectoryStep(outputDir));
+
+    ImmutableSortedSet<Path> absoluteAssetCatalogDirs =
+        ImmutableSortedSet.copyOf(
+            Iterables.transform(
+                assetCatalogDirs,
+                getProjectFilesystem().getAbsolutifier()));
+    stepsBuilder.add(
+        new ActoolStep(
+            applePlatformName,
+            actool.getCommandPrefix(getResolver()),
+            absoluteAssetCatalogDirs,
+            getProjectFilesystem().resolve(outputDir),
+            bundlingMode));
+
+    buildableContext.recordArtifact(getOutputDir());
+
+    return stepsBuilder.build();
   }
 
   @Nullable
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return null;
   }
+
+  public Path getOutputDir() {
+    return outputDir;
+  }
+
+  public static Flavor getFlavor(ActoolStep.BundlingMode bundlingMode, String bundleName) {
+    switch (bundlingMode) {
+      case MERGE_BUNDLES:
+        return ImmutableFlavor.of(MERGED_FLAVOR_PREFIX + bundleName);
+      case SEPARATE_BUNDLES:
+        return ImmutableFlavor.of(SEPARATE_FLAVOR_PREFIX + bundleName);
+    }
+    throw new IllegalArgumentException("Invalid bundling mode: " + bundlingMode);
+  }
+
 }

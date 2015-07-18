@@ -39,8 +39,7 @@ import java.nio.file.Path;
  * This is a custom subclass of {@link DefaultJavaLibrary} so that it can have special behavior
  * when being traversed by an {@link AndroidPackageableCollector}.
  */
-class AndroidBuildConfigJavaLibrary extends DefaultJavaLibrary
-    implements AndroidPackageable {
+class AndroidBuildConfigJavaLibrary extends DefaultJavaLibrary implements AndroidPackageable {
 
   private final AndroidBuildConfig androidBuildConfig;
 
@@ -53,11 +52,9 @@ class AndroidBuildConfigJavaLibrary extends DefaultJavaLibrary
         params,
         resolver,
         /* srcs */ ImmutableSortedSet.of(
-            new BuildTargetSourcePath(
-                androidBuildConfig.getProjectFilesystem(),
-                androidBuildConfig.getBuildTarget())),
+            new BuildTargetSourcePath(androidBuildConfig.getBuildTarget())),
         /* resources */ ImmutableSortedSet.<SourcePath>of(),
-        /* proguardConfig */ Optional.<Path>absent(),
+        /* proguardConfig */ Optional.<SourcePath>absent(),
         /* postprocessClassesCommands */ ImmutableList.<String>of(),
         /* exportedDeps */ ImmutableSortedSet.<BuildRule>of(),
         /* providedDeps */ ImmutableSortedSet.<BuildRule>of(),

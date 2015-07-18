@@ -23,7 +23,7 @@ import com.facebook.buck.cli.FakeBuckConfig;
 import com.facebook.buck.cxx.CxxBuckConfig;
 import com.facebook.buck.cxx.CxxLibraryDescription;
 import com.facebook.buck.cxx.CxxPlatform;
-import com.facebook.buck.cxx.CxxSourceRuleFactory;
+import com.facebook.buck.cxx.CxxPreprocessMode;
 import com.facebook.buck.cxx.DefaultCxxPlatforms;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
@@ -38,8 +38,9 @@ import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TestSourcePath;
-import com.facebook.buck.rules.coercer.Either;
+import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
+import com.facebook.buck.rules.coercer.SourceWithFlagsList;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -69,7 +70,7 @@ public class ThriftCxxEnhancerTest {
       new CxxLibraryDescription(
           CXX_BUCK_CONFIG,
           CXX_PLATFORMS,
-          CxxSourceRuleFactory.Strategy.SEPARATE_PREPROCESS_AND_COMPILE);
+          CxxPreprocessMode.SEPARATE);
   private static final ThriftCxxEnhancer ENHANCER_CPP =
       new ThriftCxxEnhancer(
           THRIFT_BUCK_CONFIG,
@@ -127,6 +128,16 @@ public class ThriftCxxEnhancerTest {
     assertEquals(
         ImmutableFlavor.of("cpp2"),
         ENHANCER_CPP2.getFlavor());
+  }
+
+  @Test
+  public void getCompiler() {
+    assertEquals(
+        ThriftLibraryDescription.CompilerType.THRIFT,
+        ENHANCER_CPP.getCompilerType());
+    assertEquals(
+        ThriftLibraryDescription.CompilerType.THRIFT2,
+        ENHANCER_CPP2.getCompilerType());
   }
 
   private ImmutableSet<String> getExpectedOptions(BuildTarget target, ImmutableSet<String> opts) {
@@ -202,7 +213,7 @@ public class ThriftCxxEnhancerTest {
       strConfig.put(ent.getKey(), ent.getValue().toString());
     }
     FakeBuckConfig buckConfig = new FakeBuckConfig(
-        ImmutableMap.<String, Map<String, String>>of("thrift", strConfig.build()));
+        ImmutableMap.of("thrift", strConfig.build()));
     ThriftBuckConfig thriftBuckConfig = new ThriftBuckConfig(buckConfig);
     ThriftCxxEnhancer cppEnhancerWithSettings = new ThriftCxxEnhancer(
         thriftBuckConfig,
@@ -550,14 +561,8 @@ public class ThriftCxxEnhancerTest {
     arg.cppOptions = Optional.absent();
     arg.cppDeps = Optional.absent();
     arg.cppHeaderNamespace = Optional.of(cppHeaderNamespace);
-    arg.cppExportedHeaders =
-        Optional.of(
-            Either.<ImmutableList<SourcePath>, ImmutableMap<String, SourcePath>>ofRight(
-                cppHeaders));
-    arg.cppSrcs =
-        Optional.of(
-            Either.<ImmutableList<SourceWithFlags>, ImmutableMap<String, SourceWithFlags>>ofRight(
-                cppSrcs));
+    arg.cppExportedHeaders = Optional.of(SourceList.ofNamedSources(cppHeaders));
+    arg.cppSrcs = Optional.of(SourceWithFlagsList.ofNamedSources(cppSrcs));
 
     ThriftCompiler thrift = createFakeThriftCompiler("//:thrift_source", pathResolver);
     resolver.addToIndex(thrift);
@@ -575,7 +580,7 @@ public class ThriftCxxEnhancerTest {
         new CxxLibraryDescription(
             CXX_BUCK_CONFIG,
             CXX_PLATFORMS,
-            CxxSourceRuleFactory.Strategy.SEPARATE_PREPROCESS_AND_COMPILE) {
+            CxxPreprocessMode.SEPARATE) {
           @Override
           public <A extends Arg> BuildRule createBuildRule(
               BuildRuleParams params,
@@ -584,12 +589,12 @@ public class ThriftCxxEnhancerTest {
             assertThat(args.headerNamespace, Matchers.equalTo(Optional.of(cppHeaderNamespace)));
             for (Map.Entry<String, SourcePath> header : cppHeaders.entrySet()) {
               assertThat(
-                  args.exportedHeaders.get().getRight().get(header.getKey()),
+                  args.exportedHeaders.get().getNamedSources().get().get(header.getKey()),
                   Matchers.equalTo(header.getValue()));
             }
             for (Map.Entry<String, SourceWithFlags> source : cppSrcs.entrySet()) {
               assertThat(
-                  args.srcs.get().getRight().get(source.getKey()),
+                  args.srcs.get().getNamedSources().get().get(source.getKey()),
                   Matchers.equalTo(source.getValue()));
             }
             return super.createBuildRule(params, resolver, args);

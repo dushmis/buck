@@ -17,10 +17,10 @@
 package com.facebook.buck.apple;
 
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.google.common.base.Supplier;
@@ -43,7 +43,8 @@ import javax.annotation.Nullable;
  * </pre>
  */
 public class CoreDataModel extends AbstractBuildRule {
-
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey
   private final Supplier<ImmutableCollection<Path>> inputPathsSupplier;
   private final Path path;
 
@@ -65,11 +66,6 @@ public class CoreDataModel extends AbstractBuildRule {
   }
 
   @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return inputPathsSupplier.get();
-  }
-
-  @Override
   public ImmutableList<Step> getBuildSteps(
       BuildContext context,
       BuildableContext buildableContext) {
@@ -77,14 +73,9 @@ public class CoreDataModel extends AbstractBuildRule {
     return ImmutableList.of();
   }
 
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
-  }
-
   @Nullable
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return null;
   }
 

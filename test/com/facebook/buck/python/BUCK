@@ -25,6 +25,7 @@ java_test(
     '//src/com/facebook/buck/util:exceptions',
     '//src/com/facebook/buck/util:util',
     '//src/com/facebook/buck/shell:rules',
+    '//src/com/facebook/buck/shell:steps',
     '//test/com/facebook/buck/cli:FakeBuckConfig',
     '//test/com/facebook/buck/io:testutil',
     '//test/com/facebook/buck/java:testutil',
@@ -37,8 +38,8 @@ java_test(
     '//test/com/facebook/buck/shell:testutil',
     '//third-party/java/easymock:easymock',
     '//third-party/java/guava:guava',
+    '//third-party/java/jackson:jackson',
     '//third-party/java/junit:junit',
-    '//third-party/java/hamcrest:hamcrest-core',
-    '//third-party/java/hamcrest:hamcrest-library',
+    '//third-party/java/hamcrest:hamcrest',
   ],
 )

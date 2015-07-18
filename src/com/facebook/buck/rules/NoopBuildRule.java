@@ -17,7 +17,6 @@
 package com.facebook.buck.rules;
 
 import com.facebook.buck.step.Step;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 
 import java.nio.file.Path;
@@ -36,16 +35,6 @@ public class NoopBuildRule extends AbstractBuildRule {
   }
 
   @Override
-  protected final ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableList.of();
-  }
-
-  @Override
-  protected final RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
-  }
-
-  @Override
   public final ImmutableList<Step> getBuildSteps(
       BuildContext context,
       BuildableContext buildableContext) {
@@ -54,7 +43,7 @@ public class NoopBuildRule extends AbstractBuildRule {
 
   @Nullable
   @Override
-  public final Path getPathToOutputFile() {
+  public final Path getPathToOutput() {
     return null;
   }
 

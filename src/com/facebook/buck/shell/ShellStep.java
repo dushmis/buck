@@ -21,7 +21,6 @@ import com.facebook.buck.log.Logger;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.util.Escaper;
-import com.facebook.buck.util.ImmutableProcessExecutorParams;
 import com.facebook.buck.util.ProcessExecutor;
 import com.facebook.buck.util.ProcessExecutor.Option;
 import com.facebook.buck.util.ProcessExecutorParams;
@@ -40,6 +39,8 @@ import com.google.common.collect.Maps;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.lang.management.OperatingSystemMXBean;
 import java.util.Map;
 import java.util.Map.Entry;
 
@@ -48,6 +49,7 @@ import javax.annotation.Nullable;
 public abstract class ShellStep implements Step {
 
   private static final Logger LOG = Logger.get(ShellStep.class);
+  private static final OperatingSystemMXBean OS_JMX = ManagementFactory.getOperatingSystemMXBean();
 
   /** Defined lazily by {@link #getShellCommand(com.facebook.buck.step.ExecutionContext)}. */
   @Nullable
@@ -93,21 +95,26 @@ public abstract class ShellStep implements Step {
     return workingDirectory;
   }
 
+  private File getFinalWorkingDirectory(ExecutionContext context) {
+    if (workingDirectory != null) {
+      return workingDirectory;
+    }
+
+    return context.getProjectDirectoryRoot().toAbsolutePath().toFile();
+  }
+
   @Override
   public int execute(ExecutionContext context) throws InterruptedException {
     // Kick off a Process in which this ShellCommand will be run.
-    ImmutableProcessExecutorParams.Builder builder = ImmutableProcessExecutorParams.builder();
+    ProcessExecutorParams.Builder builder = ProcessExecutorParams.builder();
+
+    File workDir = getFinalWorkingDirectory(context);
 
     builder.setCommand(getShellCommand(context));
     Map<String, String> environment = Maps.newHashMap();
-    setProcessEnvironment(context, environment);
+    setProcessEnvironment(context, environment, workDir);
     builder.setEnvironment(environment);
-
-    if (workingDirectory != null) {
-      builder.setDirectory(workingDirectory);
-    } else {
-      builder.setDirectory(context.getProjectDirectoryRoot().toAbsolutePath().toFile());
-    }
+    builder.setDirectory(workDir);
 
     Optional<String> stdin = getStdin(context);
     if (stdin.isPresent()) {
@@ -115,6 +122,7 @@ public abstract class ShellStep implements Step {
     }
 
     int exitCode;
+    double initialLoad = OS_JMX.getSystemLoadAverage();
     try {
       startTime = System.currentTimeMillis();
       exitCode = launchAndInteractWithProcess(context, builder.build());
@@ -124,16 +132,32 @@ public abstract class ShellStep implements Step {
     }
 
     endTime = System.currentTimeMillis();
+    double endLoad = OS_JMX.getSystemLoadAverage();
+
+    LOG.debug(
+        "%s: exit code: %d. os load (before, after): (%f, %f). CPU count: %d",
+        shellCommandArgs,
+        exitCode,
+        initialLoad,
+        endLoad,
+        OS_JMX.getAvailableProcessors());
 
     return exitCode;
   }
 
   @VisibleForTesting
-  void setProcessEnvironment(ExecutionContext context, Map<String, String> environment) {
+  void setProcessEnvironment(
+      ExecutionContext context,
+      Map<String, String> environment,
+      File workDir) {
 
     // Replace environment with client environment.
     environment.clear();
     environment.putAll(context.getEnvironment());
+
+    // Make sure the special PWD variable matches the working directory
+    // of the process (unless otherwise set).
+    environment.put("PWD", workDir.toString());
 
     // Add extra environment variables for step, if appropriate.
     if (!getEnvironmentVariables(context).isEmpty()) {
@@ -161,7 +185,8 @@ public abstract class ShellStep implements Step {
         params,
         options.build(),
         getStdin(context),
-        getTimeout());
+        getTimeout(),
+        getTimeoutHandler(context));
     stdout = result.getStdout();
     stderr = result.getStderr();
 
@@ -234,16 +259,14 @@ public abstract class ShellStep implements Step {
     Iterable<String> cmd = Iterables.transform(getShellCommand(context), Escaper.SHELL_ESCAPER);
 
     String shellCommand = Joiner.on(" ").join(Iterables.concat(env, cmd));
-    if (getWorkingDirectory() == null) {
-      return shellCommand;
-    } else {
-      // If the ShellCommand has a specific working directory, set through ProcessBuilder, then
-      // this is what the user might type in a shell to get the same behavior. The (...) syntax
-      // introduces a subshell in which the command is only executed if cd was successful.
-      return String.format("(cd %s && %s)",
-          Escaper.escapeAsBashString(Preconditions.checkNotNull(workingDirectory).getPath()),
-          shellCommand);
-    }
+    // This is what the user might type in a shell to set the working directory correctly. The (...)
+    // syntax introduces a subshell in which the command is only executed if cd was successful.
+    // Note that we shouldn't add a special case for workingDirectory==null, because we always
+    // resolve symbolic links in this case, and the default PWD might leave symbolic links
+    // unresolved.  We try to make PWD match, and cd sets PWD.
+    return String.format("(cd %s && %s)",
+        Escaper.escapeAsBashString(getFinalWorkingDirectory(context).getPath()),
+        shellCommand);
   }
 
   /**
@@ -318,4 +341,12 @@ public abstract class ShellStep implements Step {
     return Optional.absent();
   }
 
+  /**
+   * @return an optional timeout handler {@link Function} to do something before the process is
+   * killed.
+   */
+  @SuppressWarnings("unused")
+  protected Optional<Function<Process, Void>> getTimeoutHandler(ExecutionContext context) {
+    return Optional.absent();
+  }
 }

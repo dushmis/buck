@@ -1,10 +1,25 @@
 genrule(
   name = 'gen_aar',
-  srcs = [
-    'gen_aar.sh',
-  ],
-  bash = './gen_aar.sh $TMP $OUT',
+  cmd = '$(exe :aar_generator) $TMP $OUT',
   out = 'the.aar',
+  visibility = [
+    'PUBLIC',
+  ],
+)
+
+genrule(
+  name = 'gen_aar-with-jsr',
+  cmd = '$(exe :aar_generator) ' +
+    '--lib $(location //third-party/jsr:jsr) $TMP $OUT',
+  out = 'jsr.aar',
+  visibility = [
+    'PUBLIC',
+  ],
+)
+
+python_binary(
+  name = 'aar_generator',
+  main = 'gen_aar.py',
 )
 
 android_prebuilt_aar(
@@ -28,7 +43,6 @@ keystore(
 android_binary(
   name = 'app',
   manifest = 'AndroidManifest.xml',
-  target = 'Google Inc.:Google APIs:19',
   keystore = ':debug',
   package_type = 'DEBUG',
   deps = [

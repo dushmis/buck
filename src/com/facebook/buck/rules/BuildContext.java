@@ -27,7 +27,7 @@ import com.facebook.buck.model.BuildId;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.step.StepRunner;
 import com.facebook.buck.timing.Clock;
-import com.facebook.buck.util.immutables.BuckStyleImmutable;
+import com.facebook.buck.util.immutables.DeprecatedBuckStyleImmutable;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
@@ -43,11 +43,12 @@ import java.util.List;
 import java.util.Map;
 
 @Value.Immutable
-@BuckStyleImmutable
+@DeprecatedBuckStyleImmutable
+@SuppressWarnings("deprecation")
 public abstract class BuildContext {
 
-  private static Function<AndroidPlatformTarget, String> bootclasspathForAndroidPlatformTarget =
-      new Function<AndroidPlatformTarget, String>() {
+  private static final Function<AndroidPlatformTarget, String>
+      BOOTCLASSPATH_FOR_ANDROID_PLATFORM_TARGET = new Function<AndroidPlatformTarget, String>() {
     @Override
     public String apply(AndroidPlatformTarget androidPlatformTarget) {
       List<Path> bootclasspathEntries = androidPlatformTarget.getBootclasspathEntries();
@@ -120,17 +121,13 @@ public abstract class BuildContext {
    * This method should be visible to {@link AbstractBuildRule}, but not {@link BuildRule}s
    * in general.
    */
-  BuildInfoRecorder createBuildInfoRecorder(BuildTarget buildTarget,
-      RuleKey ruleKey,
-      RuleKey ruleKeyWithoutDeps) {
+  BuildInfoRecorder createBuildInfoRecorder(BuildTarget buildTarget) {
     return new BuildInfoRecorder(
         buildTarget,
         getProjectFilesystem(),
         getClock(),
         getBuildId(),
-        ImmutableMap.copyOf(getEnvironment()),
-        ruleKey,
-        ruleKeyWithoutDeps);
+        ImmutableMap.copyOf(getEnvironment()));
   }
 
   public void logBuildInfo(String format, Object... args) {
@@ -148,6 +145,6 @@ public abstract class BuildContext {
   public static Supplier<String> createBootclasspathSupplier(
       Supplier<AndroidPlatformTarget> androidPlatformTarget) {
     return Suppliers.memoize(
-        Suppliers.compose(bootclasspathForAndroidPlatformTarget, androidPlatformTarget));
+        Suppliers.compose(BOOTCLASSPATH_FOR_ANDROID_PLATFORM_TARGET, androidPlatformTarget));
   }
 }

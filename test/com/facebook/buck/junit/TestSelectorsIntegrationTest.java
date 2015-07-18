@@ -18,6 +18,7 @@ package com.facebook.buck.junit;
 
 import static com.facebook.buck.testutil.OutputHelper.createBuckTestOutputLineRegex;
 import static com.facebook.buck.testutil.RegexMatcher.containsRegex;
+import static com.facebook.buck.util.Verbosity.BINARY_OUTPUTS;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.junit.Assert.assertThat;
@@ -52,7 +53,7 @@ public class TestSelectorsIntegrationTest {
   public void shouldFailWithoutAnySelectors() throws IOException {
     ProjectWorkspace.ProcessResult result = workspace.runBuckCommand("test", "--all");
     result.assertTestFailure("Some tests fail");
-    assertThat(result.getStderr(), containsString("TESTS FAILED: 1 Failures"));
+    assertThat(result.getStderr(), containsString("TESTS FAILED: 1 FAILURE"));
   }
 
   @Test
@@ -86,8 +87,11 @@ public class TestSelectorsIntegrationTest {
 
   @Test
   public void shouldNeverCacheWhenUsingSelectors() throws IOException {
-    String[] commandWithoutSelector = {"test", "--all"};
-    String[] commandWithSelector = {"test", "--all", "--test-selectors", "#testIsComical"};
+    String spammyTestOutput = String.valueOf(BINARY_OUTPUTS.ordinal());
+    String[] commandWithoutSelector = {"test", "-v", spammyTestOutput, "--all"};
+    String[] commandWithSelector =
+        {"test", "-v", spammyTestOutput,
+        "--all", "--test-selectors", "#testIsComical"};
 
     // Without selectors, the first run isn't cached and the second run is.
     ProjectWorkspace.ProcessResult result1 = workspace.runBuckCommand(commandWithoutSelector);
@@ -112,10 +116,8 @@ public class TestSelectorsIntegrationTest {
   public void shouldNotMatchMethodsUsingPrefixAlone() throws IOException {
     String[] command = {"test", "--all", "--test-selectors", "#test"};
     ProjectWorkspace.ProcessResult result = workspace.runBuckCommand(command);
-    assertThat(
-        "No tests should have run",
-        result.getStderr(),
-        containsString("TESTING SELECTED TESTS\nTESTS PASSED"));
+    assertNoTestsRan(result);
+    assertTestsPassed(result);
   }
 
   @Test
@@ -159,6 +161,13 @@ public class TestSelectorsIntegrationTest {
     assertThat(result.getStderr(), not(containsString("com.example.clown.FlowerTest")));
   }
 
+  @Test
+  public void assertNoSummariesForASingleTest() throws IOException {
+    ProjectWorkspace.ProcessResult result = workspace.runBuckCommand(
+        "test", "//test/com/example/clown:clown");
+    assertNoTestSummaryShown(result);
+  }
+
   private void assertOutputWithSelectors(ProjectWorkspace.ProcessResult result) {
     String stderr = result.getStderr();
     assertThat(stderr, containsRegex(
@@ -189,6 +198,7 @@ public class TestSelectorsIntegrationTest {
     assertThat(stderr, containsRegex(
         createBuckTestOutputLineRegex(
             "PASS", 2, 0, 0, "com.example.clown.ShoesTest")));
+    assertTestSummaryShown(result);
   }
 
   private void assertCached(ProjectWorkspace.ProcessResult result) {
@@ -203,7 +213,24 @@ public class TestSelectorsIntegrationTest {
     assertThat(result.getStderr(), containsString(testName));
   }
 
+  private void assertNoTestsRan(ProjectWorkspace.ProcessResult result) {
+    assertThat(result.getStderr(), not(containsString("com.example.clown.CarTest")));
+    assertThat(result.getStderr(), not(containsString("com.example.clown.FlowerTest")));
+    assertThat(
+        result.getStderr(),
+        not(containsString("com.example.clown.PrimeMinisterialDecreeTest")));
+    assertThat(result.getStderr(), not(containsString("com.example.clown.ShoesTest")));
+  }
+
   private void assertTestsPassed(ProjectWorkspace.ProcessResult result) {
     assertThat(result.getStderr(), containsString("TESTS PASSED"));
+  }
+
+  private void assertTestSummaryShown(ProjectWorkspace.ProcessResult result) {
+    assertThat(result.getStderr(), containsString("Results for //test/com/example/clown:clown"));
+  }
+
+  private void assertNoTestSummaryShown(ProjectWorkspace.ProcessResult result) {
+    assertThat(result.getStderr(), not(containsString("Results for ")));
   }
 }

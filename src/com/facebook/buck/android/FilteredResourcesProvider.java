@@ -17,7 +17,6 @@
 package com.facebook.buck.android;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 
 import java.nio.file.Path;
 
@@ -26,18 +25,11 @@ public interface FilteredResourcesProvider {
   /**
    * @return The set of res/ directories that should be used to calculate the final R.java file.
    */
-  public ImmutableList<Path> getResDirectories();
+  ImmutableList<Path> getResDirectories();
 
   /**
-   * @return The set of non-english {@code strings.xml} files identified by the resource filter.
-   *     Only used if {@link #isStoreStringsAsAssets()} returns {@code true}.
+   * @return The list of {@code strings.xml} files excluding whitelisted strings.
+   *     Empty unless {@code ResourceCompressionMode.isStoreStringsAsAssets} is true.
    */
-  public ImmutableSet<Path> getNonEnglishStringFiles();
-
-  /**
-   * @return Whether non-english strings need to be stored as assets.
-   * TODO(natthu): Remove this method from the interface once string assets are created in a new
-   *     buildable.
-   */
-  public boolean isStoreStringsAsAssets();
+  ImmutableList<Path> getStringFiles();
 }

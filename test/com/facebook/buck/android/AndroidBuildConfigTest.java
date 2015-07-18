@@ -22,7 +22,6 @@ import com.facebook.buck.android.AndroidBuildConfig.ReadValuesStep;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
-import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.FakeBuildContext;
@@ -31,7 +30,6 @@ import com.facebook.buck.rules.FakeBuildableContext;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.coercer.BuildConfigFields;
-import com.facebook.buck.rules.coercer.ImmutableBuildConfigFields;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.TestExecutionContext;
@@ -53,20 +51,12 @@ import java.util.List;
  */
 public class AndroidBuildConfigTest {
 
-  /**
-   * Tests the following methods:
-   * <ul>
-   *   <li>{@link AbstractBuildRule#getInputsToCompareToOutput()}
-   *   <li>{@link AndroidBuildConfig#getPathToOutputFile()}
-   * </ul>
-   */
   @Test
-  public void testSimpleObserverMethods() {
+  public void testGetPathToOutput() {
     AndroidBuildConfig buildConfig = createSimpleBuildConfigRule();
-
     assertEquals(
         BuckConstant.GEN_PATH.resolve("java/com/example/__build_config__/BuildConfig.java"),
-        buildConfig.getPathToOutputFile());
+        buildConfig.getPathToOutput());
   }
 
   @Test
@@ -108,8 +98,8 @@ public class AndroidBuildConfigTest {
     assertEquals(0, exitCode);
     assertEquals(
         BuildConfigFields.fromFields(ImmutableList.<BuildConfigFields.Field>of(
-            ImmutableBuildConfigFields.Field.of("boolean", "DEBUG", "false"),
-            ImmutableBuildConfigFields.Field.of("String", "FOO", "\"BAR\""))),
+            BuildConfigFields.Field.of("boolean", "DEBUG", "false"),
+            BuildConfigFields.Field.of("String", "FOO", "\"BAR\""))),
         step.get());
 
     EasyMock.verify(projectFilesystem);
@@ -118,9 +108,7 @@ public class AndroidBuildConfigTest {
   private static AndroidBuildConfig createSimpleBuildConfigRule() {
     // First, create the BuildConfig object.
     BuildTarget buildTarget = BuildTarget.builder("//java/com/example", "build_config").build();
-    BuildRuleParams params = new FakeBuildRuleParamsBuilder(buildTarget)
-        .setType(AndroidBuildConfigDescription.TYPE)
-        .build();
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder(buildTarget).build();
     return new AndroidBuildConfig(
         params,
         new SourcePathResolver(new BuildRuleResolver()),

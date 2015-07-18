@@ -24,7 +24,6 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.model.BuildTargetPattern;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.parser.NoSuchBuildTargetException;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Functions;
@@ -55,7 +54,6 @@ public class ConstructorArgMarshallerTest {
   private ConstructorArgMarshaller marshaller;
   private BuildRuleResolver ruleResolver;
   private ProjectFilesystem filesystem;
-  private BuildRuleType ruleType;
 
   @Before
   public void setUpInspector() {
@@ -63,7 +61,6 @@ public class ConstructorArgMarshallerTest {
     marshaller = new ConstructorArgMarshaller();
     ruleResolver = new BuildRuleResolver();
     filesystem = new FakeProjectFilesystem();
-    ruleType = BuildRuleType.of("example");
   }
 
   @Test
@@ -197,7 +194,6 @@ public class ConstructorArgMarshallerTest {
     ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildTarget target = BuildTargetFactory.newInstance("//example/path:peas");
     FakeBuildRule rule = new FakeBuildRule(
-        ruleType,
         target,
         new SourcePathResolver(new BuildRuleResolver()));
     ruleResolver.addToIndex(rule);
@@ -217,7 +213,7 @@ public class ConstructorArgMarshallerTest {
         new PathSourcePath(projectFilesystem, Paths.get("example/path/cheese.txt")),
         dto.filePath);
     assertEquals(
-        new BuildTargetSourcePath(projectFilesystem, rule.getBuildTarget()),
+        new BuildTargetSourcePath(rule.getBuildTarget()),
         dto.targetPath);
   }
 
@@ -461,7 +457,6 @@ public class ConstructorArgMarshallerTest {
     ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
     BuildRule rule = new FakeBuildRule(
-        BuildRuleType.of("example"),
         BuildTargetFactory.newInstance("//will:happen"), pathResolver);
     ruleResolver.addToIndex(rule);
     Dto dto = new Dto();
@@ -475,9 +470,7 @@ public class ConstructorArgMarshallerTest {
             "yup",
             ImmutableList.of(rule.getBuildTarget().getFullyQualifiedName())));
 
-    BuildTargetSourcePath path = new BuildTargetSourcePath(
-        projectFilesystem,
-        rule.getBuildTarget());
+    BuildTargetSourcePath path = new BuildTargetSourcePath(rule.getBuildTarget());
     assertEquals(ImmutableList.of(path), dto.yup);
   }
 
@@ -525,7 +518,6 @@ public class ConstructorArgMarshallerTest {
 
     ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     FakeBuildRule expectedRule = new FakeBuildRule(
-        ruleType,
         BuildTargetFactory.newInstance("//example/path:path"),
         new SourcePathResolver(new BuildRuleResolver()));
     ruleResolver.addToIndex(expectedRule);
@@ -556,9 +548,7 @@ public class ConstructorArgMarshallerTest {
     assertEquals(42, dto.num);
     assertTrue(dto.needed);
     assertEquals(Optional.<Boolean>absent(), dto.notNeeded);
-    BuildTargetSourcePath expected = new BuildTargetSourcePath(
-        projectFilesystem,
-        expectedRule.getBuildTarget());
+    BuildTargetSourcePath expected = new BuildTargetSourcePath(expectedRule.getBuildTarget());
     assertEquals(expected, dto.aSrcPath);
     assertEquals(Paths.get("example/path/NotFile.java"), dto.notAPath.get());
   }
@@ -614,10 +604,7 @@ public class ConstructorArgMarshallerTest {
 
     BuildRuleResolver resolver = new BuildRuleResolver();
     BuildTarget target = BuildTargetFactory.newInstance("//example/path:manifest");
-    BuildRule rule = new FakeBuildRule(
-        BuildRuleType.of("py"),
-        target,
-        new SourcePathResolver(resolver));
+    BuildRule rule = new FakeBuildRule(target, new SourcePathResolver(resolver));
     resolver.addToIndex(rule);
 
     Dto dto = new Dto();
@@ -643,10 +630,7 @@ public class ConstructorArgMarshallerTest {
   }
 
   public BuildRuleFactoryParams buildRuleFactoryParams() {
-    BuildTargetParser parser = new BuildTargetParser();
     BuildTarget target = BuildTargetFactory.newInstance("//example/path:three");
-    return NonCheckingBuildRuleFactoryParams.createNonCheckingBuildRuleFactoryParams(
-        parser,
-        target);
+    return NonCheckingBuildRuleFactoryParams.createNonCheckingBuildRuleFactoryParams(target);
   }
 }

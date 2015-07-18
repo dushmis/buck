@@ -18,7 +18,6 @@ package com.facebook.buck.shell;
 
 
 import com.facebook.buck.model.BuildTarget;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
@@ -52,12 +51,11 @@ public class GenruleDescription
   private final MacroHandler macroHandler;
 
   public GenruleDescription() {
-    BuildTargetParser parser = new BuildTargetParser();
     this.macroHandler = new MacroHandler(
         ImmutableMap.<String, MacroExpander>of(
-            "classpath", new ClasspathMacroExpander(parser),
-            "exe", new ExecutableMacroExpander(parser),
-            "location", new LocationMacroExpander(parser)));
+            "classpath", new ClasspathMacroExpander(),
+            "exe", new ExecutableMacroExpander(),
+            "location", new LocationMacroExpander()));
   }
 
   @Override
@@ -83,7 +81,10 @@ public class GenruleDescription
         .addAll(pathResolver.filterBuildRuleInputs(srcs))
         .build();
     return new Genrule(
-        params.copyWithExtraDeps(Suppliers.ofInstance(extraDeps)),
+        params
+            .copyWithExtraDeps(Suppliers.ofInstance(extraDeps))
+            // Attach any extra dependencies found from macro expansion.
+            .appendExtraDeps(findExtraDepsFromArgs(params.getBuildTarget(), resolver, args)),
         pathResolver,
         srcs,
         macroHandler.getExpander(
@@ -95,6 +96,22 @@ public class GenruleDescription
         args.cmdExe,
         args.out,
         params.getPathAbsolutifier());
+  }
+
+  private ImmutableList<BuildRule> findExtraDepsFromArgs(
+      BuildTarget target,
+      BuildRuleResolver resolver,
+      Arg arg) {
+    ImmutableList.Builder<BuildRule> deps = ImmutableList.builder();
+    try {
+      for (String val :
+          Optional.presentInstances(ImmutableList.of(arg.bash, arg.cmd, arg.cmdExe))) {
+        deps.addAll(macroHandler.extractAdditionalBuildTimeDeps(target, resolver, val));
+      }
+    } catch (MacroException e) {
+      throw new HumanReadableException(e, "%s: %s", target, e.getMessage());
+    }
+    return deps.build();
   }
 
   @Override
@@ -119,7 +136,7 @@ public class GenruleDescription
       String paramValue,
       ImmutableSet.Builder<BuildTarget> targets) {
     try {
-      targets.addAll(macroHandler.extractTargets(target, paramValue));
+      targets.addAll(macroHandler.extractParseTimeDeps(target, paramValue));
     } catch (MacroException e) {
       throw new HumanReadableException(e, "%s: %s", target, e.getMessage());
     }

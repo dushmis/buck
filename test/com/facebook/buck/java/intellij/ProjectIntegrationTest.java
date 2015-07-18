@@ -19,7 +19,9 @@ package com.facebook.buck.java.intellij;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 
+import com.facebook.buck.android.AssumeAndroidPlatform;
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.facebook.buck.testutil.integration.ProjectWorkspace;
 import com.facebook.buck.testutil.integration.ProjectWorkspace.ProcessResult;
@@ -33,6 +35,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
+import java.io.File;
 import java.io.IOException;
 
 /**
@@ -52,7 +55,7 @@ public class ProjectIntegrationTest {
         this, "project1", temporaryFolder);
     workspace.setUp();
 
-    ProcessResult result = workspace.runBuckCommand("project");
+    ProcessResult result = workspace.runBuckCommand("project", "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
@@ -62,10 +65,10 @@ public class ProjectIntegrationTest {
         Joiner.on('\n').join(
           "MODIFIED FILES:",
           ".idea/compiler.xml",
-          ".idea/libraries/__libs_generated_jar.xml",
-          ".idea/libraries/libs_guava_jar.xml",
-          ".idea/libraries/libs_jsr305_jar.xml",
-          ".idea/libraries/libs_junit_jar.xml",
+          ".idea/libraries/buck_out_gen_libs_generated_jar.xml",
+          ".idea/libraries/buck_out_gen_libs_guava_jar.xml",
+          ".idea/libraries/buck_out_gen_libs_jsr305_jar.xml",
+          ".idea/libraries/buck_out_gen_libs_junit_jar.xml",
           ".idea/misc.xml",
           ".idea/modules.xml",
           ".idea/runConfigurations/Debug_Buck_test.xml",
@@ -78,8 +81,27 @@ public class ProjectIntegrationTest {
     assertThat(
         "`buck project` should contain warning to synchronize IntelliJ.",
         result.getStderr(),
-        containsString("  ::  Please resynchronize IntelliJ via File->Synchronize " +
-            "or Cmd-Opt-Y (Mac) or Ctrl-Alt-Y (PC/Linux)"));
+        containsString(
+            "  ::  Please resynchronize IntelliJ via File->Synchronize " +
+                "or Cmd-Opt-Y (Mac) or Ctrl-Alt-Y (PC/Linux)"));
+  }
+
+  @Test
+  public void testBuckProjectDoesNotCauseUnnecessaryWrites() throws IOException {
+    ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
+        this, "project_with_root_iml_already_present", temporaryFolder);
+    workspace.setUp();
+
+    long lastModified = 0; // We're gonna party like it's 1970!
+    assertTrue((new File(temporaryFolder.getRoot(), "root.iml")).setLastModified(lastModified));
+
+    ProcessResult result = workspace.runBuckCommand("project");
+    result.assertSuccess("buck project should exit cleanly");
+
+    assertEquals(
+        lastModified,
+        new File(temporaryFolder.getRoot(), "root.iml").lastModified());
+    workspace.verify();
   }
 
   @Test
@@ -88,7 +110,7 @@ public class ProjectIntegrationTest {
         this, "project1", temporaryFolder);
     workspace.setUp();
 
-    ProcessResult result = workspace.runBuckCommand("project", "--dry-run");
+    ProcessResult result = workspace.runBuckCommand("project", "--dry-run", "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     ImmutableSortedSet<String> expectedResult = ImmutableSortedSet.of(
@@ -96,6 +118,7 @@ public class ProjectIntegrationTest {
         "//:root_module",
         "//libs:generated",
         "//libs:generated_jar",
+        "//libs:generated_source_jar",
         "//libs:guava",
         "//libs:jsr305",
         "//libs:junit",
@@ -126,6 +149,7 @@ public class ProjectIntegrationTest {
 
     workspace.verify();
   }
+
   /**
    * Verify that if we build a project by specifying a target, the resulting project only contains
    * the transitive deps of that target.  In this example, that means everything except
@@ -141,7 +165,8 @@ public class ProjectIntegrationTest {
         "project",
         "--without-tests",
         "//modules/dep1:dep1",
-        "//:root");
+        "//:root",
+        "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
@@ -151,9 +176,9 @@ public class ProjectIntegrationTest {
         Joiner.on('\n').join(
             "MODIFIED FILES:",
             ".idea/compiler.xml",
-            ".idea/libraries/libs_guava_jar.xml",
-            ".idea/libraries/libs_jsr305_jar.xml",
-            ".idea/libraries/libs_junit_jar.xml",
+            ".idea/libraries/buck_out_gen_libs_guava_jar.xml",
+            ".idea/libraries/buck_out_gen_libs_jsr305_jar.xml",
+            ".idea/libraries/buck_out_gen_libs_junit_jar.xml",
             ".idea/misc.xml",
             ".idea/modules.xml",
             ".idea/runConfigurations/Debug_Buck_test.xml",
@@ -181,7 +206,8 @@ public class ProjectIntegrationTest {
         "--dry-run",
         "--without-tests",
         "//modules/dep1:dep1",
-        "//:root");
+        "//:root",
+        "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     ImmutableSortedSet<String> expectedResult = ImmutableSortedSet.of(
@@ -213,7 +239,7 @@ public class ProjectIntegrationTest {
         this, "project_slice_with_project_in_different_buck_file", temporaryFolder);
     workspace.setUp();
 
-    ProcessResult result = workspace.runBuckCommand("project", "//:root");
+    ProcessResult result = workspace.runBuckCommand("project", "//:root", "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
@@ -234,8 +260,9 @@ public class ProjectIntegrationTest {
     assertThat(
         "`buck project` should contain warning to synchronize IntelliJ.",
         result.getStderr(),
-        containsString("  ::  Please resynchronize IntelliJ via File->Synchronize " +
-            "or Cmd-Opt-Y (Mac) or Ctrl-Alt-Y (PC/Linux)"));
+        containsString(
+            "  ::  Please resynchronize IntelliJ via File->Synchronize " +
+                "or Cmd-Opt-Y (Mac) or Ctrl-Alt-Y (PC/Linux)"));
   }
 
   /**
@@ -252,7 +279,8 @@ public class ProjectIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "project",
-        "//modules/dep1:dep1");
+        "//modules/dep1:dep1",
+        "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
@@ -262,9 +290,9 @@ public class ProjectIntegrationTest {
         Joiner.on('\n').join(
             "MODIFIED FILES:",
             ".idea/compiler.xml",
-            ".idea/libraries/libs_guava_jar.xml",
-            ".idea/libraries/libs_jsr305_jar.xml",
-            ".idea/libraries/libs_junit_jar.xml",
+            ".idea/libraries/buck_out_gen_libs_guava_jar.xml",
+            ".idea/libraries/buck_out_gen_libs_jsr305_jar.xml",
+            ".idea/libraries/buck_out_gen_libs_junit_jar.xml",
             ".idea/misc.xml",
             ".idea/modules.xml",
             ".idea/runConfigurations/Debug_Buck_test.xml",
@@ -291,7 +319,8 @@ public class ProjectIntegrationTest {
         "project",
         "--dry-run",
         "--without-tests",
-        "//modules/dep1:dep1");
+        "//modules/dep1:dep1",
+        "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     ImmutableSortedSet<String> expectedResult = ImmutableSortedSet.of(
@@ -323,7 +352,8 @@ public class ProjectIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "project",
-        "//modules/dep1:dep1");
+        "//modules/dep1:dep1",
+        "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
@@ -362,7 +392,8 @@ public class ProjectIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "project",
-        "//modules/dep1:dep1");
+        "//modules/dep1:dep1",
+        "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
@@ -482,7 +513,7 @@ public class ProjectIntegrationTest {
         this, "project_with_android_binary", temporaryFolder);
     workspace.setUp();
 
-    ProcessResult result = workspace.runBuckCommand("project");
+    ProcessResult result = workspace.runBuckCommand("project", "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
@@ -513,6 +544,7 @@ public class ProjectIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "project",
+        "-v", "5",
         "//apps/sample:app");
     result.assertSuccess("buck project should exit cleanly");
 
@@ -543,7 +575,10 @@ public class ProjectIntegrationTest {
         this, "project_with_android_binary_autogeneration_disabled", temporaryFolder);
     workspace.setUp();
 
-    ProcessResult result = workspace.runBuckCommand("project", "--disable-r-java-idea-generator");
+    ProcessResult result = workspace.runBuckCommand(
+        "project",
+        "--disable-r-java-idea-generator",
+        "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
@@ -576,7 +611,8 @@ public class ProjectIntegrationTest {
     ProcessResult result = workspace.runBuckCommand(
         "project",
         "--disable-r-java-idea-generator",
-        "//apps/sample:app");
+        "//apps/sample:app",
+        "-v", "5");
     result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
@@ -611,6 +647,38 @@ public class ProjectIntegrationTest {
         "project",
         "app");
     result.assertSuccess();
+
+    workspace.verify();
+  }
+
+  @Test
+  public void testExperimentalBuckProject() throws IOException {
+    AssumeAndroidPlatform.assumeSdkIsAvailable();
+
+    ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
+        this, "experimental_project1", temporaryFolder);
+    workspace.setUp();
+
+    ProcessResult result = workspace.runBuckCommand("project", "--experimental-ij-generation");
+    result.assertSuccess("buck project should exit cleanly");
+
+    workspace.verify();
+  }
+
+  @Test
+  public void testExperimentalBuckProjectSlice() throws IOException {
+    AssumeAndroidPlatform.assumeSdkIsAvailable();
+
+    ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
+        this, "experimental_project_slice", temporaryFolder);
+    workspace.setUp();
+
+    ProcessResult result = workspace.runBuckCommand(
+        "project",
+        "--experimental-ij-generation",
+        "--without-tests",
+        "modules/dep1:dep1");
+    result.assertSuccess("buck project should exit cleanly");
 
     workspace.verify();
   }

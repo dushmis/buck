@@ -25,6 +25,7 @@ import static org.junit.Assert.assertTrue;
 import com.facebook.buck.io.ProjectFilesystem.CopySourceMode;
 import com.facebook.buck.testutil.WatchEvents;
 import com.facebook.buck.testutil.integration.ZipInspector;
+import com.facebook.buck.zip.ZipConstants;
 import com.google.common.base.Charsets;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicates;
@@ -36,6 +37,7 @@ import com.google.common.io.Files;
 
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipUtil;
 import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Rule;
@@ -44,6 +46,7 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.FileVisitOption;
@@ -59,9 +62,12 @@ import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Date;
 import java.util.EnumSet;
 import java.util.Enumeration;
 import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /** Unit test for {@link com.facebook.buck.io.ProjectFilesystem}. */
 public class ProjectFilesystemTest {
@@ -473,6 +479,28 @@ public class ProjectFilesystemTest {
       assertFalse(entries.hasMoreElements());
     }
 
+  }
+
+  @Test
+  public void testCreateZipIgnoresMtimes() throws IOException {
+
+    // Create a empty executable file.
+    File exe = tmp.newFile("foo");
+
+    // Archive it into a zipfile using `ProjectFileSystem.createZip`.
+    File zipFile = new File(tmp.getRoot().toPath().toString() + "/test.zip");
+    filesystem.createZip(
+        ImmutableList.of(exe.toPath()),
+        zipFile,
+        ImmutableMap.of(Paths.get("additional"), "info"));
+
+    // Iterate over each of the entries, expecting to see all zeros in the time fields.
+    Date dosEpoch = new Date(ZipUtil.dosToJavaTime(ZipConstants.DOS_EPOCH_START));
+    try (ZipInputStream is = new ZipInputStream(new FileInputStream(zipFile))) {
+      for (ZipEntry entry = is.getNextEntry(); entry != null; entry = is.getNextEntry()) {
+        assertEquals(entry.getName(), dosEpoch, new Date(entry.getTime()));
+      }
+    }
   }
 
   @Test

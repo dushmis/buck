@@ -21,7 +21,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.facebook.buck.cli.FakeBuckConfig;
-import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.BuildRule;
@@ -36,7 +35,6 @@ import com.facebook.buck.rules.SymlinkTree;
 import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.shell.Genrule;
 import com.facebook.buck.shell.GenruleBuilder;
-import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -50,8 +48,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public class CxxPreprocessablesTest {
-
-  private static final ProjectFilesystem PROJECT_FILESYSTEM = new FakeProjectFilesystem();
 
   private static class FakeCxxPreprocessorDep extends FakeBuildRule
       implements CxxPreprocessorDep {
@@ -69,8 +65,25 @@ public class CxxPreprocessablesTest {
     @Override
     public CxxPreprocessorInput getCxxPreprocessorInput(
         CxxPlatform cxxPlatform,
-        CxxDescriptionEnhancer.HeaderVisibility headerVisibility) {
+        HeaderVisibility headerVisibility) {
       return input;
+    }
+
+    @Override
+    public ImmutableMap<BuildTarget, CxxPreprocessorInput> getTransitiveCxxPreprocessorInput(
+        CxxPlatform cxxPlatform,
+        HeaderVisibility headerVisibility) {
+      ImmutableMap.Builder<BuildTarget, CxxPreprocessorInput> builder = ImmutableMap.builder();
+      builder.put(getBuildTarget(), getCxxPreprocessorInput(cxxPlatform, headerVisibility));
+      for (BuildRule dep : getDeps()) {
+        if (dep instanceof CxxPreprocessorDep) {
+          builder.putAll(
+              ((CxxPreprocessorDep) dep).getTransitiveCxxPreprocessorInput(
+                  cxxPlatform,
+                  headerVisibility));
+          }
+        }
+      return builder.build();
     }
 
   }
@@ -167,11 +180,11 @@ public class CxxPreprocessablesTest {
 
     // Verify that getTransitiveCxxPreprocessorInput gets all CxxPreprocessorInput objects
     // from the relevant rules above.
-    CxxPreprocessorInput expected = CxxPreprocessorInput.concat(
-        ImmutableList.of(input1, input2));
-    CxxPreprocessorInput actual = CxxPreprocessables.getTransitiveCxxPreprocessorInput(
-        cxxPlatform,
-        ImmutableList.<BuildRule>of(dep3));
+    ImmutableList<CxxPreprocessorInput> expected = ImmutableList.of(nothing, input1, input2);
+    ImmutableList<CxxPreprocessorInput> actual = ImmutableList.copyOf(
+        CxxPreprocessables.getTransitiveCxxPreprocessorInput(
+            cxxPlatform,
+            ImmutableList.<BuildRule>of(dep3)));
     assertEquals(expected, actual);
   }
 
@@ -203,7 +216,7 @@ public class CxxPreprocessablesTest {
         Paths.get("link1"),
         new TestSourcePath("hello"),
         Paths.get("link2"),
-        new BuildTargetSourcePath(PROJECT_FILESYSTEM, genrule.getBuildTarget()));
+        new BuildTargetSourcePath(genrule.getBuildTarget()));
 
     // Build our symlink tree rule using the helper method.
     SymlinkTree symlinkTree = CxxPreprocessables.createHeaderSymlinkTreeBuildRule(
@@ -242,23 +255,23 @@ public class CxxPreprocessablesTest {
 
     // Now grab all input via traversing deps and verify that the middle rule prevents pulling
     // in the bottom input.
-    CxxPreprocessorInput totalInput =
+    CxxPreprocessorInput totalInput = CxxPreprocessorInput.concat(
         CxxPreprocessables.getTransitiveCxxPreprocessorInput(
             cxxPlatform,
-            ImmutableList.of(top));
+            ImmutableList.of(top)));
     assertTrue(bottomInput.getPreprocessorFlags().get(CxxSource.Type.C).contains(sentinal));
     assertFalse(totalInput.getPreprocessorFlags().get(CxxSource.Type.C).contains(sentinal));
   }
 
   @Test
-  public void getTransitiveDependenciesThrowsForConflictingHeaders()
+  public void combiningTransitiveDependenciesThrowsForConflictingHeaders()
       throws Exception {
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
     CxxPlatform cxxPlatform = DefaultCxxPlatforms.build(new CxxBuckConfig(new FakeBuckConfig()));
 
     CxxPreprocessorInput bottomInput = CxxPreprocessorInput.builder()
         .setIncludes(
-            ImmutableCxxHeaders.builder()
+            CxxHeaders.builder()
                 .putNameToPathMap(
                     Paths.get("prefix/file.h"),
                     new TestSourcePath("bottom/file.h"))
@@ -271,7 +284,7 @@ public class CxxPreprocessablesTest {
 
     CxxPreprocessorInput topInput = CxxPreprocessorInput.builder()
         .setIncludes(
-            ImmutableCxxHeaders.builder()
+            CxxHeaders.builder()
                 .putNameToPathMap(
                     Paths.get("prefix/file.h"),
                     new TestSourcePath("top/file.h"))
@@ -282,23 +295,28 @@ public class CxxPreprocessablesTest {
         .build();
     BuildRule top = createFakeCxxPreprocessorDep("//:top", pathResolver, topInput, bottom);
 
-    exception.expect(CxxPreprocessorInput.ConflictingHeadersException.class);
-    exception.expectMessage("'prefix/file.h' maps to both [bottom/file.h, top/file.h].");
+    exception.expect(CxxHeaders.ConflictingHeadersException.class);
+    exception.expectMessage(String.format(
+            "'%s' maps to both [%s, %s].",
+            Paths.get("prefix/file.h"),
+            Paths.get("bottom/file.h"),
+            Paths.get("top/file.h")));
 
-    CxxPreprocessables.getTransitiveCxxPreprocessorInput(
-        cxxPlatform,
-        ImmutableList.of(top));
+    CxxPreprocessorInput.concat(
+        CxxPreprocessables.getTransitiveCxxPreprocessorInput(
+            cxxPlatform,
+            ImmutableList.of(top)));
   }
 
   @Test
-  public void getTransitiveDependenciesDoesNotThrowsForCompatibleHeaders()
+  public void combiningTransitiveDependenciesDoesNotThrowForCompatibleHeaders()
       throws Exception {
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
     CxxPlatform cxxPlatform = DefaultCxxPlatforms.build(new CxxBuckConfig(new FakeBuckConfig()));
 
     CxxPreprocessorInput bottomInput = CxxPreprocessorInput.builder()
         .setIncludes(
-            ImmutableCxxHeaders.builder()
+            CxxHeaders.builder()
                 .putNameToPathMap(
                     Paths.get("prefix/file.h"),
                     new TestSourcePath("common/file.h"))
@@ -311,7 +329,7 @@ public class CxxPreprocessablesTest {
 
     CxxPreprocessorInput topInput = CxxPreprocessorInput.builder()
         .setIncludes(
-            ImmutableCxxHeaders.builder()
+            CxxHeaders.builder()
                 .putNameToPathMap(
                     Paths.get("prefix/file.h"),
                     new TestSourcePath("common/file.h"))
@@ -324,7 +342,7 @@ public class CxxPreprocessablesTest {
 
     CxxPreprocessorInput expected = CxxPreprocessorInput.builder()
         .setIncludes(
-            ImmutableCxxHeaders.builder()
+            CxxHeaders.builder()
                 .putNameToPathMap(
                     Paths.get("prefix/file.h"),
                     new TestSourcePath("common/file.h"))
@@ -339,9 +357,10 @@ public class CxxPreprocessablesTest {
 
     assertEquals(
         expected,
-        CxxPreprocessables.getTransitiveCxxPreprocessorInput(
-            cxxPlatform,
-            ImmutableList.of(top)));
+        CxxPreprocessorInput.concat(
+            CxxPreprocessables.getTransitiveCxxPreprocessorInput(
+                cxxPlatform,
+                ImmutableList.of(top))));
   }
 
 }

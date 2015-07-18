@@ -16,6 +16,7 @@
 
 package com.facebook.buck.util;
 
+import static org.easymock.EasyMock.anyObject;
 import static org.easymock.EasyMock.capture;
 import static org.easymock.EasyMock.createMock;
 import static org.easymock.EasyMock.createStrictMock;
@@ -29,11 +30,16 @@ import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import com.facebook.buck.event.BuckEventBus;
+import com.facebook.buck.event.ConsoleEvent;
+import com.facebook.buck.model.BuildId;
 import com.facebook.buck.timing.Clock;
+import com.facebook.buck.timing.FakeClock;
 import com.facebook.buck.timing.IncrementingFakeClock;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Charsets;
 import com.google.common.base.Joiner;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.Lists;
@@ -81,7 +87,7 @@ public class WatchmanWatcherTest {
         process,
         new IncrementingFakeClock(),
         new ObjectMapper());
-    watcher.postEvents();
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
     verify(eventBus, process);
   }
 
@@ -103,7 +109,7 @@ public class WatchmanWatcherTest {
         process,
         new IncrementingFakeClock(),
         new ObjectMapper());
-    watcher.postEvents();
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
     verify(eventBus, process);
     assertEquals("Should be modify event.",
         StandardWatchEventKinds.ENTRY_MODIFY,
@@ -132,7 +138,7 @@ public class WatchmanWatcherTest {
         process,
         new IncrementingFakeClock(),
         new ObjectMapper());
-    watcher.postEvents();
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
     verify(eventBus, process);
     assertEquals("Should be create event.",
         StandardWatchEventKinds.ENTRY_CREATE,
@@ -159,7 +165,7 @@ public class WatchmanWatcherTest {
         process,
         new IncrementingFakeClock(),
         new ObjectMapper());
-    watcher.postEvents();
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
     verify(eventBus, process);
     assertEquals("Should be delete event.",
         StandardWatchEventKinds.ENTRY_DELETE,
@@ -187,7 +193,7 @@ public class WatchmanWatcherTest {
         process,
         new IncrementingFakeClock(),
         new ObjectMapper());
-    watcher.postEvents();
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
     verify(eventBus, process);
     assertEquals("Should be delete event.",
         StandardWatchEventKinds.ENTRY_DELETE,
@@ -218,7 +224,7 @@ public class WatchmanWatcherTest {
         process,
         new IncrementingFakeClock(),
         new ObjectMapper());
-    watcher.postEvents();
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
     verify(eventBus, process);
     assertEquals("Path should match watchman output.",
         "foo/bar/baz",
@@ -251,7 +257,7 @@ public class WatchmanWatcherTest {
         new ObjectMapper(),
         -1 /* overflow */,
         10000 /* timeout */);
-    watcher.postEvents();
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
     verify(eventBus, process);
     assertEquals("Should be overflow event.",
         StandardWatchEventKinds.OVERFLOW,
@@ -273,7 +279,7 @@ public class WatchmanWatcherTest {
         new IncrementingFakeClock(),
         new ObjectMapper());
     try {
-      watcher.postEvents();
+      watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
       fail("Should have thrown IOException.");
     } catch (WatchmanWatcherException e) {
       assertTrue("Should be watchman error", e.getMessage().startsWith("Watchman failed"));
@@ -301,7 +307,7 @@ public class WatchmanWatcherTest {
         new IncrementingFakeClock(),
         new ObjectMapper());
     try {
-      watcher.postEvents();
+      watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
     } catch (InterruptedException e) {
       assertEquals("Should be test interruption.", e.getMessage(), message);
     }
@@ -322,6 +328,7 @@ public class WatchmanWatcherTest {
         "\"error\": \"" + watchmanError + "\"",
         "}");
     EventBus eventBus = createStrictMock(EventBus.class);
+    eventBus.post(anyObject());
     Process process = createWaitForProcessMock(watchmanOutput);
     replay(eventBus, process);
     WatchmanWatcher watcher = createWatcher(
@@ -330,12 +337,39 @@ public class WatchmanWatcherTest {
         new IncrementingFakeClock(),
         new ObjectMapper());
     try {
-      watcher.postEvents();
+      watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
       fail("Should have thrown RuntimeException");
     } catch (RuntimeException e) {
       assertThat("Should contain watchman error.",
           e.getMessage(),
           Matchers.containsString(watchmanError));
+    }
+  }
+
+  @Test(expected = WatchmanWatcherException.class)
+  public void whenQueryResultContainsErrorThenOverflowEventGenerated()
+      throws IOException, InterruptedException {
+    String watchmanOutput = Joiner.on('\n').join(
+        "{",
+        "\"version\": \"2.9.2\",",
+        "\"error\": \"Watch does not exist.\"",
+        "}");
+    Capture<WatchEvent<Path>> eventCapture = newCapture();
+    EventBus eventBus = createStrictMock(EventBus.class);
+    eventBus.post(capture(eventCapture));
+    Process process = createWaitForProcessMock(watchmanOutput);
+    replay(eventBus, process);
+    WatchmanWatcher watcher = createWatcher(
+        eventBus,
+        process,
+        new IncrementingFakeClock(),
+        new ObjectMapper());
+    try {
+      watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
+    } finally {
+      assertEquals("Should be overflow event.",
+        StandardWatchEventKinds.OVERFLOW,
+        eventCapture.getValue().kind());
     }
   }
 
@@ -366,7 +400,7 @@ public class WatchmanWatcherTest {
         process,
         new IncrementingFakeClock(),
         new ObjectMapper());
-    watcher.postEvents();
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
 
     verify(process);
     boolean overflowSeen = false;
@@ -406,7 +440,7 @@ public class WatchmanWatcherTest {
         new ObjectMapper(),
         200 /* overflow */,
         -1 /* timeout */);
-    watcher.postEvents();
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
 
     verify(process);
     boolean overflowSeen = false;
@@ -417,10 +451,26 @@ public class WatchmanWatcherTest {
   }
 
   @Test
+  public void watchmanQueryWithRepoRelativePrefix() {
+    String query = WatchmanWatcher.createQuery(
+        new ObjectMapper(),
+        "path/to/repo",
+        Optional.of("project"),
+        "uuid",
+        Lists.<Path>newArrayList(),
+        Lists.<String>newArrayList());
+
+    assertThat(
+        query,
+        Matchers.containsString("\"relative_root\":\"project\""));
+  }
+
+  @Test
   public void watchmanQueryWithRepoPathNeedingEscapingFormatsToCorrectJson() {
     String query = WatchmanWatcher.createQuery(
         new ObjectMapper(),
         "/path/to/\"repo\"",
+        Optional.<String>absent(),
         "uuid",
         Lists.<Path>newArrayList(),
         Lists.<String>newArrayList());
@@ -437,6 +487,7 @@ public class WatchmanWatcherTest {
     String query = WatchmanWatcher.createQuery(
         new ObjectMapper(),
         "/path/to/repo",
+        Optional.<String>absent(),
         "uuid",
         Lists.newArrayList(Paths.get("foo"), Paths.get("bar/baz")),
         Lists.<String>newArrayList());
@@ -455,6 +506,7 @@ public class WatchmanWatcherTest {
     String query = WatchmanWatcher.createQuery(
         new ObjectMapper(),
         "/path/to/repo",
+        Optional.<String>absent(),
         "uuid",
         Lists.<Path>newArrayList(),
         Lists.newArrayList("*/project.pbxproj", "buck-out/*"));
@@ -466,6 +518,65 @@ public class WatchmanWatcherTest {
         "[\"match\",\"buck-out/*\",\"wholename\"]]]," +
         "\"empty_on_fresh_instance\":true,\"fields\":[\"name\",\"exists\",\"new\"]}]",
         query);
+  }
+
+  @Test
+  public void whenWatchmanProducesAWarningThenOverflowEventGenerated()
+      throws IOException, InterruptedException {
+    String watchmanOutput = Joiner.on('\n').join(
+        "{\"files\": [",
+        "{",
+        "\"warning\": \"message\"",
+        "}",
+        "]}");
+    Capture<WatchEvent<Path>> eventCapture = newCapture();
+    EventBus eventBus = createStrictMock(EventBus.class);
+    eventBus.post(capture(eventCapture));
+    Process process = createProcessMock(watchmanOutput);
+    expect(process.waitFor()).andReturn(0);
+    expectLastCall();
+    replay(eventBus, process);
+    WatchmanWatcher watcher = createWatcher(
+        eventBus,
+        process,
+        new IncrementingFakeClock(),
+        new ObjectMapper(),
+        10000 /* overflow */,
+        10000 /* timeout */);
+    watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
+    verify(eventBus, process);
+    assertEquals("Should be overflow event.",
+        StandardWatchEventKinds.OVERFLOW,
+        eventCapture.getValue().kind());
+  }
+  @Test
+  public void whenWatchmanProducesAWarningThenConsoleEventGenerated()
+      throws IOException, InterruptedException {
+    String message = "Find me!";
+    String watchmanOutput = Joiner.on('\n').join(
+        "{\"files\": [",
+        "{",
+        "\"warning\": \"" + message + "\"",
+        "}",
+        "]}");
+    Capture<ConsoleEvent> eventCapture = newCapture();
+    EventBus eventBus = new EventBus("watchman test");
+    BuckEventBus buckEventBus = createStrictMock(BuckEventBus.class);
+    buckEventBus.post(capture(eventCapture));
+    Process process = createProcessMock(watchmanOutput);
+    expect(process.waitFor()).andReturn(0);
+    expectLastCall();
+    replay(buckEventBus, process);
+    WatchmanWatcher watcher = createWatcher(
+        eventBus,
+        process,
+        new IncrementingFakeClock(),
+        new ObjectMapper(),
+        10000 /* overflow */,
+        10000 /* timeout */);
+    watcher.postEvents(buckEventBus);
+    verify(buckEventBus, process);
+    assertThat(eventCapture.getValue().getMessage(), Matchers.containsString(message));
   }
 
   private WatchmanWatcher createWatcher(

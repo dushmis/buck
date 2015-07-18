@@ -25,24 +25,34 @@ import javax.annotation.Nullable;
  */
 public class BuildResult {
 
+  private final BuildRule rule;
   private final BuildRuleStatus status;
   private final CacheResult cacheResult;
 
-  @Nullable private final BuildRuleSuccess.Type success;
+  @Nullable private final BuildRuleSuccessType success;
   @Nullable private final Throwable failure;
 
-  public BuildResult(BuildRuleSuccess.Type success, CacheResult cacheResult) {
+  public BuildResult(BuildRule rule, BuildRuleSuccessType success, CacheResult cacheResult) {
+    this.rule = rule;
     this.status = BuildRuleStatus.SUCCESS;
     this.cacheResult = cacheResult;
     this.success = success;
     this.failure = null;
   }
 
-  BuildResult(Throwable failure) {
+  /**
+   * Note: This should only be used inside {@link CachingBuildEngine} and unit tests.
+   */
+  public BuildResult(BuildRule rule, Throwable failure) {
+    this.rule = rule;
     this.status = BuildRuleStatus.FAIL;
-    this.cacheResult = CacheResult.MISS;
+    this.cacheResult = CacheResult.miss();
     this.success = null;
     this.failure = failure;
+  }
+
+  public BuildRule getRule() {
+    return rule;
   }
 
   BuildRuleStatus getStatus() {
@@ -54,7 +64,7 @@ public class BuildResult {
   }
 
   @Nullable
-  BuildRuleSuccess.Type getSuccess() {
+  public BuildRuleSuccessType getSuccess() {
     return success;
   }
 

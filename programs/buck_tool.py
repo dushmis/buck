@@ -1,4 +1,5 @@
 from __future__ import print_function
+import json
 import os
 import platform
 import re
@@ -24,6 +25,7 @@ NAILGUN_CONNECTION_REFUSED_CODE = 230
 NAILGUN_UNEXPECTED_CHUNK_TYPE = 229
 NAILGUN_CONNECTION_BROKEN_CODE = 227
 
+JAVA_MAX_HEAP_SIZE_MB = 1000
 
 # Describes a resource used by this driver.
 #  - name: logical name of the resources
@@ -37,7 +39,6 @@ class Resource(object):
 
 
 CLIENT = Resource("buck_client", executable=True, basename='ng')
-LOG4J_CONFIG = Resource("log4j_config_file")
 
 # Resource that get propagated to buck via system properties.
 EXPORTED_RESOURCES = [
@@ -49,6 +50,7 @@ EXPORTED_RESOURCES = [
     Resource("path_to_compile_asset_catalogs_py"),
     Resource("path_to_compile_asset_catalogs_build_phase_sh"),
     Resource("path_to_intellij_py"),
+    Resource("path_to_pex"),
     Resource("path_to_python_test_main"),
     Resource("path_to_sh_binary_template"),
     Resource("jacoco_agent_jar"),
@@ -58,6 +60,7 @@ EXPORTED_RESOURCES = [
     Resource("quickstart_origin_dir"),
     Resource("dx"),
     Resource("android_agent_path"),
+    Resource("native_exopackage_fake_path"),
 ]
 
 
@@ -165,7 +168,7 @@ class BuckTool(object):
 
     def launch_buckd(self, buck_version_uid=None):
         with Tracing('BuckRepo.launch_buckd'):
-            self._setup_watchman_watch()
+            watchman_root, watchman_prefix = self._setup_watchman_watch()
             if buck_version_uid is None:
                 buck_version_uid = self._get_buck_version_uid()
             # Override self._tmp_dir to a long lived directory.
@@ -185,6 +188,9 @@ class BuckTool(object):
             command.append("-Dbuck.buckd_launch_time_nanos={0}".format(monotonic_time_nanos()))
             command.append("-XX:MaxGCPauseMillis={0}".format(GC_MAX_PAUSE_TARGET))
             command.append("-XX:SoftRefLRUPolicyMSPerMB=0")
+            command.append("-Dbuck.watchman_root={0}".format(watchman_root))
+            if watchman_prefix:
+                command.append("-Dbuck.watchman_project_prefix={0}".format(watchman_prefix))
             command.append("-Djava.io.tmpdir={0}".format(buckd_tmp_dir))
             command.append("-Dcom.martiansoftware.nailgun.NGServer.outputPath={0}".format(
                 ngserver_output_path))
@@ -238,11 +244,18 @@ class BuckTool(object):
                 print(
                     "nailgun server did not respond after 10s. Aborting buckd.",
                     file=sys.stderr)
-                return
+                return 1
 
             self._buck_project.save_buckd_port(buckd_port)
             self._buck_project.save_buckd_version(buck_version_uid)
             self._buck_project.update_buckd_run_count(0)
+
+            returncode = process.poll()
+            # If the process hasn't exited yet, everything is working as expected
+            if returncode is None:
+                return 0
+
+            return returncode
 
     def kill_autobuild(self):
         autobuild_pid = self._buck_project.get_autobuild_pid()
@@ -296,12 +309,35 @@ class BuckTool(object):
 
             print("Using watchman.", file=sys.stderr)
             try:
-                check_output(
-                    ['watchman', 'watch', self._buck_project.root],
-                    stderr=subprocess.STDOUT)
+                # Check watchman version
+                # We only want to use watch-project in watchman >= 3.4,
+                # since early versions don't return the project path relative to
+                # the repo root.
+                if self._watchman_atleast(3, 4):
+                    response = check_output(
+                        ['watchman', 'watch-project', self._buck_project.root],
+                        stderr=subprocess.STDOUT)
+                else:
+                    response = check_output(
+                        ['watchman', 'watch', self._buck_project.root],
+                        stderr=subprocess.STDOUT)
+
+                jsonresp = json.loads(response)
+                return jsonresp.get("watch"), jsonresp.get('relative_path')
             except CalledProcessError as e:
                 print(e.output, end='', file=sys.stderr)
                 raise
+
+    def _watchman_atleast(self, major, minor):
+        """Returns true if the installed watchman is greater than or equal to
+        the given version."""
+        response = check_output(['watchman', 'version'])
+        version = json.loads(response).get("version")
+        parts = version.split('.')
+        actualmajor = int(parts[0])
+        actualminor = int(parts[1])
+        return actualmajor > major or (actualmajor == major and
+                                       actualminor >= minor)
 
     def _is_buckd_running(self):
         with Tracing('BuckRepo._is_buckd_running'):
@@ -344,14 +380,12 @@ class BuckTool(object):
     def _get_java_args(self, version_uid):
         java_args = [] if is_java8() else ["-XX:MaxPermSize=256m"]
         java_args.extend([
-            "-Xmx1000m",
+            "-Xmx{0}m".format(JAVA_MAX_HEAP_SIZE_MB),
             "-Djava.awt.headless=true",
             "-Djava.util.logging.config.class=com.facebook.buck.cli.bootstrapper.LogConfig",
             "-Dbuck.test_util_no_tests_dir=true",
             "-Dbuck.version_uid={0}".format(version_uid),
             "-Dbuck.buckd_dir={0}".format(self._buck_project.buckd_dir),
-            "-Dlog4j.configuration=file:{0}".format(
-                self._get_resource(LOG4J_CONFIG)),
             "-Dorg.eclipse.jetty.util.log.class=org.eclipse.jetty.util.log.JavaUtilLog",
         ])
         for resource in EXPORTED_RESOURCES:
@@ -450,6 +484,10 @@ def which(cmd, mode=os.F_OK | os.X_OK, path=None):
 
 
 def is_java8():
-    output = check_output(['java', '-version'], stderr=subprocess.STDOUT)
-    version_line = output.strip().splitlines()[0]
-    return re.compile('java version "1\.8\..*').match(version_line)
+    try:
+        output = check_output(['java', '-version'], stderr=subprocess.STDOUT)
+        version_line = output.strip().splitlines()[0]
+        return re.compile('(openjdk|java) version "1\.8\..*').match(version_line)
+    except CalledProcessError as e:
+        print(e.output, file=sys.stderr)
+        raise e

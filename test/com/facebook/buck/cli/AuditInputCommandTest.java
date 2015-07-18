@@ -21,13 +21,12 @@ import static org.junit.Assert.assertEquals;
 import com.facebook.buck.android.FakeAndroidDirectoryResolver;
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckEventBusFactory;
+import com.facebook.buck.httpserver.WebServer;
 import com.facebook.buck.java.FakeJavaPackageFinder;
 import com.facebook.buck.java.JavaLibraryBuilder;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
-import com.facebook.buck.parser.ParserConfig;
 import com.facebook.buck.rules.ArtifactCache;
-import com.facebook.buck.rules.FakeRepositoryFactory;
 import com.facebook.buck.rules.NoopArtifactCache;
 import com.facebook.buck.rules.Repository;
 import com.facebook.buck.rules.TargetGraph;
@@ -41,6 +40,7 @@ import com.facebook.buck.util.environment.Platform;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk7.Jdk7Module;
 import com.google.common.base.Joiner;
+import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
@@ -56,6 +56,7 @@ public class AuditInputCommandTest {
 
   private TestConsole console;
   private AuditInputCommand auditInputCommand;
+  private CommandRunnerParams params;
 
   @Rule
   public ExpectedException thrown = ExpectedException.none();
@@ -73,19 +74,19 @@ public class AuditInputCommandTest {
     ObjectMapper objectMapper = new ObjectMapper();
     objectMapper.registerModule(new Jdk7Module());
 
-    auditInputCommand = new AuditInputCommand(
-        CommandRunnerParamsForTesting.createCommandRunnerParamsForTesting(
-            console,
-            new FakeRepositoryFactory(),
-            repository,
-            new FakeAndroidDirectoryResolver(),
-            new InstanceArtifactCacheFactory(artifactCache),
-            eventBus,
-            new ParserConfig(new FakeBuckConfig()),
-            Platform.detect(),
-            ImmutableMap.copyOf(System.getenv()),
-            new FakeJavaPackageFinder(),
-            objectMapper));
+    auditInputCommand = new AuditInputCommand();
+    params = CommandRunnerParamsForTesting.createCommandRunnerParamsForTesting(
+        console,
+        repository,
+        new FakeAndroidDirectoryResolver(),
+        new InstanceArtifactCacheFactory(artifactCache),
+        eventBus,
+        new FakeBuckConfig(),
+        Platform.detect(),
+        ImmutableMap.copyOf(System.getenv()),
+        new FakeJavaPackageFinder(),
+        objectMapper,
+        Optional.<WebServer>absent());
   }
 
   @Test
@@ -120,7 +121,7 @@ public class AuditInputCommandTest {
     ImmutableSet<TargetNode<?>> nodes = ImmutableSet.of(rootNode, libraryNode);
     TargetGraph targetGraph = TargetGraphFactory.newInstance(nodes);
 
-    auditInputCommand.printJsonInputs(targetGraph);
+    auditInputCommand.printJsonInputs(params, targetGraph);
     assertEquals(expectedJson, console.getTextWrittenToStdOut());
     assertEquals("", console.getTextWrittenToStdErr());
   }
@@ -140,7 +141,7 @@ public class AuditInputCommandTest {
 
     ImmutableSet<TargetNode<?>> nodes = ImmutableSet.<TargetNode<?>>of(rootNode);
     TargetGraph targetGraph = TargetGraphFactory.newInstance(nodes);
-    auditInputCommand.printJsonInputs(targetGraph);
+    auditInputCommand.printJsonInputs(params, targetGraph);
   }
 
   @Test
@@ -171,7 +172,7 @@ public class AuditInputCommandTest {
     ImmutableSet<TargetNode<?>> nodes = ImmutableSet.of(rootNode, exportedNode);
     TargetGraph targetGraph = TargetGraphFactory.newInstance(nodes);
 
-    auditInputCommand.printJsonInputs(targetGraph);
+    auditInputCommand.printJsonInputs(params, targetGraph);
     assertEquals(expectedJson, console.getTextWrittenToStdOut());
     assertEquals("", console.getTextWrittenToStdErr());
   }

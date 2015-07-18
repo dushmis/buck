@@ -16,22 +16,30 @@
 
 package com.facebook.buck.java;
 
+import com.facebook.buck.cxx.CxxDescriptionEnhancer;
+import com.facebook.buck.cxx.CxxPlatform;
+import com.facebook.buck.cxx.NativeLinkable;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.HasSourceUnderTest;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
+import com.facebook.buck.rules.BuildRules;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.Hint;
 import com.facebook.buck.rules.Label;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.SourcePaths;
+import com.facebook.buck.rules.SymlinkTree;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.base.Optional;
+import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Iterables;
 
 import java.nio.file.Path;
 
@@ -41,12 +49,15 @@ public class JavaTestDescription implements Description<JavaTestDescription.Arg>
 
   private final JavacOptions templateOptions;
   private final Optional<Long> testRuleTimeoutMs;
+  private final CxxPlatform cxxPlatform;
 
   public JavaTestDescription(
       JavacOptions templateOptions,
-      Optional<Long> testRuleTimeoutMs) {
+      Optional<Long> testRuleTimeoutMs,
+      CxxPlatform cxxPlatform) {
     this.templateOptions = templateOptions;
     this.testRuleTimeoutMs = testRuleTimeoutMs;
+    this.cxxPlatform = cxxPlatform;
   }
 
   @Override
@@ -66,20 +77,37 @@ public class JavaTestDescription implements Description<JavaTestDescription.Arg>
       A args) {
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
 
-    ImmutableJavacOptions.Builder javacOptions = JavaLibraryDescription.getJavacOptions(
-        resolver,
-        pathResolver,
-        args,
-        templateOptions);
+    JavacOptions.Builder javacOptionsBuilder =
+        JavaLibraryDescription.getJavacOptions(
+            pathResolver,
+            args,
+            templateOptions);
+    AnnotationProcessingParams annotationParams =
+        args.buildAnnotationProcessingParams(
+            params.getBuildTarget(),
+            params.getProjectFilesystem(),
+            resolver);
+    javacOptionsBuilder.setAnnotationProcessingParams(annotationParams);
+    JavacOptions javacOptions = javacOptionsBuilder.build();
 
-    AnnotationProcessingParams annotationParams = args.buildAnnotationProcessingParams(
-        params.getBuildTarget(),
-        params.getProjectFilesystem(),
-        resolver);
-    javacOptions.setAnnotationProcessingParams(annotationParams);
+    CxxLibraryEnhancement cxxLibraryEnhancement = new CxxLibraryEnhancement(
+        params,
+        args.useCxxLibraries,
+        args.vmArgs.or(ImmutableList.<String>of()),
+        pathResolver,
+        cxxPlatform);
+    params = cxxLibraryEnhancement.updatedParams;
+    ImmutableList<String> vmArgs = cxxLibraryEnhancement.updatedVmArgs;
 
     return new JavaTest(
-        params,
+        params.appendExtraDeps(
+            Iterables.concat(
+                BuildRules.getExportedRules(
+                    Iterables.concat(
+                        params.getDeclaredDeps(),
+                        resolver.getAllRules(args.providedDeps.get()))),
+                pathResolver.filterBuildRuleInputs(
+                    javacOptions.getInputs(pathResolver)))),
         pathResolver,
         args.srcs.get(),
         JavaLibraryDescription.validateResources(
@@ -87,17 +115,18 @@ public class JavaTestDescription implements Description<JavaTestDescription.Arg>
             args, params.getProjectFilesystem()),
         args.labels.get(),
         args.contacts.get(),
-        args.proguardConfig,
+        args.proguardConfig.transform(SourcePaths.toSourcePath(params.getProjectFilesystem())),
         /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
         args.testType.or(TestType.JUNIT),
-        javacOptions.build(),
-        args.vmArgs.get(),
+        javacOptions,
+        vmArgs,
         validateAndGetSourcesUnderTest(
             args.sourceUnderTest.get(),
             params.getBuildTarget(),
             resolver),
         args.resourcesRoot,
-        testRuleTimeoutMs);
+        testRuleTimeoutMs,
+        args.getRunTestSeparately());
   }
 
   public static ImmutableSet<BuildRule> validateAndGetSourcesUnderTest(
@@ -115,7 +144,7 @@ public class JavaTestDescription implements Description<JavaTestDescription.Arg>
             "Specified source under test for %s is not a Java library: %s (%s).",
             owner,
             rule.getFullyQualifiedName(),
-            rule.getType().getName());
+            rule.getType());
       }
       sourceUnderTest.add(rule);
     }
@@ -129,10 +158,62 @@ public class JavaTestDescription implements Description<JavaTestDescription.Arg>
     @Hint(isDep = false) public Optional<ImmutableSortedSet<BuildTarget>> sourceUnderTest;
     public Optional<ImmutableList<String>> vmArgs;
     public Optional<TestType> testType;
+    public Optional<Boolean> runTestSeparately;
+    public Optional<Boolean> useCxxLibraries;
 
     @Override
     public ImmutableSortedSet<BuildTarget> getSourceUnderTest() {
       return sourceUnderTest.get();
+    }
+
+    public boolean getRunTestSeparately() {
+      return runTestSeparately.or(false);
+    }
+  }
+
+  public static class CxxLibraryEnhancement {
+    public final BuildRuleParams updatedParams;
+    public final ImmutableList<String> updatedVmArgs;
+
+    public CxxLibraryEnhancement(
+        BuildRuleParams params,
+        Optional<Boolean> useCxxLibraries,
+        ImmutableList<String> vmArgs,
+        SourcePathResolver pathResolver,
+        CxxPlatform cxxPlatform) {
+      if (useCxxLibraries.or(false)) {
+        SymlinkTree nativeLibsSymlinkTree =
+            buildNativeLibsSymlinkTreeRule(params, pathResolver, cxxPlatform);
+        updatedParams = params.appendExtraDeps(ImmutableList.<BuildRule>builder()
+            .add(nativeLibsSymlinkTree)
+            // Add all the native libraries as first-order dependencies.
+            // This has two effects:
+            // (1) They become runtime deps because JavaTest adds all first-order deps.
+            // (2) They affect the JavaTest's RuleKey, so changing them will invalidate
+            // the test results cache.
+            .addAll(pathResolver.filterBuildRuleInputs(nativeLibsSymlinkTree.getLinks().values()))
+            .build());
+        updatedVmArgs = ImmutableList.<String>builder()
+            .addAll(vmArgs)
+            .add("-Djava.library.path=" + nativeLibsSymlinkTree.getRoot())
+            .build();
+      } else {
+        updatedParams = params;
+        updatedVmArgs = vmArgs;
+      }
+    }
+
+    public static SymlinkTree buildNativeLibsSymlinkTreeRule(
+        BuildRuleParams buildRuleParams,
+        SourcePathResolver pathResolver,
+        CxxPlatform cxxPlatform) {
+      return CxxDescriptionEnhancer.createSharedLibrarySymlinkTree(
+          buildRuleParams,
+          pathResolver,
+          cxxPlatform,
+          Predicates.or(
+              Predicates.instanceOf(NativeLinkable.class),
+              Predicates.instanceOf(JavaLibrary.class)));
     }
   }
 }

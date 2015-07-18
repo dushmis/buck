@@ -19,7 +19,6 @@ package com.facebook.buck.rules;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetPattern;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.parser.NoSuchBuildTargetException;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Optional;
@@ -46,7 +45,6 @@ public abstract class AbstractNodeBuilder<A> {
       BuildTarget target) {
     this.description = description;
     this.factoryParams = NonCheckingBuildRuleFactoryParams.createNonCheckingBuildRuleFactoryParams(
-        new BuildTargetParser(),
         target);
     this.target = target;
     this.arg = description.createUnpopulatedConstructorArg();
@@ -87,32 +85,17 @@ public abstract class AbstractNodeBuilder<A> {
     }
   }
 
-  @SuppressWarnings("unchecked")
   public BuildRuleParams createBuildRuleParams(
       BuildRuleResolver resolver,
       ProjectFilesystem filesystem,
       TargetGraph targetGraph) {
-    // Not all rules have deps, but all rules call them deps. When they do, they're always optional.
-    // Grab them in the unsafest way I know.
-    FakeBuildRuleParamsBuilder builder = new FakeBuildRuleParamsBuilder(target)
-        .setType(description.getBuildRuleType())
+    TargetNode<?> node = build();
+    return new FakeBuildRuleParamsBuilder(target)
         .setProjectFilesystem(filesystem)
-        .setTargetGraph(targetGraph);
-    try {
-      Field depsField = arg.getClass().getField("deps");
-      Object optional = depsField.get(arg);
-
-      if (optional == null) {
-        return builder.build();
-      }
-      // Here's a whole series of assumptions in one lump of a Bad Idea.
-      ImmutableSortedSet<BuildTarget> deps =
-          (ImmutableSortedSet<BuildTarget>) ((Optional<?>) optional).get();
-      return builder.setDeps(resolver.getAllRules(deps)).build();
-    } catch (ReflectiveOperationException ignored) {
-      // Field doesn't exist: no deps.
-      return builder.build();
-    }
+        .setTargetGraph(targetGraph)
+        .setDeps(resolver.getAllRules(node.getDeps()))
+        .setExtraDeps(resolver.getAllRules(node.getExtraDeps()))
+        .build();
   }
 
   @SuppressWarnings("unchecked")

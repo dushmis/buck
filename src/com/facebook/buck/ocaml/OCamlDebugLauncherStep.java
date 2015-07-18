@@ -17,6 +17,7 @@
 package com.facebook.buck.ocaml;
 
 import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.RuleKeyAppendable;
 import com.facebook.buck.shell.Shell;
 import com.facebook.buck.shell.ShellStep;
 import com.facebook.buck.step.ExecutionContext;
@@ -32,13 +33,14 @@ import com.google.common.collect.Iterables;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 
 /**
  * OCaml linking step. Dependencies and inputs should be topologically ordered
  */
 public class OCamlDebugLauncherStep implements Step {
 
-  public static class Args {
+  public static class Args implements RuleKeyAppendable {
     public final Path ocamlDebug;
     public final Path bytecodeOutput;
     public final ImmutableList<OCamlLibrary> ocamlInput;
@@ -47,20 +49,22 @@ public class OCamlDebugLauncherStep implements Step {
     public Args(
         Path ocamlDebug,
         Path bytecodeOutput,
-        ImmutableList<OCamlLibrary> ocamlInput,
-        ImmutableList<String> bytecodeIncludeFlags) {
+        List<OCamlLibrary> ocamlInput,
+        List<String> bytecodeIncludeFlags) {
       this.ocamlDebug = ocamlDebug;
       this.bytecodeOutput = bytecodeOutput;
-      this.ocamlInput = ocamlInput;
-      this.bytecodeIncludeFlags = bytecodeIncludeFlags;
+      this.ocamlInput = ImmutableList.copyOf(ocamlInput);
+      this.bytecodeIncludeFlags = ImmutableList.copyOf(bytecodeIncludeFlags);
     }
 
     public Path getOutput() {
       return Paths.get(bytecodeOutput.toString() + ".debug");
     }
 
-    public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-      return builder.setReflectively("ocamlDebug", ocamlDebug.toString())
+    @Override
+    public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+      return builder
+          .setReflectively("ocamlDebug", ocamlDebug.toString())
           .setReflectively("bytecodeOutput", bytecodeOutput.toString())
           .setReflectively("flags", bytecodeIncludeFlags);
     }

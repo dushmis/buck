@@ -1,4 +1,4 @@
-java_library(
+java_immutables_library(
   name = 'event',
   srcs = glob(['*.java']),
   deps = [
@@ -11,6 +11,10 @@ java_library(
     '//src/com/facebook/buck/timing:timing',
     '//src/com/facebook/buck/util:exceptions',
     '//src/com/facebook/buck/util/concurrent:concurrent',
+  ],
+  provided_deps = [
+    # Event API is loaded by the bootstrapper at runtime; don't need to depend on it strongly
+    '//src/com/facebook/buck/event/api:api',
   ],
   visibility = [
     'PUBLIC',

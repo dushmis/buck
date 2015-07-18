@@ -15,37 +15,33 @@
  */
 package com.facebook.buck.android;
 
+import com.facebook.buck.cxx.CxxHeaders;
 import com.facebook.buck.cxx.CxxPlatform;
 import com.facebook.buck.cxx.CxxPreprocessables;
-import com.facebook.buck.cxx.CxxPreprocessorDep;
 import com.facebook.buck.cxx.CxxPreprocessorInput;
 import com.facebook.buck.cxx.CxxSource;
 import com.facebook.buck.cxx.Linker;
 import com.facebook.buck.cxx.NativeLinkable;
 import com.facebook.buck.cxx.NativeLinkableInput;
 import com.facebook.buck.cxx.NativeLinkables;
+import com.facebook.buck.file.WriteFile;
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.ImmutableFlavor;
-import com.facebook.buck.rules.AbstractBuildRule;
-import com.facebook.buck.rules.BuildContext;
+import com.facebook.buck.model.Pair;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
-import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.PathSourcePath;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.macros.EnvironmentVariableMacroExpander;
 import com.facebook.buck.rules.macros.MacroExpander;
 import com.facebook.buck.rules.macros.MacroHandler;
-import com.facebook.buck.step.Step;
-import com.facebook.buck.step.fs.MkdirStep;
-import com.facebook.buck.step.fs.WriteFileStep;
 import com.facebook.buck.util.BuckConstant;
 import com.facebook.buck.util.Escaper;
 import com.facebook.buck.util.MoreIterables;
@@ -60,7 +56,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
@@ -81,8 +76,6 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
 
   public static final BuildRuleType TYPE = BuildRuleType.of("ndk_library");
 
-  private static final BuildRuleType MAKEFILE_TYPE =
-      BuildRuleType.of("ndk_library_makefile");
   private static final Flavor MAKEFILE_FLAVOR = ImmutableFlavor.of("makefile");
 
   private static final Pattern EXTENSIONS_REGEX =
@@ -97,11 +90,11 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
   );
 
   private final Optional<String> ndkVersion;
-  private final ImmutableMap<AndroidBinary.TargetCpuType, NdkCxxPlatform> cxxPlatforms;
+  private final ImmutableMap<NdkCxxPlatforms.TargetCpuType, NdkCxxPlatform> cxxPlatforms;
 
   public NdkLibraryDescription(
       Optional<String> ndkVersion,
-      ImmutableMap<AndroidBinary.TargetCpuType, NdkCxxPlatform> cxxPlatforms) {
+      ImmutableMap<NdkCxxPlatforms.TargetCpuType, NdkCxxPlatform> cxxPlatforms) {
     this.ndkVersion = ndkVersion;
     this.cxxPlatforms = Preconditions.checkNotNull(cxxPlatforms);
   }
@@ -128,7 +121,7 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
       // including the initial escaping.  Since the makefiles eventually hand-off these values
       // to the shell, we first perform bash escaping.
       //
-      escapedArg = Escaper.escapeAsBashString(escapedArg);
+      escapedArg = Escaper.escapeAsShellString(escapedArg);
       for (int i = 0; i < 4; i++) {
         escapedArg = Escaper.escapeAsMakefileValueString(escapedArg);
       }
@@ -145,7 +138,7 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
     return escapedArgs.build();
   }
 
-  private String getTargetArchAbi(AndroidBinary.TargetCpuType cpuType) {
+  private String getTargetArchAbi(NdkCxxPlatforms.TargetCpuType cpuType) {
     switch (cpuType) {
       case ARM:
         return "armeabi";
@@ -169,7 +162,7 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
    * @return a {@link BuildRule} which generates a Android.mk which pulls in the local Android.mk
    *     file and also appends relevant preprocessor and linker flags to use C/C++ library deps.
    */
-  private BuildRule generateMakefile(
+  private Pair<BuildRule, Iterable<BuildRule>> generateMakefile(
       final BuildRuleParams params,
       BuildRuleResolver resolver) {
 
@@ -178,21 +171,19 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
     ImmutableList.Builder<String> outputLinesBuilder = ImmutableList.builder();
     ImmutableSortedSet.Builder<BuildRule> deps = ImmutableSortedSet.naturalOrder();
 
-    for (Map.Entry<AndroidBinary.TargetCpuType, NdkCxxPlatform> entry : cxxPlatforms.entrySet()) {
+    for (Map.Entry<NdkCxxPlatforms.TargetCpuType, NdkCxxPlatform> entry : cxxPlatforms.entrySet()) {
       CxxPlatform cxxPlatform = entry.getValue().getCxxPlatform();
 
       CxxPreprocessorInput cxxPreprocessorInput;
       try {
         // Collect the preprocessor input for all C/C++ library deps.  We search *through* other
         // NDK library rules.
-        cxxPreprocessorInput =
+        cxxPreprocessorInput = CxxPreprocessorInput.concat(
             CxxPreprocessables.getTransitiveCxxPreprocessorInput(
                 cxxPlatform,
                 params.getDeps(),
-                Predicates.or(
-                    Predicates.instanceOf(CxxPreprocessorDep.class),
-                    Predicates.instanceOf(NdkLibrary.class)));
-      } catch (CxxPreprocessorInput.ConflictingHeadersException e) {
+                Predicates.instanceOf(NdkLibrary.class)));
+      } catch (CxxHeaders.ConflictingHeadersException e) {
         throw e.getHumanReadableExceptionForBuildTarget(params.getBuildTarget());
       }
 
@@ -242,7 +233,7 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
 
       // Write the relevant lines to the generated makefile.
       if (!localCflags.isEmpty() || !localLdflags.isEmpty()) {
-        AndroidBinary.TargetCpuType targetCpuType = entry.getKey();
+        NdkCxxPlatforms.TargetCpuType targetCpuType = entry.getKey();
         String targetArchAbi = getTargetArchAbi(targetCpuType);
 
         outputLinesBuilder.add(String.format("ifeq ($(TARGET_ARCH_ABI),%s)", targetArchAbi));
@@ -257,6 +248,55 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
       }
     }
 
+    // GCC-only magic that rewrites non-deterministic parts of builds
+    String ndksubst = NdkCxxPlatforms.ANDROID_NDK_ROOT;
+
+    outputLinesBuilder.addAll(
+        ImmutableList.copyOf(new String[] {
+              // We're evaluated once per architecture, but want to add the cflags only once.
+              "ifeq ($(BUCK_ALREADY_HOOKED_CFLAGS),)",
+              "BUCK_ALREADY_HOOKED_CFLAGS := 1",
+              // Only GCC supports -fdebug-prefix-map
+              "ifeq ($(filter clang%,$(NDK_TOOLCHAIN_VERSION)),)",
+              // Replace absolute paths with machine-relative ones.
+              "NDK_APP_CFLAGS += -fdebug-prefix-map=$(NDK_ROOT)/=" + ndksubst + "/",
+              "NDK_APP_CFLAGS += -fdebug-prefix-map=$(abspath $(BUCK_PROJECT_DIR))/=./",
+              // Replace paths relative to the build rule with paths relative to the
+              // repository root.
+              "NDK_APP_CFLAGS += -fdebug-prefix-map=$(BUCK_PROJECT_DIR)/=./",
+              "NDK_APP_CFLAGS += -fdebug-prefix-map=./=" +
+              ".$(subst $(abspath $(BUCK_PROJECT_DIR)),,$(abspath $(CURDIR)))/",
+              "NDK_APP_CFLAGS += -fno-record-gcc-switches",
+              "ifeq ($(filter 4.6,$(TOOLCHAIN_VERSION)),)",
+              // Do not let header canonicalization undo the work we just did above.  Note that GCC
+              // 4.6 doesn't support this option, but that's okay, because it doesn't canonicalize
+              // headers either.
+              "NDK_APP_CPPFLAGS += -fno-canonical-system-headers",
+              // If we include the -fdebug-prefix-map in the switches, the "from"-parts of which
+              // contain machine-specific paths, we lose determinism.  GCC 4.6 didn't include
+              // detailed command line argument information anyway.
+              "NDK_APP_CFLAGS += -gno-record-gcc-switches",
+              "endif", // !GCC 4.6
+              "endif", // !clang
+
+              // Rewrite NDK module paths to import managed modules by relative path instead of by
+              // absolute path, but only for modules under the project root.
+              "BUCK_SAVED_IMPORTS := $(__ndk_import_dirs)",
+              "__ndk_import_dirs :=",
+              "$(foreach __dir,$(BUCK_SAVED_IMPORTS),\\",
+              "$(call import-add-path-optional,\\",
+              "$(if $(filter $(abspath $(BUCK_PROJECT_DIR))%,$(__dir)),\\",
+              "$(BUCK_PROJECT_DIR)$(patsubst $(abspath $(BUCK_PROJECT_DIR))%,%,$(__dir)),\\",
+              "$(__dir))))",
+              "endif", // !already hooked
+              // Now add a toolchain directory to replace.  GCC's debug path replacement evaluates
+              // candidate replaces last-first (because it internally pushes them all onto a stack
+              // and scans the stack first-match-wins), so only add them after the more
+              // generic paths.
+              "NDK_APP_CFLAGS += -fdebug-prefix-map=$(TOOLCHAIN_PREBUILT_ROOT)/=" +
+              "@ANDROID_NDK_ROOT@/toolchains/$(TOOLCHAIN_NAME)/prebuilt/@BUILD_HOST@/",
+            }));
+
     outputLinesBuilder.add("include Android.mk");
 
     BuildTarget makefileTarget = BuildTarget
@@ -264,60 +304,25 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
         .addFlavors(MAKEFILE_FLAVOR)
         .build();
     BuildRuleParams makefileParams = params.copyWithChanges(
-        MAKEFILE_TYPE,
         makefileTarget,
-        Suppliers.ofInstance(deps.build()),
+        Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
         Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()));
     final Path makefilePath = getGeneratedMakefilePath(params.getBuildTarget());
     final String contents = Joiner.on(System.lineSeparator()).join(outputLinesBuilder.build());
 
-    return new AbstractBuildRule(makefileParams, pathResolver) {
-
-      @Override
-      protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-        return ImmutableList.of();
-      }
-
-      @Override
-      protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-        return builder
-            .setReflectively("contents", contents)
-            .setReflectively("output", makefilePath.toString());
-      }
-
-      @Override
-      public ImmutableList<Step> getBuildSteps(
-          BuildContext context,
-          BuildableContext buildableContext) {
-        buildableContext.recordArtifact(makefilePath);
-        return ImmutableList.of(
-            new MkdirStep(makefilePath.getParent()),
-            new WriteFileStep(contents, makefilePath));
-      }
-
-      @Override
-      public Path getPathToOutputFile() {
-        return makefilePath;
-      }
-
-    };
-
+    return new Pair<BuildRule, Iterable<BuildRule>>(
+        new WriteFile(makefileParams, pathResolver, contents, makefilePath),
+        deps.build());
   }
 
-  @Override
-  public <A extends Arg> NdkLibrary createBuildRule(
-      final BuildRuleParams params,
-      BuildRuleResolver resolver,
-      A args) {
-
-    BuildRule makefile = generateMakefile(params, resolver);
-    resolver.addToIndex(makefile);
-
+  @VisibleForTesting
+  protected ImmutableSortedSet<SourcePath> findSources(
+      final ProjectFilesystem filesystem,
+      final Path buildRulePath) {
     final ImmutableSortedSet.Builder<SourcePath> srcs = ImmutableSortedSet.naturalOrder();
 
     try {
-      final Path buildRulePath = params.getBuildTarget().getBasePath();
-      final Path rootDirectory = params.getProjectFilesystem().resolve(buildRulePath);
+      final Path rootDirectory = filesystem.resolve(buildRulePath);
       Files.walkFileTree(
           rootDirectory,
           EnumSet.of(FileVisitOption.FOLLOW_LINKS),
@@ -329,7 +334,7 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
               if (EXTENSIONS_REGEX.matcher(file.toString()).matches()) {
                 srcs.add(
                     new PathSourcePath(
-                        params.getProjectFilesystem(),
+                        filesystem,
                         buildRulePath.resolve(rootDirectory.relativize(file))));
               }
 
@@ -340,16 +345,26 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
       throw new RuntimeException(e);
     }
 
+    return srcs.build();
+  }
+
+  @Override
+  public <A extends Arg> NdkLibrary createBuildRule(
+      final BuildRuleParams params,
+      BuildRuleResolver resolver,
+      A args) {
+
+    Pair<BuildRule, Iterable<BuildRule>> makefilePair = generateMakefile(params, resolver);
+    resolver.addToIndex(makefilePair.getFirst());
     return new NdkLibrary(
-        params.copyWithExtraDeps(
-            Suppliers.ofInstance(
-                ImmutableSortedSet.<BuildRule>naturalOrder()
-                    .addAll(params.getExtraDeps())
-                    .add(makefile)
-                    .build())),
+        params.appendExtraDeps(
+            ImmutableSortedSet.<BuildRule>naturalOrder()
+                .add(makefilePair.getFirst())
+                .addAll(makefilePair.getSecond())
+                .build()),
         new SourcePathResolver(resolver),
         getGeneratedMakefilePath(params.getBuildTarget()),
-        srcs.build(),
+        findSources(params.getProjectFilesystem(), params.getBuildTarget().getBasePath()),
         args.flags.get(),
         args.isAsset.or(false),
         ndkVersion,

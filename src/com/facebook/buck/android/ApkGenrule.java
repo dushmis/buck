@@ -18,11 +18,11 @@ package com.facebook.buck.android;
 
 import static com.facebook.buck.rules.BuildableProperties.Kind.ANDROID;
 
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableProperties;
 import com.facebook.buck.rules.ExopackageInfo;
 import com.facebook.buck.rules.InstallableApk;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.shell.Genrule;
@@ -53,6 +53,7 @@ import java.util.List;
 public class ApkGenrule extends Genrule implements InstallableApk {
 
   private static final BuildableProperties PROPERTIES = new BuildableProperties(ANDROID);
+  @AddToRuleKey
   private final InstallableApk apk;
 
   ApkGenrule(
@@ -84,12 +85,6 @@ public class ApkGenrule extends Genrule implements InstallableApk {
     return PROPERTIES;
   }
 
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return super.appendDetailsToRuleKey(builder)
-        .setReflectively("apk", apk.getApkPath());
-  }
-
   public InstallableApk getInstallableApk() {
     return apk;
   }
@@ -101,7 +96,7 @@ public class ApkGenrule extends Genrule implements InstallableApk {
 
   @Override
   public Path getApkPath() {
-    return getPathToOutputFile();
+    return getPathToOutput();
   }
 
   @Override

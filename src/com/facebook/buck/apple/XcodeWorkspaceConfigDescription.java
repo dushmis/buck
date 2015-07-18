@@ -17,16 +17,19 @@
 package com.facebook.buck.apple;
 
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.Description;
+import com.facebook.buck.rules.NoopBuildRule;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.annotations.Beta;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 
 import java.util.HashMap;
@@ -48,18 +51,18 @@ public class XcodeWorkspaceConfigDescription
   }
 
   @Override
-  public <A extends Arg> XcodeWorkspaceConfig createBuildRule(
+  public <A extends Arg> BuildRule createBuildRule(
       final BuildRuleParams params,
       final BuildRuleResolver resolver,
       A args) {
-    return new XcodeWorkspaceConfig(params, new SourcePathResolver(resolver));
+    return new NoopBuildRule(params, new SourcePathResolver(resolver));
   }
 
   public static String getWorkspaceNameFromArg(Arg arg) {
     if (arg.workspaceName.isPresent()) {
       return arg.workspaceName.get();
     } else if (arg.srcTarget.isPresent()) {
-      return arg.srcTarget.get().getShortNameAndFlavorPostfix();
+      return arg.srcTarget.get().getShortName();
     } else {
       throw new HumanReadableException(
           "Either workspace_name or src_target is required for xcode_workspace_config");
@@ -80,7 +83,10 @@ public class XcodeWorkspaceConfigDescription
   public static class Arg {
     public Optional<BuildTarget> srcTarget;
     public Optional<ImmutableSortedSet<BuildTarget>> extraTests;
+    public Optional<ImmutableSortedSet<BuildTarget>> extraTargets;
     public Optional<String> workspaceName;
     public Optional<ImmutableMap<SchemeActionType, String>> actionConfigNames;
+    public Optional<ImmutableSortedMap<String, BuildTarget>> extraSchemes;
+    public Optional<Boolean> isRemoteRunnable;
   }
 }

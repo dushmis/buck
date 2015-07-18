@@ -19,7 +19,6 @@ package com.facebook.buck.apple;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.AbstractNodeBuilder;
 import com.facebook.buck.rules.SourcePath;
-import com.facebook.buck.rules.coercer.AppleBundleDestination;
 import com.facebook.buck.rules.coercer.Either;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
@@ -29,7 +28,9 @@ public class AppleBundleBuilder
     extends AbstractNodeBuilder<AppleBundleDescription.Arg> {
 
   protected AppleBundleBuilder(BuildTarget target) {
-    super(new AppleBundleDescription(), target);
+    super(
+        FakeAppleRuleDescriptions.BUNDLE_DESCRIPTION,
+        target);
   }
 
   public static AppleBundleBuilder createBuilder(BuildTarget target) {
@@ -58,12 +59,6 @@ public class AppleBundleBuilder
 
   public AppleBundleBuilder setHeaders(Optional<ImmutableMap<String, SourcePath>> headers) {
     arg.headers = headers;
-    return this;
-  }
-
-  public AppleBundleBuilder setFiles(
-      Optional<ImmutableMap<AppleBundleDestination, SourcePath>> files) {
-    arg.files = files;
     return this;
   }
 

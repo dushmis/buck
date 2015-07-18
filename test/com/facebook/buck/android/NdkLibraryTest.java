@@ -20,18 +20,21 @@ import static com.facebook.buck.rules.BuildableProperties.Kind.ANDROID;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.io.ProjectFilesystem;
+import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.FakeBuildContext;
 import com.facebook.buck.rules.FakeBuildableContext;
-import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.TestExecutionContext;
 import com.facebook.buck.testutil.MoreAsserts;
 import com.facebook.buck.util.BuckConstant;
 import com.facebook.buck.util.DefaultPropertyFinder;
+import com.facebook.buck.util.environment.Platform;
 import com.google.common.base.Optional;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
@@ -46,9 +49,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 
-/**
- * Unit test for {@link NdkLibrary}.
- */
 public class NdkLibraryTest {
 
   private ExecutionContext executionContext;
@@ -69,49 +69,30 @@ public class NdkLibraryTest {
     executionContext = TestExecutionContext.newBuilder()
         .setAndroidPlatformTargetSupplier(Suppliers.ofInstance(androidPlatformTarget))
         .build();
-    ndkBuildCommand = executionContext.resolveExecutable(
-        resolver.findAndroidNdkDir().get(),
-        "ndk-build").get().toAbsolutePath().toString();
+    ndkBuildCommand = new ExecutableFinder().getOptionalExecutable(
+        Paths.get("ndk-build"),
+        resolver.findAndroidNdkDir().get()).get().toAbsolutePath().toString();
   }
 
   @Test
   public void testSimpleNdkLibraryRule() throws IOException {
     BuildRuleResolver ruleResolver = new BuildRuleResolver();
-    SourcePathResolver pathResolver = new SourcePathResolver(ruleResolver);
-    BuildContext context = null;
+    BuildContext context = FakeBuildContext.NOOP_CONTEXT;
 
     String basePath = "java/src/com/facebook/base";
+    BuildTarget target = BuildTargetFactory.newInstance(String.format("//%s:base", basePath));
     NdkLibrary ndkLibrary =
-        NdkLibraryBuilder.createNdkLibrary(
-            BuildTargetFactory.newInstance(
-                String.format("//%s:base", basePath)),
-            pathResolver,
-            ruleResolver,
-            projectFilesystem)
-            .setNdkVersion("r8b")
-            .addSrc(Paths.get(basePath + "/Application.mk"))
-            .addSrc(Paths.get(basePath + "/main.cpp"))
-            .addSrc(Paths.get(basePath + "/Android.mk"))
-            .addFlag("flag1")
-            .addFlag("flag2")
+        (NdkLibrary) new NdkLibraryBuilder(target)
+            .setFlags(ImmutableList.of("flag1", "flag2"))
             .setIsAsset(true)
-            .build();
+            .build(ruleResolver, projectFilesystem);
 
-    ruleResolver.addToIndex(ndkLibrary);
-
-    assertEquals(NdkLibraryDescription.TYPE, ndkLibrary.getType());
+    assertEquals("ndk_library", ndkLibrary.getType());
 
     assertTrue(ndkLibrary.getProperties().is(ANDROID));
     assertTrue(ndkLibrary.isAsset());
     assertEquals(Paths.get(BuckConstant.GEN_DIR, basePath, "__libbase"),
         ndkLibrary.getLibraryPath());
-
-    MoreAsserts.assertListEquals(
-        ImmutableList.of(
-            Paths.get(basePath + "/Android.mk"),
-            Paths.get(basePath + "/Application.mk"),
-            Paths.get(basePath + "/main.cpp")),
-        ImmutableList.copyOf(ndkLibrary.getInputsToCompareToOutput()));
 
     List<Step> steps = ndkLibrary.getBuildSteps(context, new FakeBuildableContext());
 
@@ -125,17 +106,17 @@ public class NdkLibraryTest {
                     "APP_BUILD_SCRIPT=%s " +
                     "NDK_OUT=%s " +
                     "NDK_LIBS_OUT=%s " +
-                    "BUCK_PROJECT_DIR=. " +
-                    "host-echo-build-step=@# " +
+                    "BUCK_PROJECT_DIR=../../../../../. " +
+                    "host-echo-build-step=%s " +
                     "--silent",
                 ndkBuildCommand,
                 Runtime.getRuntime().availableProcessors(),
                 Paths.get(basePath).toString(),
                 /* APP_PROJECT_PATH */ libbase + File.separator,
-                /* APP_BUILD_SCRIPT */ Paths.get(basePath, "Android.mk"),
+                /* APP_BUILD_SCRIPT */ NdkLibraryDescription.getGeneratedMakefilePath(target),
                 /* NDK_OUT */ libbase + File.separator,
                 /* NDK_LIBS_OUT */ Paths.get(libbase, "libs"),
-                Paths.get(libbase, "libs").toString())
+                /* host-echo-build-step */ Platform.detect() == Platform.WINDOWS ? "@REM" : "@#")
         ),
         steps.subList(0, 1),
         executionContext);

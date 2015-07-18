@@ -25,7 +25,6 @@ import com.facebook.buck.parser.TargetNodeSpec;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.util.Console;
 import com.facebook.buck.util.HumanReadableException;
-
 import com.google.common.collect.ImmutableMap;
 
 import java.io.IOException;
@@ -62,7 +61,7 @@ public class ProjectGraphParsers {
               buckEventBus,
               console,
               environment,
-              enableProfiling);
+              enableProfiling).getSecond();
         } catch (BuildTargetException | BuildFileParseException e) {
           throw new HumanReadableException(e);
         }

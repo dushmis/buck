@@ -28,36 +28,11 @@ java_library(
 )
 
 java_library(
-  name = 'coverage',
-  srcs = ['ReportGenerator.java',],
-  deps = [
-    '//third-party/java/jacoco:jacoco',
-  ],
-)
-
-java_binary(
-  name = 'report-generator',
-  main_class = 'com.facebook.buck.java.ReportGenerator',
-  blacklist = [
-    '.*SF',
-    '.*RSA',
-  ],
-  deps = [
-    ':coverage',
-  ],
-  visibility = [
-    '//programs:bucklib',
-    '//programs:bucklib-no-nailgun',
-  ]
-)
-
-java_library(
   name = 'config',
   srcs = [
     'JavaBuckConfig.java',
   ],
   deps = [
-    ':javac',
     ':support',
     '//third-party/java/guava:guava',
     '//src/com/facebook/buck/cli:config',
@@ -80,51 +55,45 @@ java_library(
   visibility = ['PUBLIC'],
 )
 
-java_immutables_library(
-  name = 'javac',
+java_library(
+  name = 'javac-internals',
   srcs = [
-    'ExternalJavac.java',
-    'Javac.java',
-    'JavacErrorParser.java',
-    'JavacVersion.java',
-    'Jsr199Javac.java',
     'ZipEntryJavaFileObject.java',
   ],
   deps = [
-    ':packagefinder',
-    '//src/com/facebook/buck/event:event',
-    '//src/com/facebook/buck/io:io',
-    '//src/com/facebook/buck/log:api',
-    '//src/com/facebook/buck/model:model',
-    '//src/com/facebook/buck/rules:build_rule',
-    '//src/com/facebook/buck/step:step',
-    '//src/com/facebook/buck/util:escaper',
-    '//src/com/facebook/buck/util:exceptions',
-    '//src/com/facebook/buck/util:io',
-    '//src/com/facebook/buck/util:util',
-    '//src/com/facebook/buck/zip:unzip',
     '//third-party/java/guava:guava',
     '//third-party/java/jsr:jsr305',
   ],
-  visibility = ['PUBLIC'],
 )
 
 java_immutables_library(
   name = 'support',
   srcs = [
+    'AbstractJavacVersion.java',
+    'AbstractJavacOptions.java',
+    'AnnotationProcessingEvent.java',
     'AnnotationProcessingParams.java',
     'BuildsAnnotationProcessor.java',
+    'DiagnosticPrettyPrinter.java',
+    'ExternalJavac.java',
     'HasClasspathEntries.java',
     'HasJavaAbi.java',
-    'Javac.java',
+    'JarBackedJavac.java',
     'JavaLibrary.java',
-    'JavacOptions.java',
+    'Javac.java',
+    'JavacErrorParser.java',
+    'JdkProvidedInMemoryJavac.java',
+    'Jsr199Javac.java',
+    'TracingProcessorWrapper.java',
   ],
   deps = [
     ':classhash',
-    ':javac',
+    ':javac-internals',
+    ':packagefinder',
+    '//src/com/facebook/buck/event:event',
     '//src/com/facebook/buck/io:io',
     '//src/com/facebook/buck/java/abi:protocol',
+    '//src/com/facebook/buck/log:api',
     '//src/com/facebook/buck/model:model',
     '//src/com/facebook/buck/rules:build_rule',
     '//src/com/facebook/buck/rules:rules',
@@ -133,8 +102,14 @@ java_immutables_library(
     '//src/com/facebook/buck/util:escaper',
     '//src/com/facebook/buck/util:exceptions',
     '//src/com/facebook/buck/util:io',
+    '//src/com/facebook/buck/util:util',
+    '//src/com/facebook/buck/zip:unzip',
     '//third-party/java/guava:guava',
     '//third-party/java/jsr:jsr305',
+  ],
+  provided_deps = [
+    # Event API is loaded by the bootstrapper at runtime; don't need to depend on it strongly
+    '//src/com/facebook/buck/event/api:api',
   ],
   visibility = ['PUBLIC'],
 )
@@ -181,7 +156,6 @@ java_library(
     'FatJarMain.java',
   ],
   deps = [
-    ':javac',
     ':classhash',
     ':fat-jar-main',
     ':nativelinkable',
@@ -190,6 +164,7 @@ java_library(
     ':support',
     '//src/com/facebook/buck/android:packageable',
     '//src/com/facebook/buck/cxx:platform',
+    '//src/com/facebook/buck/cxx:rules',
     '//src/com/facebook/buck/event:event',
     '//src/com/facebook/buck/graph:graph',
     '//src/com/facebook/buck/io:io',
@@ -199,6 +174,7 @@ java_library(
     '//src/com/facebook/buck/parser:rule_pattern',
     '//src/com/facebook/buck/rules:build_rule',
     '//src/com/facebook/buck/rules:rules',
+    '//src/com/facebook/buck/rules/keys:keys',
     '//src/com/facebook/buck/test:test',
     '//src/com/facebook/buck/shell:steps',
     '//src/com/facebook/buck/step:step',
@@ -230,9 +206,7 @@ java_library(
     'TestType.java',
   ],
   deps = [
-    ':javac',
     ':packagefinder',
-    ':report-generator',
     ':support',
     '//src/com/facebook/buck/dalvik:dalvik_stats_tool',
     '//src/com/facebook/buck/java/abi:abi',
@@ -240,6 +214,7 @@ java_library(
     '//src/com/facebook/buck/java/runner:runner',
     '//src/com/facebook/buck/event:event',
     '//src/com/facebook/buck/io:io',
+    '//src/com/facebook/buck/java/coverage:report-generator',
     '//src/com/facebook/buck/log:api',
     '//src/com/facebook/buck/model:model',
     '//src/com/facebook/buck/rules:build_rule',
@@ -253,6 +228,7 @@ java_library(
     '//src/com/facebook/buck/util:exceptions',
     '//src/com/facebook/buck/util:io',
     '//src/com/facebook/buck/util:util',
+    '//src/com/facebook/buck/util/environment:platform',
     '//src/com/facebook/buck/zip:stream',
     '//src/com/facebook/buck/zip:unzip',
     '//third-party/java/guava:guava',
@@ -287,6 +263,8 @@ java_library(
   ],
   visibility = [
     '//src/com/facebook/buck/cli:cli',
+    '//src/com/facebook/buck/java/intellij:intellij',
     '//test/com/facebook/buck/java:java',
+    '//test/com/facebook/buck/java/intellij:intellij',
   ],
 )

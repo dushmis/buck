@@ -17,11 +17,13 @@
 package com.facebook.buck.python;
 
 import com.facebook.buck.cli.BuckConfig;
-import com.facebook.buck.io.MorePaths;
+import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.ProcessExecutor;
+import com.facebook.buck.util.ProcessExecutorParams;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.CharMatcher;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 
@@ -38,7 +40,7 @@ public class PythonBuckConfig {
   private static final String SECTION = "python";
 
   private static final Pattern PYTHON_VERSION_REGEX =
-      Pattern.compile(".*?(\\wython \\d+\\.\\d+).*");
+      Pattern.compile(".*?(\\wy(thon|run) \\d+\\.\\d+).*");
 
   // Prefer "python2" where available (Linux), but fall back to "python" (Mac).
   private static final ImmutableList<String> PYTHON_INTERPRETER_NAMES =
@@ -51,11 +53,19 @@ public class PythonBuckConfig {
               "src/com/facebook/buck/python/pex.py"))
           .toAbsolutePath();
 
+  private static final Path DEFAULT_PATH_TO_TEST_MAIN =
+      Paths.get(
+          System.getProperty(
+              "buck.path_to_python_test_main",
+              "src/com/facebook/buck/python/__test_main__.py"))
+          .toAbsolutePath();
 
   private final BuckConfig delegate;
+  private final ExecutableFinder exeFinder;
 
-  public PythonBuckConfig(BuckConfig config) {
+  public PythonBuckConfig(BuckConfig config, ExecutableFinder exeFinder) {
     this.delegate = config;
+    this.exeFinder = exeFinder;
   }
 
   /**
@@ -66,8 +76,8 @@ public class PythonBuckConfig {
   }
 
   /**
-   * Returns the path to python interpreter. If python is specified in the tools section
-   * that is used and an error reported if invalid.
+   * Returns the path to python interpreter. If python is specified in 'interpreter' key
+   * of the 'python' section that is used and an error reported if invalid.
    * @return The found python interpreter.
    */
   public String getPythonInterpreter() {
@@ -85,15 +95,10 @@ public class PythonBuckConfig {
       pythonInterpreterNames = ImmutableList.of(configPath.get());
     }
 
-    ImmutableList.Builder<Path> paths = ImmutableList.builder();
-    for (String path : delegate.getEnv("PATH", File.pathSeparator)) {
-      paths.add(Paths.get(path));
-    }
     for (String interpreterName : pythonInterpreterNames) {
-      Optional<Path> python = MorePaths.searchPathsForExecutable(
+      Optional<Path> python = exeFinder.getOptionalExecutable(
           Paths.get(interpreterName),
-          paths.build(),
-          ImmutableList.copyOf(delegate.getEnv("PATHEXT", File.pathSeparator)));
+          delegate.getEnvironment());
       if (python.isPresent()) {
         return python.get().toAbsolutePath().toString();
       }
@@ -113,20 +118,8 @@ public class PythonBuckConfig {
     return new PythonEnvironment(pythonPath, pythonVersion);
   }
 
-  public Optional<Path> getPathToTestMain() {
-    Optional <Path> testMain = delegate.getPath(SECTION, "path_to_python_test_main");
-     if (testMain.isPresent()) {
-       return testMain;
-    }
-
-    // In some configs (particularly tests) it's possible that this variable will not be set.
-
-    String rawPath = System.getProperty("buck.path_to_python_test_main");
-    if (rawPath == null) {
-      return Optional.absent();
-    }
-
-    return Optional.of(Paths.get(rawPath));
+  public Path getPathToTestMain() {
+    return delegate.getPath(SECTION, "path_to_python_test_main").or(DEFAULT_PATH_TO_TEST_MAIN);
   }
 
   public Path getPathToPex() {
@@ -146,14 +139,19 @@ public class PythonBuckConfig {
     return path.get();
   }
 
+  public String getPexExtension() {
+    return delegate.getValue(SECTION, "pex_extension").or(".pex");
+  }
+
   private static PythonVersion getPythonVersion(ProcessExecutor processExecutor, Path pythonPath)
       throws InterruptedException {
     try {
-      ProcessExecutor.Result versionResult = processExecutor.execute(
-          Runtime.getRuntime().exec(new String[]{pythonPath.toString(), "--version"}),
+      ProcessExecutor.Result versionResult = processExecutor.launchAndExecute(
+          ProcessExecutorParams.builder().addCommand(pythonPath.toString(), "-V").build(),
           EnumSet.of(ProcessExecutor.Option.EXPECTING_STD_ERR),
           /* stdin */ Optional.<String>absent(),
-          /* timeOutMs */ Optional.<Long>absent());
+          /* timeOutMs */ Optional.<Long>absent(),
+          /* timeoutHandler */ Optional.<Function<Process, Void>>absent());
       return extractPythonVersion(pythonPath, versionResult);
     } catch (IOException e) {
       throw new HumanReadableException(
@@ -169,15 +167,18 @@ public class PythonBuckConfig {
       Path pythonPath,
       ProcessExecutor.Result versionResult) {
     if (versionResult.getExitCode() == 0) {
-      String versionString = CharMatcher.WHITESPACE.trimFrom(versionResult.getStderr().get());
+      String versionString = CharMatcher.WHITESPACE.trimFrom(
+          CharMatcher.WHITESPACE.trimFrom(versionResult.getStderr().get()) +
+          CharMatcher.WHITESPACE.trimFrom(versionResult.getStdout().get())
+              .replaceAll("\u001B\\[[;\\d]*m", ""));
       Matcher matcher = PYTHON_VERSION_REGEX.matcher(versionString);
       if (!matcher.matches()) {
         throw new HumanReadableException(
-            "`%s --version` returned an invalid version string %s",
+            "`%s -V` returned an invalid version string %s",
             pythonPath,
             versionString);
       }
-      return ImmutablePythonVersion.of(matcher.group(1));
+      return PythonVersion.of(matcher.group(1));
     } else {
       throw new HumanReadableException(versionResult.getStderr().get());
     }

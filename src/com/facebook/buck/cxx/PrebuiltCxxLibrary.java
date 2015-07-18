@@ -18,8 +18,9 @@ package com.facebook.buck.cxx;
 
 import com.facebook.buck.android.AndroidPackageable;
 import com.facebook.buck.android.AndroidPackageableCollector;
+import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.Pair;
-import com.facebook.buck.python.ImmutablePythonPackageComponents;
 import com.facebook.buck.python.PythonPackageComponents;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
@@ -28,12 +29,18 @@ import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Maps;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
 
 public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
 
@@ -43,12 +50,17 @@ public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
   private final ImmutableList<Path> includeDirs;
   private final Optional<String> libDir;
   private final Optional<String> libName;
-  private final ImmutableList<String> exportedLinkerFlags;
-  private final ImmutableList<Pair<String, ImmutableList<String>>> exportedPlatformLinkerFlags;
+  private final Function<? super CxxPlatform, ImmutableMultimap<CxxSource.Type, String>>
+      exportedPreprocessorFlags;
+  private final Function<? super CxxPlatform, ImmutableList<String>> exportedLinkerFlags;
   private final Optional<String> soname;
   private final boolean headerOnly;
   private final boolean linkWhole;
   private final boolean provided;
+
+
+  private final Map<Pair<Flavor, HeaderVisibility>, ImmutableMap<BuildTarget, CxxPreprocessorInput>>
+      cxxPreprocessorInputCache = Maps.newHashMap();
 
   public PrebuiltCxxLibrary(
       BuildRuleParams params,
@@ -57,8 +69,9 @@ public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
       ImmutableList<Path> includeDirs,
       Optional<String> libDir,
       Optional<String> libName,
-      ImmutableList<String> exportedLinkerFlags,
-      ImmutableList<Pair<String, ImmutableList<String>>> exportedPlatformLinkerFlags,
+      Function<? super CxxPlatform, ImmutableMultimap<CxxSource.Type, String>>
+          exportedPreprocessorFlags,
+      Function<? super CxxPlatform, ImmutableList<String>> exportedLinkerFlags,
       Optional<String> soname,
       boolean headerOnly,
       boolean linkWhole,
@@ -70,8 +83,8 @@ public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
     this.includeDirs = includeDirs;
     this.libDir = libDir;
     this.libName = libName;
+    this.exportedPreprocessorFlags = exportedPreprocessorFlags;
     this.exportedLinkerFlags = exportedLinkerFlags;
-    this.exportedPlatformLinkerFlags = exportedPlatformLinkerFlags;
     this.soname = soname;
     this.headerOnly = headerOnly;
     this.linkWhole = linkWhole;
@@ -105,20 +118,27 @@ public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
             cxxPlatform.getFlavor(),
             CxxDescriptionEnhancer.SHARED_FLAVOR);
 
-    return new BuildTargetSourcePath(
-        sharedLibrary.getProjectFilesystem(),
-        sharedLibrary.getBuildTarget());
+    return new BuildTargetSourcePath(sharedLibrary.getBuildTarget());
   }
 
   @Override
   public CxxPreprocessorInput getCxxPreprocessorInput(
       CxxPlatform cxxPlatform,
-      CxxDescriptionEnhancer.HeaderVisibility headerVisibility) {
+      HeaderVisibility headerVisibility) {
     switch (headerVisibility) {
       case PUBLIC:
         return CxxPreprocessorInput.builder()
+            .from(
+                CxxPreprocessables.getCxxPreprocessorInput(
+                    params,
+                    ruleResolver,
+                    cxxPlatform.getFlavor(),
+                    headerVisibility,
+                    CxxPreprocessables.IncludeType.SYSTEM,
+                    exportedPreprocessorFlags.apply(cxxPlatform),
+                    /* frameworkSearchPaths */ ImmutableList.<Path>of()))
             // Just pass the include dirs as system includes.
-            .addAllSystemIncludeRoots(includeDirs)
+            .addAllSystemIncludeRoots(ImmutableSortedSet.copyOf(includeDirs))
             .build();
       case PRIVATE:
         return CxxPreprocessorInput.EMPTY;
@@ -127,6 +147,31 @@ public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
     // We explicitly don't put this in a default statement because we
     // want the compiler to warn if someone modifies the HeaderVisibility enum.
     throw new RuntimeException("Invalid header visibility: " + headerVisibility);
+  }
+
+
+  @Override
+  public ImmutableMap<BuildTarget, CxxPreprocessorInput>
+      getTransitiveCxxPreprocessorInput(
+          CxxPlatform cxxPlatform,
+          HeaderVisibility headerVisibility) {
+    Pair<Flavor, HeaderVisibility> key = new Pair<>(cxxPlatform.getFlavor(), headerVisibility);
+    ImmutableMap<BuildTarget, CxxPreprocessorInput> result = cxxPreprocessorInputCache.get(key);
+    if (result == null) {
+      Map<BuildTarget, CxxPreprocessorInput> builder = Maps.newLinkedHashMap();
+      builder.put(getBuildTarget(), getCxxPreprocessorInput(cxxPlatform, headerVisibility));
+      for (BuildRule dep : getDeps()) {
+        if (dep instanceof CxxPreprocessorDep) {
+          builder.putAll(
+              ((CxxPreprocessorDep) dep).getTransitiveCxxPreprocessorInput(
+                  cxxPlatform,
+                  headerVisibility));
+        }
+      }
+      result = ImmutableMap.copyOf(builder);
+      cxxPreprocessorInputCache.put(key, result);
+    }
+    return result;
   }
 
   @Override
@@ -138,11 +183,7 @@ public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
     // {@link NativeLinkable} interface for linking.
     ImmutableList.Builder<SourcePath> librariesBuilder = ImmutableList.builder();
     ImmutableList.Builder<String> linkerArgsBuilder = ImmutableList.builder();
-    linkerArgsBuilder.addAll(exportedLinkerFlags);
-    linkerArgsBuilder.addAll(
-        CxxDescriptionEnhancer.getPlatformFlags(
-            exportedPlatformLinkerFlags,
-            cxxPlatform.getFlavor().toString()));
+    linkerArgsBuilder.addAll(exportedLinkerFlags.apply(cxxPlatform));
     if (!headerOnly) {
       if (provided || type == Linker.LinkableDepType.SHARED) {
         SourcePath sharedLibrary = requireSharedLibrary(cxxPlatform);
@@ -167,7 +208,12 @@ public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
     final ImmutableList<SourcePath> libraries = librariesBuilder.build();
     final ImmutableList<String> linkerArgs = linkerArgsBuilder.build();
 
-    return ImmutableNativeLinkableInput.of(/* inputs */ libraries, /* args */ linkerArgs);
+    return NativeLinkableInput.of(libraries, linkerArgs, ImmutableSet.<Path>of());
+  }
+
+  @Override
+  public Optional<Linker.LinkableDepType> getPreferredLinkage(CxxPlatform cxxPlatform) {
+    return Optional.absent();
   }
 
   @Override
@@ -185,10 +231,12 @@ public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
     }
     ImmutableMap<Path, SourcePath> nativeLibraries = nativeLibrariesBuilder.build();
 
-    return ImmutablePythonPackageComponents.of(
+    return PythonPackageComponents.of(
         /* modules */ ImmutableMap.<Path, SourcePath>of(),
         /* resources */ ImmutableMap.<Path, SourcePath>of(),
-        nativeLibraries);
+        nativeLibraries,
+        /* prebuiltLibraries */ ImmutableSet.<SourcePath>of(),
+        /* zipSafe */ Optional.<Boolean>absent());
   }
 
   @Override
@@ -213,4 +261,8 @@ public class PrebuiltCxxLibrary extends AbstractCxxLibrary {
     return solibs.build();
   }
 
+  @Override
+  public boolean isTestedBy(BuildTarget buildTarget) {
+    return false;
+  }
 }

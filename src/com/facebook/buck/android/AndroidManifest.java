@@ -19,24 +19,21 @@ package com.facebook.buck.android;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MkdirStep;
 import com.facebook.buck.step.fs.RmStep;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
-import com.google.common.collect.Iterables;
 
 import java.nio.file.Path;
-import java.util.Collections;
 import java.util.Set;
 
 /**
@@ -65,9 +62,11 @@ import java.util.Set;
  */
 public class AndroidManifest extends AbstractBuildRule {
 
+  @AddToRuleKey
   private final SourcePath skeletonFile;
 
-  /** These must be sorted so {@link #getInputsToCompareToOutput} returns a consistent value. */
+  /** These must be sorted so the rule key is stable. */
+  @AddToRuleKey
   private final ImmutableSortedSet<SourcePath> manifestFiles;
 
   private final Path pathToOutputFile;
@@ -82,19 +81,6 @@ public class AndroidManifest extends AbstractBuildRule {
     this.manifestFiles = ImmutableSortedSet.copyOf(manifestFiles);
     BuildTarget buildTarget = params.getBuildTarget();
     this.pathToOutputFile = BuildTargets.getGenPath(buildTarget, "AndroidManifest__%s__.xml");
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return getResolver().filterInputsToCompareToOutput(
-        Iterables.concat(
-            Collections.singleton(skeletonFile),
-            manifestFiles));
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
   }
 
   @Override
@@ -115,14 +101,14 @@ public class AndroidManifest extends AbstractBuildRule {
     commands.add(new GenerateManifestStep(
         getResolver().getPath(skeletonFile),
         ImmutableSet.copyOf(getResolver().getAllPaths(manifestFiles)),
-        getPathToOutputFile()));
+        getPathToOutput()));
 
     buildableContext.recordArtifact(pathToOutputFile);
     return commands.build();
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return pathToOutputFile;
   }
 }

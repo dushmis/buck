@@ -27,8 +27,10 @@
       test/com/facebook/buck/apple/xcode/testdata, \
       test/com/facebook/buck/cli/testdata, \
       test/com/facebook/buck/d/testdata, \
+      test/com/facebook/buck/gwt/testdata, \
       test/com/facebook/buck/java/testdata, \
       test/com/facebook/buck/java/intellij/testdata, \
+      test/com/facebook/buck/js/testdata, \
       test/com/facebook/buck/junit/testdata, \
       test/com/facebook/buck/ocaml/testdata, \
       test/com/facebook/buck/parser/testdata, \

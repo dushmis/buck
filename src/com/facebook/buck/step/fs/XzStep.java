@@ -16,6 +16,7 @@
 
 package com.facebook.buck.step.fs;
 
+import com.facebook.buck.log.Logger;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.google.common.annotations.VisibleForTesting;
@@ -45,6 +46,8 @@ import java.nio.file.Paths;
  * @see <a href="http://tukaani.org/xz/embedded.html">XZ Embedded</a>
  */
 public class XzStep implements Step {
+
+  private static final Logger LOG = Logger.get(XzStep.class);
 
   private final Path sourceFile;
   private final Path destinationFile;
@@ -96,6 +99,26 @@ public class XzStep implements Step {
         XZ.CHECK_CRC32);
   }
 
+  /**
+   * Creates an XzStep to compress a file with XZ at a user supplied compression level .
+   *
+   * <p> The destination file will be {@code sourceFile} with the added {@code .xz} extension.
+   * <p> Decompression will require up to 64MiB of RAM.
+   *
+   * @param sourceFile file to compress
+   * @param compressionLevel value from 0 to 9. Higher values result in better
+   * compression, but also need more time to compress and will need more RAM
+   * to decompress.
+   */
+  public XzStep(Path sourceFile, int compressionLevel) {
+    this(
+        sourceFile,
+        Paths.get(sourceFile + ".xz"),
+        compressionLevel,
+        /* keep */ false,
+        XZ.CHECK_CRC32);
+  }
+
   @Override
   public int execute(ExecutionContext context) {
     try (
@@ -106,11 +129,11 @@ public class XzStep implements Step {
     ) {
       ByteStreams.copy(in, xzOut);
       xzOut.finish();
+      if (!keep) {
+        context.getProjectFilesystem().deleteFileAtPath(sourceFile);
+      }
     } catch (IOException e) {
-      e.printStackTrace(context.getStdErr());
-      return 1;
-    }
-    if (!keep && !context.getProjectFilesystem().deleteFileAtPath(sourceFile)) {
+      LOG.error(e);
       return 1;
     }
     return 0;

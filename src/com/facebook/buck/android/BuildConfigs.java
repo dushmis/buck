@@ -18,7 +18,6 @@ package com.facebook.buck.android;
 
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.coercer.BuildConfigFields;
-import com.facebook.buck.rules.coercer.ImmutableBuildConfigFields;
 import com.google.common.collect.ImmutableList;
 
 /**
@@ -47,11 +46,11 @@ public class BuildConfigs {
   private static final BuildConfigFields DEFAULT_BUILD_CONFIG_CONSTANTS =
       BuildConfigFields.fromFields(ImmutableList.<BuildConfigFields.Field>of(
               // DEBUG is expected by the standard Android tools.
-              ImmutableBuildConfigFields.Field.of("boolean", DEBUG_CONSTANT, "true"),
+              BuildConfigFields.Field.of("boolean", DEBUG_CONSTANT, "true"),
               // IS_EXOPACKAGE is a value we use internally for checking whether exopackage is being
               // used.
-              ImmutableBuildConfigFields.Field.of("boolean", IS_EXO_CONSTANT, "false"),
-              ImmutableBuildConfigFields.Field.of("int", EXOPACKAGE_FLAGS, "0")));
+              BuildConfigFields.Field.of("boolean", IS_EXO_CONSTANT, "false"),
+              BuildConfigFields.Field.of("int", EXOPACKAGE_FLAGS, "0")));
 
   /** Utility class: do not instantiate. */
   private BuildConfigs() {}

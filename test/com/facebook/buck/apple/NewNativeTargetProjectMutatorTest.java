@@ -21,7 +21,9 @@ import static com.facebook.buck.apple.ProjectGeneratorTestUtils.assertHasSinglet
 import static com.facebook.buck.apple.ProjectGeneratorTestUtils.assertTargetExistsAndReturnTarget;
 import static com.facebook.buck.apple.ProjectGeneratorTestUtils.createDescriptionArgWithDefaults;
 import static com.facebook.buck.apple.ProjectGeneratorTestUtils.getSingletonPhaseByType;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.lessThan;
+import static org.hamcrest.Matchers.startsWith;
 import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
 import static org.hamcrest.collection.IsEmptyIterable.emptyIterable;
 import static org.hamcrest.core.IsNot.not;
@@ -36,32 +38,43 @@ import static org.junit.Assert.fail;
 import com.dd.plist.NSArray;
 import com.dd.plist.NSDictionary;
 import com.dd.plist.NSString;
+import com.facebook.buck.apple.xcode.xcodeproj.CopyFilePhaseDestinationSpec;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXBuildFile;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXBuildPhase;
+import com.facebook.buck.apple.xcode.xcodeproj.PBXCopyFilesBuildPhase;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXFileReference;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXGroup;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXHeadersBuildPhase;
+import com.facebook.buck.apple.xcode.xcodeproj.PBXNativeTarget;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXProject;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXReference;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXResourcesBuildPhase;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXShellScriptBuildPhase;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXTarget;
+import com.facebook.buck.apple.xcode.xcodeproj.ProductType;
 import com.facebook.buck.apple.xcode.xcodeproj.SourceTreePath;
+import com.facebook.buck.cli.FakeBuckConfig;
+import com.facebook.buck.io.ProjectFilesystem;
+import com.facebook.buck.js.IosReactNativeLibraryBuilder;
+import com.facebook.buck.js.ReactNativeBuckConfig;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.parser.NoSuchBuildTargetException;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.TestSourcePath;
-import com.facebook.buck.rules.coercer.ImmutableFrameworkPath;
+import com.facebook.buck.rules.coercer.FrameworkPath;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.facebook.buck.shell.GenruleBuilder;
+import com.facebook.buck.testutil.AllExistingProjectFilesystem;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.Splitter;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
@@ -70,6 +83,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.Set;
 
 public class NewNativeTargetProjectMutatorTest {
@@ -96,7 +110,7 @@ public class NewNativeTargetProjectMutatorTest {
     mutator
         .setTargetName("TestTarget")
         .setProduct(
-            PBXTarget.ProductType.BUNDLE,
+            ProductType.BUNDLE,
             "TestTargetProduct",
             Paths.get("TestTargetProduct.bundle"))
         .buildTargetAndAddToProject(generatedProject);
@@ -114,7 +128,7 @@ public class NewNativeTargetProjectMutatorTest {
         .setTargetName("TestTarget")
         .setTargetGroupPath(ImmutableList.of("Grandparent", "Parent"))
         .setProduct(
-            PBXTarget.ProductType.BUNDLE,
+            ProductType.BUNDLE,
             "TestTargetProduct",
             Paths.get("TestTargetProduct.bundle"))
         .buildTargetAndAddToProject(generatedProject);
@@ -215,6 +229,23 @@ public class NewNativeTargetProjectMutatorTest {
   }
 
   @Test
+  public void testPrefixHeaderInSourceGroup() throws NoSuchBuildTargetException {
+    NewNativeTargetProjectMutator mutator = mutatorWithCommonDefaults();
+    SourcePath prefixHeader = new TestSourcePath("Group1/prefix.pch");
+    mutator.setPrefixHeader(Optional.of(prefixHeader));
+
+    NewNativeTargetProjectMutator.Result result = mutator.buildTargetAndAddToProject(
+        generatedProject);
+
+    // No matter where the prefixHeader file is it should always be directly inside Sources
+    PBXGroup sourcesGroup = result.targetGroup.getOrCreateChildGroupByName("Sources");
+
+    assertThat(sourcesGroup.getChildren(), hasSize(1));
+    PBXFileReference fileRef = (PBXFileReference) Iterables.get(sourcesGroup.getChildren(), 0);
+    assertEquals("prefix.pch", fileRef.getName());
+  }
+
+  @Test
   public void testSuppressCopyHeaderOption() throws NoSuchBuildTargetException {
     Set<SourcePath> privateHeaders = ImmutableSet.<SourcePath>of(new TestSourcePath("foo"));
 
@@ -251,7 +282,7 @@ public class NewNativeTargetProjectMutatorTest {
     NewNativeTargetProjectMutator mutator = mutatorWithCommonDefaults();
     mutator.setFrameworks(
         ImmutableSet.of(
-            ImmutableFrameworkPath.ofSourceTreePath(
+            FrameworkPath.ofSourceTreePath(
                 new SourceTreePath(
                     PBXReference.SourceTree.SDKROOT, Paths.get("Foo.framework")))));
     mutator.setArchives(
@@ -288,14 +319,73 @@ public class NewNativeTargetProjectMutatorTest {
   }
 
   @Test
+  public void testCopyFilesBuildPhase() throws NoSuchBuildTargetException {
+    NewNativeTargetProjectMutator mutator = mutatorWithCommonDefaults();
+
+    CopyFilePhaseDestinationSpec.Builder specBuilder = CopyFilePhaseDestinationSpec.builder();
+    specBuilder.setDestination(PBXCopyFilesBuildPhase.Destination.FRAMEWORKS);
+    specBuilder.setPath("foo.png");
+
+    PBXBuildPhase copyPhase = new PBXCopyFilesBuildPhase(specBuilder.build());
+    mutator.setCopyFilesPhases(ImmutableList.of(copyPhase));
+
+    NewNativeTargetProjectMutator.Result result =
+        mutator.buildTargetAndAddToProject(generatedProject);
+
+    PBXBuildPhase buildPhaseToTest = getSingletonPhaseByType(
+        result.target,
+        PBXCopyFilesBuildPhase.class);
+    assertThat(copyPhase, equalTo(buildPhaseToTest));
+  }
+
+  @Test
+  public void testCopyFilesBuildPhaseIsBeforePostBuildScriptBuildPhase()
+      throws NoSuchBuildTargetException {
+    NewNativeTargetProjectMutator mutator = mutatorWithCommonDefaults();
+
+    CopyFilePhaseDestinationSpec.Builder specBuilder = CopyFilePhaseDestinationSpec.builder();
+    specBuilder.setDestination(PBXCopyFilesBuildPhase.Destination.FRAMEWORKS);
+    specBuilder.setPath("script/input.png");
+
+    PBXBuildPhase copyFilesPhase = new PBXCopyFilesBuildPhase(specBuilder.build());
+    mutator.setCopyFilesPhases(ImmutableList.of(copyFilesPhase));
+
+    TargetNode<?> genruleNode = GenruleBuilder
+        .newGenruleBuilder(BuildTarget.builder("//foo", "script").build())
+        .setSrcs(ImmutableList.<SourcePath>of(new TestSourcePath("script/input.png")))
+        .setCmd("echo \"hello world!\"")
+        .setOut("helloworld.txt")
+        .build();
+    mutator.setPostBuildRunScriptPhases(ImmutableList.<TargetNode<?>>of(genruleNode));
+
+    NewNativeTargetProjectMutator.Result result =
+        mutator.buildTargetAndAddToProject(generatedProject);
+
+    PBXNativeTarget target = result.target;
+
+    List<PBXBuildPhase> buildPhases = target.getBuildPhases();
+
+    PBXBuildPhase copyBuildPhaseToTest = getSingletonPhaseByType(
+        target,
+        PBXCopyFilesBuildPhase.class);
+    PBXBuildPhase postBuildScriptPhase = getSingletonPhaseByType(
+        target,
+        PBXShellScriptBuildPhase.class);
+
+    assertThat(
+        buildPhases.indexOf(copyBuildPhaseToTest),
+        lessThan(buildPhases.indexOf(postBuildScriptPhase)));
+  }
+
+  @Test
   public void assetCatalogsBuildPhaseBuildsBothCommonAndBundledAssetCatalogs()
       throws NoSuchBuildTargetException {
     AppleAssetCatalogDescription.Arg arg1 = new AppleAssetCatalogDescription.Arg();
-    arg1.dirs = ImmutableSet.of(Paths.get("AssetCatalog1.xcassets"));
+    arg1.dirs = ImmutableSortedSet.of(Paths.get("AssetCatalog1.xcassets"));
     arg1.copyToBundles = Optional.of(false);
 
     AppleAssetCatalogDescription.Arg arg2 = new AppleAssetCatalogDescription.Arg();
-    arg2.dirs = ImmutableSet.of(Paths.get("AssetCatalog2.xcassets"));
+    arg2.dirs = ImmutableSortedSet.of(Paths.get("AssetCatalog2.xcassets"));
     arg2.copyToBundles = Optional.of(true);
 
     NewNativeTargetProjectMutator mutator = mutatorWithCommonDefaults();
@@ -313,11 +403,11 @@ public class NewNativeTargetProjectMutatorTest {
     ImmutableSet.Builder<AppleAssetCatalogDescription.Arg> assetsBuilder = ImmutableSet.builder();
     for (int i = 0; i < 10000; i += 2) {
       AppleAssetCatalogDescription.Arg arg1 = new AppleAssetCatalogDescription.Arg();
-      arg1.dirs = ImmutableSet.of(Paths.get(String.format("AssetCatalog%d.xcassets", i)));
+      arg1.dirs = ImmutableSortedSet.of(Paths.get(String.format("AssetCatalog%d.xcassets", i)));
       arg1.copyToBundles = Optional.of(false);
       assetsBuilder.add(arg1);
       AppleAssetCatalogDescription.Arg arg2 = new AppleAssetCatalogDescription.Arg();
-      arg2.dirs = ImmutableSet.of(Paths.get(String.format("AssetCatalog%d.xcassets", i + 1)));
+      arg2.dirs = ImmutableSortedSet.of(Paths.get(String.format("AssetCatalog%d.xcassets", i + 1)));
       arg2.copyToBundles = Optional.of(true);
       assetsBuilder.add(arg2);
     }
@@ -404,6 +494,36 @@ public class NewNativeTargetProjectMutatorTest {
         phase.getShellScript());
   }
 
+  @Test
+  public void testScriptBuildPhaseWithReactNative() throws NoSuchBuildTargetException {
+    NewNativeTargetProjectMutator mutator = mutatorWithCommonDefaults();
+
+    BuildTarget depBuildTarget = BuildTarget.builder("//foo", "dep").build();
+    ProjectFilesystem filesystem = new AllExistingProjectFilesystem();
+    ReactNativeBuckConfig buckConfig = new ReactNativeBuckConfig(new FakeBuckConfig(
+        ImmutableMap.of("react-native", ImmutableMap.of("packager", "react-native/packager.sh")),
+        filesystem));
+    TargetNode<?> reactNativeNode =
+        IosReactNativeLibraryBuilder.builder(depBuildTarget, buckConfig)
+        .setBundleName("Apps/Foo/FooBundle.js")
+        .setEntryPath(new PathSourcePath(filesystem, Paths.get("js/FooApp.js")))
+        .build();
+
+    mutator.setPostBuildRunScriptPhases(ImmutableList.<TargetNode<?>>of(reactNativeNode));
+    NewNativeTargetProjectMutator.Result result =
+        mutator.buildTargetAndAddToProject(generatedProject);
+
+    PBXShellScriptBuildPhase phase =
+        getSingletonPhaseByType(result.target, PBXShellScriptBuildPhase.class);
+    String shellScript = phase.getShellScript();
+    assertThat(
+        shellScript,
+        startsWith("BASE_DIR=${CONFIGURATION_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}" +
+        " && JS_OUT=${BASE_DIR}/Apps/Foo/FooBundle.js && SOURCE_MAP=${TEMP_DIR}/rn_source_map/" +
+            "Apps/Foo/FooBundle.js.map && mkdir -p `dirname ${JS_OUT}` " +
+            "&& mkdir -p `dirname ${SOURCE_MAP}`"));
+  }
+
   private NewNativeTargetProjectMutator mutatorWithCommonDefaults() {
     NewNativeTargetProjectMutator mutator = new NewNativeTargetProjectMutator(
         pathRelativizer,
@@ -411,7 +531,7 @@ public class NewNativeTargetProjectMutatorTest {
     mutator
         .setTargetName("TestTarget")
         .setProduct(
-            PBXTarget.ProductType.BUNDLE,
+            ProductType.BUNDLE,
             "TestTargetProduct",
             Paths.get("TestTargetProduct.bundle"));
     return mutator;

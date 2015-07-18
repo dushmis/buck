@@ -16,12 +16,11 @@
 package com.facebook.buck.rules;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.fail;
 
-import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
-import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.util.HumanReadableException;
 
 import org.junit.Test;
@@ -35,14 +34,11 @@ public class BuildTargetSourcePathTest {
 
   @Test
   public void shouldThrowAnExceptionIfRuleDoesNotHaveAnOutput() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
-    BuildRule rule = new FakeBuildRule(BuildRuleType.of("example"), target, pathResolver);
+    BuildRule rule = new FakeBuildRule(target, pathResolver);
     resolver.addToIndex(rule);
-    BuildTargetSourcePath path = new BuildTargetSourcePath(
-        projectFilesystem,
-        rule.getBuildTarget());
+    BuildTargetSourcePath path = new BuildTargetSourcePath(rule.getBuildTarget());
 
     try {
       pathResolver.getPath(path);
@@ -54,20 +50,17 @@ public class BuildTargetSourcePathTest {
 
   @Test
   public void mustUseProjectFilesystemToResolvePathToFile() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
-    BuildRule rule = new FakeBuildRule(BuildRuleType.of("example"), target, pathResolver) {
+    BuildRule rule = new FakeBuildRule(target, pathResolver) {
       @Override
-      public Path getPathToOutputFile() {
+      public Path getPathToOutput() {
         return Paths.get("cheese");
       }
     };
     resolver.addToIndex(rule);
 
-    BuildTargetSourcePath path = new BuildTargetSourcePath(
-        projectFilesystem,
-        rule.getBuildTarget());
+    BuildTargetSourcePath path = new BuildTargetSourcePath(rule.getBuildTarget());
 
     Path resolved = pathResolver.getPath(path);
 
@@ -76,29 +69,40 @@ public class BuildTargetSourcePathTest {
 
   @Test
   public void shouldReturnTheBuildTarget() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildTarget target = BuildTargetFactory.newInstance("//foo/bar:baz");
-    BuildTargetSourcePath path = new BuildTargetSourcePath(projectFilesystem, target);
+    BuildTargetSourcePath path = new BuildTargetSourcePath(target);
 
     assertEquals(target, path.getTarget());
   }
 
   @Test
   public void explicitlySetPath() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
     BuildTarget target = BuildTargetFactory.newInstance("//foo/bar:baz");
-    FakeBuildRule rule = new FakeBuildRule(
-        BuildRuleType.of("example"),
-        target,
-        pathResolver);
+    FakeBuildRule rule = new FakeBuildRule(target, pathResolver);
     Path path = Paths.get("blah");
     BuildTargetSourcePath buildTargetSourcePath = new BuildTargetSourcePath(
-        projectFilesystem,
         rule.getBuildTarget(),
         path);
     assertEquals(target, buildTargetSourcePath.getTarget());
     assertEquals(path, pathResolver.getPath(buildTargetSourcePath));
+  }
+
+  @Test
+  public void sameBuildTargetsWithDifferentPathsAreDifferent() {
+    SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
+    BuildTarget target = BuildTargetFactory.newInstance("//foo/bar:baz");
+    FakeBuildRule rule = new FakeBuildRule(target, pathResolver);
+    BuildTargetSourcePath path1 =
+        new BuildTargetSourcePath(
+            rule.getBuildTarget(),
+            Paths.get("something"));
+    BuildTargetSourcePath path2 =
+        new BuildTargetSourcePath(
+            rule.getBuildTarget(),
+            Paths.get("something else"));
+    assertNotEquals(path1, path2);
+    assertNotEquals(path1.hashCode(), path2.hashCode());
   }
 
 }

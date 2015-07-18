@@ -17,14 +17,20 @@
 package com.facebook.buck.maven;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.eclipse.aether.repository.RepositoryPolicy.CHECKSUM_POLICY_FAIL;
 import static org.eclipse.aether.util.artifact.JavaScopes.TEST;
 
 import com.facebook.buck.graph.MutableDirectedGraph;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Predicates;
+import com.google.common.base.Throwables;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedMap;
+import com.google.common.collect.Ordering;
 import com.google.common.io.Resources;
 
 import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
@@ -35,13 +41,10 @@ import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
-import org.eclipse.aether.connector.basic.BasicRepositoryConnectorFactory;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyFilter;
-import org.eclipse.aether.impl.DefaultServiceLocator;
 import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.RemoteRepository;
-import org.eclipse.aether.repository.RepositoryPolicy;
 import org.eclipse.aether.resolution.ArtifactDescriptorException;
 import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
 import org.eclipse.aether.resolution.ArtifactDescriptorResult;
@@ -50,13 +53,14 @@ import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResult;
-import org.eclipse.aether.spi.connector.RepositoryConnectorFactory;
-import org.eclipse.aether.spi.connector.transport.TransporterFactory;
 import org.eclipse.aether.spi.locator.ServiceLocator;
-import org.eclipse.aether.transport.http.HttpTransporterFactory;
 import org.eclipse.aether.util.artifact.JavaScopes;
 import org.eclipse.aether.util.artifact.SubArtifact;
 import org.eclipse.aether.util.filter.DependencyFilterUtils;
+import org.eclipse.aether.util.version.GenericVersionScheme;
+import org.eclipse.aether.version.InvalidVersionSpecificationException;
+import org.eclipse.aether.version.Version;
+import org.eclipse.aether.version.VersionScheme;
 import org.stringtemplate.v4.ST;
 import org.stringtemplate.v4.STGroupString;
 
@@ -71,17 +75,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.annotation.Nullable;
 
 public class Resolver {
 
   private static final String TEMPLATE =
       Resolver.class.getPackage().getName().replace(".", "/") + "/build-file.st";
+  public static final String ARTIFACT_FILE_NAME_FORMAT = "%s-%s.%s";
+  public static final String ARTIFACT_FILE_NAME_REGEX_FORMAT =
+      ARTIFACT_FILE_NAME_FORMAT.replace(".", "\\.");
+  public static final String VERSION_REGEX_GROUP = "([^-]+)";
 
   private final Path buckRepoRoot;
   private final Path buckThirdPartyRelativePath;
   private final LocalRepository localRepo;
   private final ImmutableList<RemoteRepository> repos;
   private final ServiceLocator locator;
+  private final VersionScheme versionScheme = new GenericVersionScheme();
 
   public Resolver(
       Path buckRepoRoot,
@@ -94,17 +107,11 @@ public class Resolver {
 
     ImmutableList.Builder<RemoteRepository> builder = ImmutableList.builder();
     for (int i = 0; i < repoUrls.length; i++) {
-      RemoteRepository.Builder remote =
-          new RemoteRepository.Builder("remote " + i, "default", repoUrls[i])
-              .setPolicy(new RepositoryPolicy(true, null, CHECKSUM_POLICY_FAIL));
-      builder.add(remote.build());
+      builder.add(AetherUtil.toRemoteRepository(repoUrls[i]));
     }
     this.repos = builder.build();
 
-    DefaultServiceLocator locator = MavenRepositorySystemUtils.newServiceLocator();
-    locator.addService(RepositoryConnectorFactory.class, BasicRepositoryConnectorFactory.class);
-    locator.addService(TransporterFactory.class, HttpTransporterFactory.class);
-    this.locator = locator;
+    this.locator = AetherUtil.initServiceLocator();
   }
 
   public void resolve(String... mavenCoords) throws RepositoryException, IOException {
@@ -126,86 +133,181 @@ public class Resolver {
 
     Map<Path, SortedSet<Prebuilt>> buckFiles = new HashMap<>();
 
-    for (Artifact root : graph.getNodes()) {
-      int index = root.getGroupId().lastIndexOf('.');
-      String projectName = root.getGroupId();
-      if (index != -1) {
-        projectName = projectName.substring(index + 1);
-      }
-      Path project = buckRepoRoot.resolve(buckThirdPartyRelativePath).resolve(projectName);
-      Files.createDirectories(project);
+    for (Artifact artifact : graph.getNodes()) {
+      downloadArtifact(artifact, repoSys, session, buckFiles, graph);
+    }
 
-      SortedSet<Prebuilt> libs = buckFiles.get(project);
-      if (libs == null) {
-        libs = new TreeSet<>();
-        buckFiles.put(project, libs);
-      }
+    createBuckFiles(buckFiles);
+  }
 
-      Artifact jar = new DefaultArtifact(
-          root.getGroupId(),
-          root.getArtifactId(),
-          "jar",
-          root.getVersion());
-      Artifact srcs = new SubArtifact(jar, "sources", "jar");
+  private void downloadArtifact(
+      final Artifact artifactToDownload,
+      RepositorySystem repoSys,
+      RepositorySystemSession session,
+      Map<Path, SortedSet<Prebuilt>> buckFiles,
+      MutableDirectedGraph<Artifact> graph)
+      throws IOException, ArtifactResolutionException, InvalidVersionSpecificationException {
+    String projectName = getProjectName(artifactToDownload);
+    Path project = buckRepoRoot.resolve(buckThirdPartyRelativePath).resolve(projectName);
+    Files.createDirectories(project);
 
-      ArtifactResult result = repoSys.resolveArtifact(
-          session,
-          new ArtifactRequest(jar, repos, null));
-      Path relativePath = copy(result, project);
+    SortedSet<Prebuilt> libs = buckFiles.get(project);
+    if (libs == null) {
+      libs = new TreeSet<>();
+      buckFiles.put(project, libs);
+    }
 
-      Prebuilt library = new Prebuilt(jar.getArtifactId(), relativePath);
-      libs.add(library);
+    Prebuilt library = resolveLib(artifactToDownload, repoSys, session, project);
+    libs.add(library);
 
-      try {
-        result = repoSys.resolveArtifact(session, new ArtifactRequest(srcs, repos, null));
-        relativePath = copy(result, project);
-        library.setSourceJar(relativePath);
-      } catch (ArtifactResolutionException e) {
-        System.err.println("Skipping sources for: " + srcs);
-      }
-
-      Iterable<Artifact> incoming = graph.getIncomingNodesFor(root);
-      for (Artifact artifact : incoming) {
-        index = artifact.getGroupId().lastIndexOf('.');
-        String groupName = artifact.getGroupId();
-        if (index != -1) {
-          groupName = groupName.substring(index + 1);
-        }
-        if (projectName.equals(groupName)) {
-          library.addDep(String.format(":%s", artifact.getArtifactId()));
-        } else {
-          library.addDep(
-              String.format(
-                  "//%s/%s:%s",
-                  buckThirdPartyRelativePath,
-                  groupName,
-                  artifact.getArtifactId()));
-        }
-      }
-
-      Iterable<Artifact> outgoing = graph.getOutgoingNodesFor(root);
-      for (Artifact artifact : outgoing) {
-        index = artifact.getGroupId().lastIndexOf('.');
-        String groupName = artifact.getGroupId();
-        if (index != -1) {
-          groupName = groupName.substring(index + 1);
-        }
-        if (!groupName.equals(projectName)) {
-          library.addVisibility(
-              String.format(
-                  "//%s/%s:%s",
-                  buckThirdPartyRelativePath,
-                  groupName,
-                  artifact.getArtifactId()));
-        }
+    // Populate deps
+    Iterable<Artifact> incoming = graph.getIncomingNodesFor(artifactToDownload);
+    for (Artifact artifact : incoming) {
+      String groupName = getProjectName(artifact);
+      if (projectName.equals(groupName)) {
+        library.addDep(String.format(":%s", artifact.getArtifactId()));
+      } else {
+        library.addDep(buckThirdPartyRelativePath, artifact);
       }
     }
 
+    // Populate visibility
+    Iterable<Artifact> outgoing = graph.getOutgoingNodesFor(artifactToDownload);
+    for (Artifact artifact : outgoing) {
+      String groupName = getProjectName(artifact);
+      if (!groupName.equals(projectName)) {
+        library.addVisibility(buckThirdPartyRelativePath, artifact);
+      }
+    }
+  }
+
+  private Prebuilt resolveLib(
+      Artifact artifact,
+      RepositorySystem repoSys,
+      RepositorySystemSession session,
+      Path project) throws ArtifactResolutionException, IOException {
+    Artifact jar = new DefaultArtifact(
+        artifact.getGroupId(),
+        artifact.getArtifactId(),
+        "jar",
+        artifact.getVersion());
+
+    Path relativePath = resolveArtifact(jar, repoSys, session, project);
+
+    Prebuilt library = new Prebuilt(jar.getArtifactId(), relativePath);
+
+    downloadSources(jar, repoSys, session, project, library);
+    return library;
+  }
+
+  /**
+   * @return {@link Path} to the file
+   */
+  private Path resolveArtifact(
+      Artifact artifact,
+      RepositorySystem repoSys,
+      RepositorySystemSession session,
+      Path project)
+      throws ArtifactResolutionException, IOException {
+    Optional<Path> newerVersionFile = getNewerVersionFile(artifact, project);
+    if (newerVersionFile.isPresent()) {
+      return newerVersionFile.get();
+    }
+    ArtifactResult result = repoSys.resolveArtifact(
+        session,
+        new ArtifactRequest(artifact, repos, null));
+    return copy(result, project);
+  }
+
+  /**
+   * @return {@link Path} to the file in {@code project} with filename consistent with the given
+   * {@link Artifact}, but with a newer version. If no such file exists, {@link Optional#absent} is
+   * returned. If multiple such files are present one with the newest version will be returned.
+   */
+  @VisibleForTesting
+  Optional<Path> getNewerVersionFile(
+      final Artifact artifactToDownload,
+      Path project) throws IOException {
+    final Version artifactToDownloadVersion;
+    try {
+      artifactToDownloadVersion = versionScheme.parseVersion(artifactToDownload.getVersion());
+    } catch (InvalidVersionSpecificationException e) {
+      throw Throwables.propagate(e);
+    }
+
+    final Pattern versionExtractor = Pattern.compile(
+        String.format(
+            ARTIFACT_FILE_NAME_REGEX_FORMAT,
+            artifactToDownload.getArtifactId(),
+            VERSION_REGEX_GROUP,
+            artifactToDownload.getExtension()));
+    Iterable<Version> versionsPresent = FluentIterable
+        .from(Files.newDirectoryStream(project))
+        .transform(new Function<Path, Version>() {
+          @Nullable
+          @Override
+          public Version apply(Path input) {
+            Matcher matcher = versionExtractor.matcher(input.getFileName().toString());
+            if (matcher.matches()) {
+              try {
+                return versionScheme.parseVersion(matcher.group(1));
+              } catch (InvalidVersionSpecificationException e) {
+                throw Throwables.propagate(e);
+              }
+            } else {
+              return null;
+            }
+          }
+        })
+        .filter(Predicates.notNull());
+
+    List<Version> newestPresent = Ordering.natural().greatestOf(versionsPresent, 1);
+    if (newestPresent.isEmpty() || newestPresent.get(0).compareTo(artifactToDownloadVersion) <= 0) {
+      return Optional.absent();
+    } else {
+      return Optional.of(
+          project.resolve(
+              String.format(
+                  ARTIFACT_FILE_NAME_FORMAT,
+                  artifactToDownload.getArtifactId(),
+                  newestPresent.get(0).toString(),
+                  artifactToDownload.getExtension())));
+    }
+  }
+
+  private void downloadSources(
+      Artifact artifact,
+      RepositorySystem repoSys,
+      RepositorySystemSession session,
+      Path project,
+      Prebuilt library) throws IOException {
+    Artifact srcs = new SubArtifact(artifact, "sources", "jar");
+    try {
+      Path relativePath = resolveArtifact(srcs, repoSys, session, project);
+      library.setSourceJar(relativePath);
+    } catch (ArtifactResolutionException e) {
+      System.err.println("Skipping sources for: " + srcs);
+    }
+  }
+
+  /**
+   *  com.example:foo:1.0 -> "example"
+   */
+  private static String getProjectName(Artifact artifact) {
+    int index = artifact.getGroupId().lastIndexOf('.');
+    String projectName = artifact.getGroupId();
+    if (index != -1) {
+      projectName = projectName.substring(index + 1);
+    }
+    return projectName;
+  }
+
+  private void createBuckFiles(Map<Path, SortedSet<Prebuilt>> buckFilesData) throws IOException {
     URL templateUrl = Resources.getResource(TEMPLATE);
     String template = Resources.toString(templateUrl, UTF_8);
     STGroupString groups = new STGroupString("prebuilt-template", template);
 
-    for (Map.Entry<Path, SortedSet<Prebuilt>> entry : buckFiles.entrySet()) {
+    for (Map.Entry<Path, SortedSet<Prebuilt>> entry : buckFilesData.entrySet()) {
       Path buckFile = entry.getKey().resolve("BUCK");
       if (Files.exists(buckFile)) {
         Files.delete(buckFile);
@@ -234,14 +336,13 @@ public class Resolver {
       Map<String, Artifact> knownDeps) throws ArtifactDescriptorException {
     MutableDirectedGraph<Artifact> graph;
     graph = new MutableDirectedGraph<>();
-    for (Artifact dep : knownDeps.values()) {
-      String key = buildKey(dep);
+    for (Map.Entry<String, Artifact> entry : knownDeps.entrySet()) {
+      String key = entry.getKey();
+      Artifact artifact = entry.getValue();
 
-      Preconditions.checkNotNull(knownDeps.get(key));
+      graph.addNode(artifact);
 
-      graph.addNode(dep);
-
-      List<Dependency> dependencies = getDependenciesOf(repoSys, session, dep);
+      List<Dependency> dependencies = getDependenciesOf(repoSys, session, artifact);
 
       for (Dependency dependency : dependencies) {
         if (dependency.getArtifact() == null) {
@@ -264,9 +365,11 @@ public class Resolver {
 //          continue;
 //        }
 
-        Preconditions.checkNotNull(actualDep, key + " -> " + dep + " in " + knownDeps.keySet());
+        Preconditions.checkNotNull(
+            actualDep,
+            key + " -> " + artifact + " in " + knownDeps.keySet());
         graph.addNode(actualDep);
-        graph.addEdge(actualDep, dep);
+        graph.addEdge(actualDep, artifact);
       }
     }
     return graph;
@@ -379,6 +482,9 @@ public class Resolver {
         .resolve(coords);
   }
 
+  /**
+   * Holds data for creation of a BUCK file for a given dependency
+   */
   private static class Prebuilt implements Comparable<Prebuilt> {
 
     private final String name;
@@ -415,6 +521,10 @@ public class Resolver {
       this.deps.add(dep);
     }
 
+    public void addDep(Path buckThirdPartyRelativePath, Artifact artifact) {
+      this.addDep(formatDep(buckThirdPartyRelativePath, artifact));
+    }
+
     @SuppressWarnings("unused") // This method is read reflectively.
     public SortedSet<String> getDeps() {
       return deps;
@@ -422,6 +532,17 @@ public class Resolver {
 
     public void addVisibility(String dep) {
       this.visibilities.add(dep);
+    }
+    public void addVisibility(Path buckThirdPartyRelativePath, Artifact artifact) {
+      this.addVisibility(formatDep(buckThirdPartyRelativePath, artifact));
+    }
+
+    private String formatDep(Path buckThirdPartyRelativePath, Artifact artifact) {
+      return String.format(
+          "//%s/%s:%s",
+          buckThirdPartyRelativePath,
+          getProjectName(artifact),
+          artifact.getArtifactId());
     }
 
     @SuppressWarnings("unused") // This method is read reflectively.

@@ -19,17 +19,20 @@ package com.facebook.buck.rules;
 import com.facebook.buck.event.AbstractBuckEvent;
 import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.event.LeafEvent;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.base.CaseFormat;
+import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableSet;
 
 /**
  * Base class for events about build rules.
  */
 @SuppressWarnings("PMD.OverrideBothEqualsAndHashcode")
 public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements LeafEvent {
-  public static enum Operation {
+  public enum Operation {
     FETCH,
     STORE,
     COMPRESS,
@@ -37,11 +40,12 @@ public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements Le
   }
 
   private final Operation operation;
-  private final RuleKey ruleKey;
+  @JsonIgnore
+  private final ImmutableSet<RuleKey> ruleKeys;
 
-  protected ArtifactCacheEvent(Operation operation, RuleKey ruleKey) {
+  protected ArtifactCacheEvent(Operation operation, ImmutableSet<RuleKey> ruleKeys) {
     this.operation = operation;
-    this.ruleKey = ruleKey;
+    this.ruleKeys = ruleKeys;
   }
 
   @Override
@@ -51,11 +55,14 @@ public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements Le
 
   @Override
   public String getValueString() {
-    return String.format("%s:%s", operation.toString().toLowerCase(), ruleKey.toString());
+    return String.format(
+        "%s:%s",
+        operation.toString().toLowerCase(),
+        Joiner.on(",").join(ruleKeys));
   }
 
-  public RuleKey getRuleKey() {
-    return ruleKey;
+  public ImmutableSet<RuleKey> getRuleKeys() {
+    return ruleKeys;
   }
 
   @Override
@@ -67,35 +74,35 @@ public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements Le
     ArtifactCacheEvent that = (ArtifactCacheEvent) event;
 
     return Objects.equal(getOperation(), that.getOperation()) &&
-        Objects.equal(getRuleKey(), that.getRuleKey());
+        Objects.equal(getRuleKeys(), that.getRuleKeys());
   }
 
   @Override
   public int hashCode() {
-    return Objects.hashCode(getOperation(), getRuleKey(), getThreadId());
+    return Objects.hashCode(getOperation(), getRuleKeys(), getThreadId());
   }
 
   public Operation getOperation() {
     return operation;
   }
 
-  public static Started started(Operation operation, RuleKey ruleKey) {
-    return new Started(operation, ruleKey);
+  public static Started started(Operation operation, ImmutableSet<RuleKey> ruleKeys) {
+    return new Started(operation, ruleKeys);
   }
 
-  public static Finished finished(Operation operation, RuleKey ruleKey) {
-    return new Finished(operation, ruleKey, Optional.<CacheResult>absent());
+  public static Finished finished(Operation operation, ImmutableSet<RuleKey> ruleKeys) {
+    return new Finished(operation, ruleKeys, Optional.<CacheResult>absent());
   }
 
   public static Finished finished(Operation operation,
-      RuleKey ruleKey,
+      ImmutableSet<RuleKey> ruleKey,
       CacheResult cacheResult) {
     return new Finished(operation, ruleKey, Optional.of(cacheResult));
   }
 
   public static class Started extends ArtifactCacheEvent {
-    protected Started(Operation operation, RuleKey ruleKey) {
-      super(operation, ruleKey);
+    protected Started(Operation operation, ImmutableSet<RuleKey> ruleKeys) {
+      super(operation, ruleKeys);
     }
 
     @Override
@@ -113,7 +120,10 @@ public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements Le
       return cacheResult;
     }
 
-    protected Finished(Operation operation, RuleKey ruleKey, Optional<CacheResult> cacheResult) {
+    protected Finished(
+        Operation operation,
+        ImmutableSet<RuleKey> ruleKey,
+        Optional<CacheResult> cacheResult) {
       super(operation, ruleKey);
       Preconditions.checkArgument(
           (operation.equals(Operation.FETCH) && cacheResult.isPresent()) ||
@@ -124,7 +134,7 @@ public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements Le
     }
 
     public boolean isSuccess() {
-      return !cacheResult.isPresent() || cacheResult.get().isSuccess();
+      return !cacheResult.isPresent() || cacheResult.get().getType().isSuccess();
     }
 
     @Override
@@ -145,7 +155,7 @@ public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements Le
 
     @Override
     public int hashCode() {
-      return Objects.hashCode(getOperation(), getRuleKey(), getThreadId(), cacheResult);
+      return Objects.hashCode(getOperation(), getRuleKeys(), getThreadId(), cacheResult);
     }
   }
 

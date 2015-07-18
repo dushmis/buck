@@ -16,12 +16,13 @@
 
 package com.facebook.buck.cli;
 
+import com.facebook.buck.android.AdbHelper;
+import com.facebook.buck.android.AdbOptions;
+import com.facebook.buck.android.TargetDeviceOptions;
 import com.facebook.buck.json.BuildFileParseException;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetException;
-import com.facebook.buck.parser.BuildTargetParser;
-import com.facebook.buck.parser.BuildTargetPatternParser;
-import com.facebook.buck.parser.Parser;
+import com.facebook.buck.model.Pair;
 import com.facebook.buck.parser.ParserConfig;
 import com.facebook.buck.rules.ActionGraph;
 import com.facebook.buck.rules.BuildRule;
@@ -30,95 +31,147 @@ import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetGraphToActionGraph;
 import com.facebook.buck.rules.TargetGraphTransformer;
 import com.facebook.buck.step.ExecutionContext;
+import com.facebook.infer.annotation.SuppressFieldNotInitialized;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+
+import org.kohsuke.args4j.Argument;
+import org.kohsuke.args4j.Option;
 
 import java.io.IOException;
+import java.util.List;
 
-public class UninstallCommand extends AbstractCommandRunner<UninstallCommandOptions> {
+public class UninstallCommand extends AbstractCommand {
 
-  private final TargetGraphTransformer<ActionGraph> targetGraphTransformer;
+  public static class UninstallOptions {
+    @VisibleForTesting static final String KEEP_LONG_ARG = "--keep";
+    @VisibleForTesting static final String KEEP_SHORT_ARG = "-k";
+    @Option(
+        name = KEEP_LONG_ARG,
+        aliases = { KEEP_SHORT_ARG },
+        usage = "Keep user data when uninstalling.")
+    private boolean keepData = false;
 
-  public UninstallCommand(CommandRunnerParams params) {
-    super(params);
-
-    this.targetGraphTransformer = new TargetGraphToActionGraph(
-        params.getBuckEventBus(),
-        new BuildTargetNodeToBuildRuleTransformer());
-  }
-
-  @Override
-  UninstallCommandOptions createOptions(BuckConfig buckConfig) {
-    return new UninstallCommandOptions(buckConfig);
-  }
-
-  @Override
-  int runCommandWithOptionsInternal(UninstallCommandOptions options)
-      throws IOException, InterruptedException {
-    // Make sure that only one build target is specified.
-    if (options.getArguments().size() != 1) {
-      getStdErr().println("Must specify exactly one android_binary() rule.");
-      return 1;
+    public boolean shouldKeepUserData() {
+      return keepData;
     }
+  }
 
-    // Get a parser.
-    Parser parser = getParser();
+  @AdditionalOptions
+  @SuppressFieldNotInitialized
+  private UninstallOptions uninstallOptions;
+
+  @AdditionalOptions
+  @SuppressFieldNotInitialized
+  private AdbCommandLineOptions adbOptions;
+
+  @AdditionalOptions
+  @SuppressFieldNotInitialized
+  private TargetDeviceCommandLineOptions deviceOptions;
+
+  @Argument
+  private List<String> arguments = Lists.newArrayList();
+
+  public List<String> getArguments() {
+    return arguments;
+  }
+
+  @VisibleForTesting
+  void setArguments(List<String> arguments) {
+    this.arguments = arguments;
+  }
+
+  public UninstallOptions uninstallOptions() {
+    return uninstallOptions;
+  }
+
+  public AdbOptions adbOptions() {
+    return adbOptions.getAdbOptions();
+  }
+
+  public TargetDeviceOptions targetDeviceOptions() {
+    return deviceOptions.getTargetDeviceOptions();
+  }
+
+  @Override
+  public int runWithoutHelp(CommandRunnerParams params) throws IOException, InterruptedException {
 
     // Parse all of the build targets specified by the user.
-    BuildTargetParser buildTargetParser = parser.getBuildTargetParser();
-    String buildTargetName = options.getArgumentsFormattedAsBuildTargets().get(0);
     ActionGraph actionGraph;
-    BuildTarget buildTarget;
+    ImmutableSet<BuildTarget> buildTargets;
     try {
-      buildTarget = buildTargetParser.parse(
-          buildTargetName,
-          BuildTargetPatternParser.fullyQualified(buildTargetParser));
-      TargetGraph targetGraph = parser.buildTargetGraphForBuildTargets(
-          ImmutableList.of(buildTarget),
-          new ParserConfig(options.getBuckConfig()),
-          getBuckEventBus(),
-          console,
-          environment,
-          options.getEnableProfiling());
-      actionGraph = targetGraphTransformer.apply(targetGraph);
+      Pair<ImmutableSet<BuildTarget>, TargetGraph> result = params.getParser()
+          .buildTargetGraphForTargetNodeSpecs(
+              parseArgumentsAsTargetNodeSpecs(
+                  params.getBuckConfig(),
+                  params.getRepository().getFilesystem().getIgnorePaths(),
+                  getArguments()),
+              new ParserConfig(params.getBuckConfig()),
+              params.getBuckEventBus(),
+              params.getConsole(),
+              params.getEnvironment(),
+              getEnableProfiling());
+      buildTargets = result.getFirst();
+      TargetGraphTransformer targetGraphTransformer = new TargetGraphToActionGraph(
+          params.getBuckEventBus(),
+          new BuildTargetNodeToBuildRuleTransformer(),
+          params.getFileHashCache());
+      actionGraph = targetGraphTransformer.apply(result.getSecond());
     } catch (BuildTargetException | BuildFileParseException e) {
-      console.printBuildFailureWithoutStacktrace(e);
+      params.getConsole().printBuildFailureWithoutStacktrace(e);
       return 1;
     }
+
+    // Make sure that only one build target is specified.
+    if (buildTargets.size() != 1) {
+      params.getConsole().getStdErr().println("Must specify exactly one android_binary() rule.");
+      return 1;
+    }
+    BuildTarget buildTarget = Iterables.get(buildTargets, 0);
 
     // Find the android_binary() rule from the parse.
     BuildRule buildRule = Preconditions.checkNotNull(
         actionGraph.findBuildRuleByTarget(buildTarget));
-    if (buildRule == null || !(buildRule instanceof InstallableApk)) {
-      console.printBuildFailure(String.format(
-          "Specified rule %s must be of type android_binary() or apk_genrule() but was %s().\n",
-          buildRule.getFullyQualifiedName(),
-          buildRule.getType().getName()));
+    if (!(buildRule instanceof InstallableApk)) {
+      params.getConsole().printBuildFailure(
+          String.format(
+              "Specified rule %s must be of type android_binary() or apk_genrule() but was %s().\n",
+              buildRule.getFullyQualifiedName(),
+              buildRule.getType()));
       return 1;
     }
     InstallableApk installableApk = (InstallableApk) buildRule;
 
     // We need this in case adb isn't already running.
-    try (ExecutionContext context = createExecutionContext()) {
+    try (ExecutionContext context = createExecutionContext(params)) {
       final AdbHelper adbHelper = new AdbHelper(
-          options.adbOptions(),
-          options.targetDeviceOptions(),
+          adbOptions(),
+          targetDeviceOptions(),
           context,
-          console,
-          getBuckEventBus(),
-          options.getBuckConfig());
+          params.getConsole(),
+          params.getBuckEventBus(),
+          params.getBuckConfig().getRestartAdbOnFailure());
 
       // Find application package name from manifest and uninstall from matching devices.
       String appId = AdbHelper.tryToExtractPackageNameFromManifest(installableApk, context);
       return adbHelper.uninstallApp(
           appId,
-          options.uninstallOptions()
+          uninstallOptions().shouldKeepUserData()
       ) ? 0 : 1;
     }
   }
 
   @Override
-  String getUsageIntro() {
-    return "Specify an android_binary() rule whose APK should be uninstalled";
+  public String getShortDescription() {
+    return "uninstalls an APK";
   }
+
+  @Override
+  public boolean isReadOnly() {
+    return false;
+  }
+
 }

@@ -25,7 +25,6 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.model.HasBuildTarget;
-import com.facebook.buck.python.ImmutablePythonPackageComponents;
 import com.facebook.buck.python.PythonPackageComponents;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
@@ -42,6 +41,7 @@ import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.facebook.buck.shell.Genrule;
 import com.facebook.buck.shell.GenruleBuilder;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
+import com.google.common.base.Optional;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -103,7 +103,7 @@ public class CxxBinaryDescriptionTest {
       @Override
       public CxxPreprocessorInput getCxxPreprocessorInput(
           CxxPlatform cxxPlatform,
-          CxxDescriptionEnhancer.HeaderVisibility headerVisibility) {
+          HeaderVisibility headerVisibility) {
         return CxxPreprocessorInput.builder()
             .addRules(
                 header.getBuildTarget(),
@@ -113,21 +113,38 @@ public class CxxBinaryDescriptionTest {
       }
 
       @Override
+      public ImmutableMap<BuildTarget, CxxPreprocessorInput> getTransitiveCxxPreprocessorInput(
+          CxxPlatform cxxPlatform,
+          HeaderVisibility headerVisibility) {
+        return ImmutableMap.of(
+            getBuildTarget(),
+            getCxxPreprocessorInput(cxxPlatform, headerVisibility));
+      }
+
+      @Override
       public NativeLinkableInput getNativeLinkableInput(
           CxxPlatform cxxPlatform,
           Linker.LinkableDepType type) {
-        return ImmutableNativeLinkableInput.of(
+        return NativeLinkableInput.of(
             ImmutableList.<SourcePath>of(
-                new BuildTargetSourcePath(getProjectFilesystem(), archive.getBuildTarget())),
-            ImmutableList.of(archiveOutput.toString()));
+                new BuildTargetSourcePath(archive.getBuildTarget())),
+            ImmutableList.of(archiveOutput.toString()),
+            ImmutableSet.<Path>of());
+      }
+
+      @Override
+      public Optional<Linker.LinkableDepType> getPreferredLinkage(CxxPlatform cxxPlatform) {
+        return Optional.absent();
       }
 
       @Override
       public PythonPackageComponents getPythonPackageComponents(CxxPlatform cxxPlatform) {
-        return ImmutablePythonPackageComponents.of(
+        return PythonPackageComponents.of(
             ImmutableMap.<Path, SourcePath>of(),
             ImmutableMap.<Path, SourcePath>of(),
-            ImmutableMap.<Path, SourcePath>of());
+            ImmutableMap.<Path, SourcePath>of(),
+            ImmutableSet.<SourcePath>of(),
+            Optional.<Boolean>absent());
       }
 
       @Override
@@ -143,6 +160,10 @@ public class CxxBinaryDescriptionTest {
         return ImmutableMap.of();
       }
 
+      @Override
+      public boolean isTestedBy(BuildTarget buildTarget) {
+        return false;
+      }
     };
     resolver.addAllToIndex(ImmutableList.of(header, headerSymlinkTree, archive, dep));
 
@@ -155,12 +176,11 @@ public class CxxBinaryDescriptionTest {
                       SourceWithFlags.of(new TestSourcePath("test/bar.cpp")),
                       SourceWithFlags.of(
                           new BuildTargetSourcePath(
-                              projectFilesystem,
                               genSource.getBuildTarget()))))
               .setHeaders(
-                  ImmutableList.<SourcePath>of(
+                  ImmutableSortedSet.<SourcePath>of(
                       new TestSourcePath("test/bar.h"),
-                      new BuildTargetSourcePath(projectFilesystem, genHeader.getBuildTarget())))
+                      new BuildTargetSourcePath(genHeader.getBuildTarget())))
               .setDeps(ImmutableSortedSet.of(dep.getBuildTarget()));
     CxxBinary binRule = (CxxBinary) cxxBinaryBuilder.build(resolver);
     CxxLink rule = binRule.getRule();
@@ -170,7 +190,7 @@ public class CxxBinaryDescriptionTest {
             resolver,
             pathResolver,
             cxxPlatform,
-            CxxPreprocessorInput.EMPTY,
+            ImmutableList.<CxxPreprocessorInput>of(),
             ImmutableList.<String>of());
 
     // Check that link rule has the expected deps: the object files for our sources and the
@@ -203,7 +223,7 @@ public class CxxBinaryDescriptionTest {
             CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
                 target,
                 cxxPlatform.getFlavor(),
-                CxxDescriptionEnhancer.HeaderVisibility.PRIVATE)),
+                HeaderVisibility.PRIVATE)),
         FluentIterable.from(preprocessRule1.getDeps())
             .transform(HasBuildTarget.TO_TARGET)
             .toSet());
@@ -238,7 +258,7 @@ public class CxxBinaryDescriptionTest {
             CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
                 target,
                 cxxPlatform.getFlavor(),
-                CxxDescriptionEnhancer.HeaderVisibility.PRIVATE)),
+                HeaderVisibility.PRIVATE)),
         FluentIterable.from(preprocessRule2.getDeps())
             .transform(HasBuildTarget.TO_TARGET)
             .toSet());

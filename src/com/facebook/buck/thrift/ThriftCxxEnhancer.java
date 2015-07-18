@@ -28,8 +28,9 @@ import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
-import com.facebook.buck.rules.coercer.Either;
+import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
+import com.facebook.buck.rules.coercer.SourceWithFlagsList;
 import com.facebook.buck.util.HumanReadableException;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
@@ -82,7 +83,7 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
     final boolean layouts = options.contains("frozen");
     final boolean templates = cpp2 || options.contains("templates");
     final boolean perfhash = !cpp2 && options.contains("perfhash");
-    final boolean separate_processmap = cpp2 && options.contains("separate_processmap");
+    final boolean separateProcessmap = cpp2 && options.contains("separate_processmap");
 
     ImmutableList.Builder<String> sources = ImmutableList.builder();
 
@@ -115,7 +116,7 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
         sources.add(service + "_client.cpp");
       }
 
-      if (separate_processmap) {
+      if (separateProcessmap) {
         sources.add(service + "_processmap_binary.cpp");
         sources.add(service + "_processmap_compact.cpp");
       }
@@ -163,14 +164,12 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
               name,
               SourceWithFlags.of(
                   new BuildTargetSourcePath(
-                      source.getCompileRule().getProjectFilesystem(),
                       source.getCompileRule().getBuildTarget(),
                       outputDir.resolve(name))));
         } else if (CxxCompilables.HEADER_EXTENSIONS.contains(extension)) {
           headersBuilder.put(
               name,
               new BuildTargetSourcePath(
-                  source.getCompileRule().getProjectFilesystem(),
                   source.getCompileRule().getBuildTarget(),
                   outputDir.resolve(name)));
         } else {
@@ -219,14 +218,14 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
     ImmutableMap.Builder<String, SourcePath> headersBuilder = ImmutableMap.builder();
     headersBuilder.putAll(spec.getHeaders());
     if (args.cppExportedHeaders.isPresent()) {
-      if (args.cppExportedHeaders.get().isRight()) {
-        headersBuilder.putAll(args.cppExportedHeaders.get().getRight());
+      if (args.cppExportedHeaders.get().getNamedSources().isPresent()) {
+        headersBuilder.putAll(args.cppExportedHeaders.get().getNamedSources().get());
       } else {
         headersBuilder.putAll(
             pathResolver.getSourcePathNames(
                 params.getBuildTarget(),
                 "cpp_headers",
-                args.cppExportedHeaders.get().getLeft()));
+                args.cppExportedHeaders.get().getUnnamedSources().get()));
       }
     }
     ImmutableMap<String, SourcePath> headers = headersBuilder.build();
@@ -235,10 +234,10 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
     ImmutableMap.Builder<String, SourceWithFlags> srcsBuilder = ImmutableMap.builder();
     srcsBuilder.putAll(spec.getSources());
     if (args.cppSrcs.isPresent()) {
-      if (args.cppSrcs.get().isRight()) {
-        srcsBuilder.putAll(args.cppSrcs.get().getRight());
+      if (args.cppSrcs.get().getNamedSources().isPresent()) {
+        srcsBuilder.putAll(args.cppSrcs.get().getNamedSources().get());
       } else {
-        for (SourceWithFlags sourceWithFlags : args.cppSrcs.get().getLeft()) {
+        for (SourceWithFlags sourceWithFlags : args.cppSrcs.get().getUnnamedSources().get()) {
           srcsBuilder.put(
               pathResolver.getSourcePathName(
                   params.getBuildTarget(),
@@ -252,13 +251,8 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
     // Construct the C/C++ library description argument to pass to the
     CxxLibraryDescription.Arg langArgs = CxxLibraryDescription.createEmptyConstructorArg();
     langArgs.headerNamespace = args.cppHeaderNamespace;
-    langArgs.srcs =
-        Optional.of(
-            Either.<ImmutableList<SourceWithFlags>, ImmutableMap<String, SourceWithFlags>>ofRight(
-                srcs));
-    langArgs.exportedHeaders =
-        Optional.of(
-            Either.<ImmutableList<SourcePath>, ImmutableMap<String, SourcePath>>ofRight(headers));
+    langArgs.srcs = Optional.of(SourceWithFlagsList.ofNamedSources(srcs));
+    langArgs.exportedHeaders = Optional.of(SourceList.ofNamedSources(headers));
 
     return cxxLibraryDescription.createBuildRule(langParams, resolver, langArgs);
   }
@@ -317,6 +311,13 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
         .add(String.format("include_prefix=%s", target.getBasePath()))
         .addAll((cpp2 ? args.cpp2Options : args.cppOptions).or(ImmutableSet.<String>of()))
         .build();
+  }
+
+  @Override
+  public ThriftLibraryDescription.CompilerType getCompilerType() {
+    return cpp2 ?
+        ThriftLibraryDescription.CompilerType.THRIFT2 :
+        ThriftLibraryDescription.CompilerType.THRIFT;
   }
 
   private static class CxxHeadersAndSources {

@@ -29,9 +29,9 @@ import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.TestExecutionContext;
 import com.facebook.buck.testutil.TestConsole;
 import com.facebook.buck.util.Console;
+import com.facebook.buck.util.Escaper;
 import com.facebook.buck.util.FakeProcess;
 import com.facebook.buck.util.FakeProcessExecutor;
-import com.facebook.buck.util.ImmutableProcessExecutorParams;
 import com.facebook.buck.util.ProcessExecutorParams;
 import com.facebook.buck.util.Verbosity;
 import com.google.common.base.Charsets;
@@ -88,7 +88,7 @@ public class ShellStepTest {
   }
 
   private static ProcessExecutorParams createParams() {
-    return ImmutableProcessExecutorParams
+    return ProcessExecutorParams
         .builder()
         .setCommand(ImmutableList.of("test"))
         .build();
@@ -160,7 +160,11 @@ public class ShellStepTest {
         .newBuilder()
         .setProcessExecutor(new FakeProcessExecutor())
         .build();
-    assertEquals("V1='two words' V2='$foo'\\''bar'\\''' bash -c 'echo $V1 $V2'",
+    assertEquals(
+        String.format(
+            "(cd %s && V1='two words' V2='$foo'\\''bar'\\''' bash -c 'echo $V1 $V2')",
+            Escaper.escapeAsBashString(
+                context.getProjectDirectoryRoot().toAbsolutePath().toFile().getPath())),
         command.getDescription(context));
   }
 
@@ -172,8 +176,8 @@ public class ShellStepTest {
         .setProcessExecutor(new FakeProcessExecutor())
         .build();
     assertEquals(
-        String.format("(cd '%s' && V1='two words' V2='$foo'\\''bar'\\''' bash -c 'echo $V1 $V2')",
-            PATH.getPath()),
+        String.format("(cd %s && V1='two words' V2='$foo'\\''bar'\\''' bash -c 'echo $V1 $V2')",
+            Escaper.escapeAsBashString(PATH.getPath())),
         command.getDescription(context));
   }
 
@@ -184,7 +188,10 @@ public class ShellStepTest {
         .newBuilder()
         .setProcessExecutor(new FakeProcessExecutor())
         .build();
-    assertEquals(String.format("(cd '%s' && bash -c 'echo $V1 $V2')", PATH.getPath()),
+    assertEquals(
+        String.format(
+            "(cd %s && bash -c 'echo $V1 $V2')",
+            Escaper.escapeAsBashString(PATH.getPath())),
         command.getDescription(context));
   }
 
@@ -195,7 +202,12 @@ public class ShellStepTest {
         .newBuilder()
         .setProcessExecutor(new FakeProcessExecutor())
         .build();
-    assertEquals("bash -c 'echo $V1 $V2'", command.getDescription(context));
+    assertEquals(
+        String.format(
+            "(cd %s && bash -c 'echo $V1 $V2')",
+            Escaper.escapeAsBashString(
+                context.getProjectDirectoryRoot().toAbsolutePath().toFile().getPath())),
+        command.getDescription(context));
   }
 
   @Test
@@ -268,16 +280,22 @@ public class ShellStepTest {
   public void processEnvironmentIsUnionOfContextAndStepEnvironments() {
     ShellStep command = createCommand(/*shouldPrintStdErr*/ false, /*shouldPrintStdOut*/ false);
     ExecutionContext context = TestExecutionContext.newBuilder()
-        .setEnvironment(ImmutableMap.of("CONTEXT_ENVIRONMENT_VARIABLE", "CONTEXT_VALUE"))
+        .setEnvironment(ImmutableMap.of(
+                "CONTEXT_ENVIRONMENT_VARIABLE", "CONTEXT_VALUE",
+                "PWD", "/wrong-pwd"))
         .build();
     Map<String, String> subProcessEnvironment = Maps.newHashMap();
     subProcessEnvironment.put("PROCESS_ENVIRONMENT_VARIABLE", "PROCESS_VALUE");
-    command.setProcessEnvironment(context, subProcessEnvironment);
+    command.setProcessEnvironment(context, subProcessEnvironment, new File("/right-pwd"));
+    Map<String, String> actualProcessEnvironment = Maps.newHashMap();
+    actualProcessEnvironment.putAll(context.getEnvironment());
+    actualProcessEnvironment.remove("PWD");
     assertEquals(
         "Sub-process environment should be union of client and step environments.",
         subProcessEnvironment,
         ImmutableMap.<String, String>builder()
-            .putAll(context.getEnvironment())
+            .putAll(actualProcessEnvironment)
+            .put("PWD", new File("/right-pwd").getPath())
             .putAll(ENV).build());
   }
 

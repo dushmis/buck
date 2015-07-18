@@ -28,6 +28,7 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import java.util.List;
 import java.util.Set;
@@ -39,7 +40,8 @@ public class AndroidBinaryBuilder extends AbstractNodeBuilder<AndroidBinaryDescr
         new AndroidBinaryDescription(
             ANDROID_JAVAC_OPTIONS,
             new ProGuardConfig(new FakeBuckConfig()),
-            ImmutableMap.<AndroidBinary.TargetCpuType, NdkCxxPlatform>of()),
+            ImmutableMap.<NdkCxxPlatforms.TargetCpuType, NdkCxxPlatform>of(),
+            MoreExecutors.newDirectExecutorService()),
         target);
   }
 
@@ -49,12 +51,6 @@ public class AndroidBinaryBuilder extends AbstractNodeBuilder<AndroidBinaryDescr
 
   public AndroidBinaryBuilder setManifest(SourcePath manifest) {
     arg.manifest = manifest;
-    return this;
-  }
-
-  @SuppressWarnings("unused")
-  public AndroidBinaryBuilder setTarget(String target) {
-    // TODO(mbolin): Support for this field will be removed in an upcoming diff.
     return this;
   }
 
@@ -111,4 +107,19 @@ public class AndroidBinaryBuilder extends AbstractNodeBuilder<AndroidBinaryDescr
     arg.resourceFilter = Optional.of(rawFilters);
     return this;
   }
+
+  public AndroidBinaryBuilder setIntraDexReorderResources(boolean enableReorder,
+      SourcePath reorderTool,
+      SourcePath reorderData) {
+    arg.reorderClassesIntraDex = Optional.of(enableReorder);
+    arg.dexReorderToolFile = Optional.of(reorderTool);
+    arg.dexReorderDataDumpFile = Optional.of(reorderData);
+    return this;
+  }
+
+  public AndroidBinaryBuilder setNoDx(Set<BuildTarget> noDx) {
+    arg.noDx = Optional.of(noDx);
+    return this;
+  }
+
 }

@@ -13,11 +13,10 @@
 {call buck.rule}
 {param status: 'UNFROZEN' /}
 {param overview}
-A cxx_binary() rule builds a native executable from the supplied set of C/C++ source
-files and dependencies.
-If C/C++ library dependencies are listed, the generated native executable will
-request and link against their static archives
-(which are *not* built using <a href="http://en.wikipedia.org/wiki/Position-independent_code">PIC</a>).
+A cxx_binary() rule builds a native executable from the supplied set of C/C++ source files and
+dependencies. If C/C++ library dependencies are listed, the generated native executable will request
+and link against their static archives (which are *not* built using {sp}
+<a href="http://en.wikipedia.org/wiki/Position-independent_code">PIC</a>).
 {/param}
 
 {param args}
@@ -31,13 +30,34 @@ request and link against their static archives
 
 {call cxx_common.srcs_arg /}
 
+{call cxx_common.platform_srcs_arg /}
+
 {call cxx_common.headers_arg /}
+
+{call cxx_common.platform_headers_arg /}
+
+{call cxx_common.header_namespace_arg /}
 
 {call cxx_common.preprocessor_flags_arg /}
 
+{call cxx_common.platform_preprocessor_flags_arg /}
+
 {call cxx_common.compiler_flags_arg /}
 
+{call cxx_common.platform_compiler_flags_arg /}
+
 {call cxx_common.linker_flags_arg /}
+
+{call cxx_common.platform_linker_flags_arg /}
+
+{call buck.arg}
+  {param name : 'link_style' /}
+  {param default: 'static' /}
+  {param desc}
+  Determines whether to build and link this binary's dependencies statically or dynamically. Can be
+  either <code>static</code> or <code>dynamic</code>.
+  {/param}
+{/call}
 
 {call buck.tests_arg /}
 

@@ -54,7 +54,7 @@ public class SourcePathResolver {
       return resolvedPath.get();
     }
 
-    Path path = ruleResolver.getRule(buildTargetSourcePath.getTarget()).getPathToOutputFile();
+    Path path = ruleResolver.getRule(buildTargetSourcePath.getTarget()).getPathToOutput();
     if (path == null) {
       throw new HumanReadableException(
           "No known output for: %s",
@@ -84,6 +84,30 @@ public class SourcePathResolver {
       paths.put(entry.getKey(), getPath(entry.getValue()));
     }
     return paths.build();
+  }
+
+  /**
+   * @return the {@link Path} for this {@code sourcPath}, resolved using its associated
+   *     {@link com.facebook.buck.io.ProjectFilesystem}.
+   */
+  public Path getResolvedPath(SourcePath sourcePath) {
+    Path relative = getPath(sourcePath);
+
+    Optional<BuildRule> rule = getRule(sourcePath);
+    if (rule.isPresent()) {
+      return rule.get().getProjectFilesystem().resolve(relative);
+    }
+
+    return ((PathSourcePath) sourcePath).getFilesystem().resolve(relative);
+  }
+
+  public Function<SourcePath, Path> getResolvedPathFunction() {
+    return new Function<SourcePath, Path>() {
+      @Override
+      public Path apply(SourcePath input) {
+        return getResolvedPath(input);
+      }
+    };
   }
 
   /**
@@ -132,7 +156,7 @@ public class SourcePathResolver {
       Iterable<T> objects,
       Function<T, SourcePath> objectSourcePathFunction) {
 
-    Map<String, T> resolved = Maps.newHashMap();
+    Map<String, T> resolved = Maps.newLinkedHashMap();
 
     for (T object : objects) {
       SourcePath path = objectSourcePathFunction.apply(object);
@@ -173,8 +197,8 @@ public class SourcePathResolver {
   }
 
   /**
-   * Takes an {@link Iterable} of {@link SourcePath} objects and filters those that are suitable to
-   * be returned by {@link com.facebook.buck.rules.AbstractBuildRule#getInputsToCompareToOutput()}.
+   * Takes an {@link Iterable} of {@link SourcePath} objects and filters those that represent
+   * {@link Path}s.
    */
   public ImmutableCollection<Path> filterInputsToCompareToOutput(
       Iterable<? extends SourcePath> sources) {

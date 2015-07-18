@@ -20,12 +20,8 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.google.common.base.Function;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableSortedSet;
-import com.google.common.collect.Ordering;
 
 import java.nio.file.Path;
-
-import javax.annotation.Nullable;
 
 /**
  * Utilities for dealing with {@link SourcePath}s.
@@ -42,18 +38,6 @@ public class SourcePaths {
 
   /** Utility class: do not instantiate. */
   private SourcePaths() {}
-
-  public static ImmutableSortedSet<SourcePath> toSourcePathsSortedByNaturalOrder(
-      ProjectFilesystem projectFilesystem,
-      @Nullable Iterable<Path> paths) {
-    if (paths == null) {
-      return ImmutableSortedSet.of();
-    }
-
-    return FluentIterable.from(paths)
-        .transform(toSourcePath(projectFilesystem))
-        .toSortedSet(Ordering.natural());
-  }
 
   public static Iterable<BuildTarget> filterBuildTargetSourcePaths(
       Iterable<SourcePath> sourcePaths) {
@@ -72,13 +56,23 @@ public class SourcePaths {
     };
   }
 
-  public static Function<BuildRule, SourcePath> getToBuildTargetSourcePath(
-      final ProjectFilesystem projectFilesystem) {
+  public static Function<BuildRule, SourcePath> getToBuildTargetSourcePath() {
     return new Function<BuildRule, SourcePath>() {
       @Override
       public SourcePath apply(BuildRule input) {
-        return new BuildTargetSourcePath(projectFilesystem, input.getBuildTarget());
+        return new BuildTargetSourcePath(input.getBuildTarget());
       }
     };
   }
+
+  public static Function<Path, SourcePath> getToBuildTargetSourcePath(
+      final BuildTarget target) {
+    return new Function<Path, SourcePath>() {
+      @Override
+      public SourcePath apply(Path input) {
+        return new BuildTargetSourcePath(target, input);
+      }
+    };
+  }
+
 }

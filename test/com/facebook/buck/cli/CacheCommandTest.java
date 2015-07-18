@@ -41,24 +41,16 @@ import java.io.IOException;
 public class CacheCommandTest extends EasyMockSupport {
 
   @Test
-  public void testRunCommandWithNoArguments()
-      throws IOException, InterruptedException {
+  public void testRunCommandWithNoArguments() throws IOException, InterruptedException {
     Console console = createMock(Console.class);
     console.printErrorText("No cache keys specified.");
     CommandRunnerParams commandRunnerParams = CommandRunnerParamsForTesting
         .builder()
         .setConsole(console)
         .build();
-    CacheCommand cacheCommand = new CacheCommand(commandRunnerParams);
-    BuckConfig buckConfig = createMock(BuckConfig.class);
-
-    replayAll();
-
-    CacheCommandOptions options = new CacheCommandOptions(buckConfig);
-    int exitCode = cacheCommand.runCommandWithOptions(options);
+    CacheCommand cacheCommand = new CacheCommand();
+    int exitCode = cacheCommand.run(commandRunnerParams);
     assertEquals(1, exitCode);
-
-    verifyAll();
   }
 
   @Test
@@ -71,7 +63,7 @@ public class CacheCommandTest extends EasyMockSupport {
         cache.fetch(
             eq(new RuleKey(ruleKeyHash)),
             isA(File.class)))
-        .andReturn(CacheResult.CASSANDRA_HIT);
+        .andReturn(CacheResult.hit("http"));
     ArtifactCacheFactory artifactCacheFactory = new InstanceArtifactCacheFactory(cache);
 
     Console console = createMock(Console.class);
@@ -83,20 +75,15 @@ public class CacheCommandTest extends EasyMockSupport {
         .setArtifactCacheFactory(artifactCacheFactory)
         .build();
 
-    CacheCommand cacheCommand = new CacheCommand(commandRunnerParams);
-
-    BuckConfig buckConfig = createMock(BuckConfig.class);
-
     replayAll();
 
-    CacheCommandOptions options = new CacheCommandOptions(buckConfig);
-    options.setArguments(ImmutableList.of(ruleKeyHash));
-    int exitCode = cacheCommand.runCommandWithOptions(options);
+    CacheCommand cacheCommand = new CacheCommand();
+    cacheCommand.setArguments(ImmutableList.of(ruleKeyHash));
+    int exitCode = cacheCommand.run(commandRunnerParams);
     assertEquals(0, exitCode);
-    assertThat(successMessage.getValue(),
+    assertThat(
+        successMessage.getValue(),
         startsWith("Successfully downloaded artifact with id " + ruleKeyHash + " at "));
-
-    verifyAll();
   }
 
   @Test
@@ -109,7 +96,7 @@ public class CacheCommandTest extends EasyMockSupport {
         cache.fetch(
             eq(new RuleKey(ruleKeyHash)),
             isA(File.class)))
-        .andReturn(CacheResult.MISS);
+        .andReturn(CacheResult.miss());
     ArtifactCacheFactory artifactCacheFactory = new InstanceArtifactCacheFactory(cache);
 
     Console console = createMock(Console.class);
@@ -120,17 +107,11 @@ public class CacheCommandTest extends EasyMockSupport {
         .setArtifactCacheFactory(artifactCacheFactory)
         .build();
 
-    CacheCommand cacheCommand = new CacheCommand(commandRunnerParams);
-
-    BuckConfig buckConfig = createMock(BuckConfig.class);
-
     replayAll();
 
-    CacheCommandOptions options = new CacheCommandOptions(buckConfig);
-    options.setArguments(ImmutableList.of(ruleKeyHash));
-    int exitCode = cacheCommand.runCommandWithOptions(options);
+    CacheCommand cacheCommand = new CacheCommand();
+    cacheCommand.setArguments(ImmutableList.of(ruleKeyHash));
+    int exitCode = cacheCommand.run(commandRunnerParams);
     assertEquals(1, exitCode);
-
-    verifyAll();
   }
 }

@@ -19,24 +19,27 @@ package com.facebook.buck.java;
 import static com.facebook.buck.rules.BuildableProperties.Kind.PACKAGING;
 
 import com.facebook.buck.io.DirectoryTraverser;
-import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BinaryBuildRule;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRules;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.BuildableProperties;
+import com.facebook.buck.rules.CommandTool;
 import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.RuleKeyAppendable;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.Tool;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.facebook.buck.step.fs.MkdirAndSymlinkFileStep;
 import com.facebook.buck.step.fs.MkdirStep;
 import com.facebook.buck.util.BuckConstant;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
@@ -44,27 +47,31 @@ import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Collections;
 
 import javax.annotation.Nullable;
 
 @BuildsAnnotationProcessor
-public class JavaBinary extends AbstractBuildRule implements BinaryBuildRule, HasClasspathEntries {
+public class JavaBinary extends AbstractBuildRule
+    implements BinaryBuildRule, HasClasspathEntries, RuleKeyAppendable {
 
   private static final BuildableProperties OUTPUT_TYPE = new BuildableProperties(PACKAGING);
 
+  @AddToRuleKey
   @Nullable
   private final String mainClass;
 
+  @AddToRuleKey
   @Nullable
   private final SourcePath manifestFile;
   private final boolean mergeManifests;
 
   @Nullable
   private final Path metaInfDirectory;
+  @AddToRuleKey
   private final ImmutableSet<String> blacklist;
 
   private final DirectoryTraverser directoryTraverser;
+  private final ImmutableSetMultimap<JavaLibrary, Path> transitiveClasspathEntries;
 
   public JavaBinary(
       BuildRuleParams params,
@@ -74,22 +81,16 @@ public class JavaBinary extends AbstractBuildRule implements BinaryBuildRule, Ha
       boolean mergeManifests,
       @Nullable Path metaInfDirectory,
       ImmutableSet<String> blacklist,
-      DirectoryTraverser directoryTraverser) {
+      DirectoryTraverser directoryTraverser,
+      ImmutableSetMultimap<JavaLibrary, Path> transitiveClasspathEntries) {
     super(params, resolver);
     this.mainClass = mainClass;
     this.manifestFile = manifestFile;
     this.mergeManifests = mergeManifests;
     this.metaInfDirectory = metaInfDirectory;
     this.blacklist = blacklist;
-
     this.directoryTraverser = directoryTraverser;
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder
-        .setReflectively("mainClass", mainClass)
-        .setReflectively("blacklist", blacklist);
+    this.transitiveClasspathEntries = transitiveClasspathEntries;
   }
 
   @Override
@@ -98,18 +99,12 @@ public class JavaBinary extends AbstractBuildRule implements BinaryBuildRule, Ha
   }
 
   @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
+  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
     // Build a sorted set so that metaInfDirectory contents are listed in a canonical order.
-    ImmutableSortedSet.Builder<Path> builder = ImmutableSortedSet.naturalOrder();
+    ImmutableSortedSet.Builder<Path> paths = ImmutableSortedSet.naturalOrder();
+    BuildRules.addInputsToSortedSet(metaInfDirectory, paths, directoryTraverser);
 
-    if (manifestFile != null) {
-      builder.addAll(
-          getResolver().filterInputsToCompareToOutput(Collections.singleton(manifestFile)));
-    }
-
-    BuildRules.addInputsToSortedSet(metaInfDirectory, builder, directoryTraverser);
-
-    return builder.build();
+    return builder.setReflectively("metaInfDirectory", paths.build());
   }
 
   @Override
@@ -143,7 +138,7 @@ public class JavaBinary extends AbstractBuildRule implements BinaryBuildRule, Ha
       includePaths = ImmutableSet.copyOf(getTransitiveClasspathEntries().values());
     }
 
-    Path outputFile = getPathToOutputFile();
+    Path outputFile = getPathToOutput();
     Path manifestPath = manifestFile == null ? null : getResolver().getPath(manifestFile);
     Step jar = new JarDirectoryStep(
         outputFile,
@@ -160,7 +155,7 @@ public class JavaBinary extends AbstractBuildRule implements BinaryBuildRule, Ha
 
   @Override
   public ImmutableSetMultimap<JavaLibrary, Path> getTransitiveClasspathEntries() {
-    return Classpaths.getClasspathEntries(getDeps());
+    return transitiveClasspathEntries;
   }
 
   private Path getOutputDirectory() {
@@ -168,7 +163,7 @@ public class JavaBinary extends AbstractBuildRule implements BinaryBuildRule, Ha
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return Paths.get(
         String.format(
             "%s/%s.jar",
@@ -177,13 +172,16 @@ public class JavaBinary extends AbstractBuildRule implements BinaryBuildRule, Ha
   }
 
   @Override
-  public ImmutableList<String> getExecutableCommand(ProjectFilesystem projectFilesystem) {
+  public Tool getExecutableCommand() {
     Preconditions.checkState(
         mainClass != null,
         "Must specify a main class for %s in order to to run it.",
         getBuildTarget());
 
-    return ImmutableList.of("java", "-jar",
-        projectFilesystem.getAbsolutifier().apply(getPathToOutputFile()).toString());
+    return new CommandTool.Builder()
+        .addArg("java")
+        .addArg("-jar")
+        .addArg(new BuildTargetSourcePath(getBuildTarget()))
+        .build();
   }
 }

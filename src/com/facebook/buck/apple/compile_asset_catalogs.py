@@ -244,7 +244,7 @@ if __name__ == "__main__":
                       help='Target platform.  Choices are iphonesimulator, '
                       'iphoneos, and macosx.')
     parser.add_option('-d', '--device', action='append', type=str,
-                      help='Choices are iphone and ipad. May be specified '
+                      help='Choices are iphone, ipad, and watch. May be specified '
                       'multiple times. When platform is macosx, this '
                       'option cannot be specified. Otherwise, this option '
                       'must be specified.')
@@ -295,9 +295,9 @@ if __name__ == "__main__":
 
     if opts.device is not None:
         for device in opts.device:
-            if device != 'iphone' and device != 'ipad':
+            if device != 'iphone' and device != 'ipad' and device != 'watch':
                 raise ValueError(
-                    device + ': device(s) must be either iphone or ipad')
+                    device + ': device(s) must be either iphone or ipad or watch')
 
     for path in catalogs:
         if os.path.splitext(os.path.basename(path))[1] != '.xcassets':

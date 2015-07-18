@@ -23,7 +23,6 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 import com.facebook.buck.event.BuckEventBusFactory;
-import com.facebook.buck.graph.MutableDirectedGraph;
 import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.JavaPackageFinder;
@@ -53,11 +52,13 @@ import com.facebook.buck.testutil.MoreAsserts;
 import com.facebook.buck.timing.DefaultClock;
 import com.facebook.buck.util.DefaultFileHashCache;
 import com.facebook.buck.util.FileHashCache;
+import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
 
 import org.easymock.EasyMock;
 import org.junit.Before;
@@ -98,7 +99,7 @@ public class ExportFileTest {
             "cp " + projectFilesystem.resolve("example.html") + " buck-out/gen/example.html"),
         steps,
         TestExecutionContext.newInstance());
-    assertEquals(Paths.get("buck-out/gen/example.html"), exportFile.getPathToOutputFile());
+    assertEquals(Paths.get("buck-out/gen/example.html"), exportFile.getPathToOutput());
   }
 
   @Test
@@ -117,7 +118,7 @@ public class ExportFileTest {
             "cp " + projectFilesystem.resolve("example.html") + " buck-out/gen/fish"),
         steps,
         TestExecutionContext.newInstance());
-    assertEquals(Paths.get("buck-out/gen/fish"), exportFile.getPathToOutputFile());
+    assertEquals(Paths.get("buck-out/gen/fish"), exportFile.getPathToOutput());
   }
 
   @Test
@@ -137,12 +138,11 @@ public class ExportFileTest {
             "cp " + projectFilesystem.resolve("chips") + " buck-out/gen/fish"),
         steps,
         TestExecutionContext.newInstance());
-    assertEquals(Paths.get("buck-out/gen/fish"), exportFile.getPathToOutputFile());
+    assertEquals(Paths.get("buck-out/gen/fish"), exportFile.getPathToOutput());
   }
 
   @Test
   public void shouldSetInputsFromSourcePaths() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     ExportFileBuilder builder = ExportFileBuilder.newExportFileBuilder(target)
         .setSrc(new TestSourcePath("chips"))
         .setOut("cake");
@@ -153,12 +153,13 @@ public class ExportFileTest {
     assertIterablesEquals(singleton(Paths.get("chips")), exportFile.getSource());
 
     BuildRuleResolver ruleResolver = new BuildRuleResolver();
-    FakeBuildRule rule = new FakeBuildRule(
-        ExportFileDescription.TYPE,
-        BuildTargetFactory.newInstance("//example:one"),
-        new SourcePathResolver(ruleResolver));
+    FakeBuildRule rule =
+        ruleResolver.addToIndex(
+            new FakeBuildRule(
+                BuildTargetFactory.newInstance("//example:one"),
+                new SourcePathResolver(ruleResolver)));
 
-    builder.setSrc(new BuildTargetSourcePath(projectFilesystem, rule.getBuildTarget()));
+    builder.setSrc(new BuildTargetSourcePath(rule.getBuildTarget()));
     exportFile = (ExportFile) builder.build(ruleResolver);
     assertTrue(Iterables.isEmpty(exportFile.getSource()));
 
@@ -185,7 +186,8 @@ public class ExportFileTest {
     temp.toFile().deleteOnExit();
 
     FileHashCache hashCache = new DefaultFileHashCache(filesystem);
-    RuleKeyBuilderFactory ruleKeyFactory = new DefaultRuleKeyBuilderFactory(hashCache);
+    SourcePathResolver resolver = new SourcePathResolver(new BuildRuleResolver());
+    RuleKeyBuilderFactory ruleKeyFactory = new DefaultRuleKeyBuilderFactory(hashCache, resolver);
 
     Files.write(temp, "I like cheese".getBytes(UTF_8));
 
@@ -196,9 +198,8 @@ public class ExportFileTest {
     ExportFile rule = (ExportFile) builder.build(new BuildRuleResolver(), filesystem);
 
     RuleKey original = ruleKeyFactory
-            .newInstance(rule, new SourcePathResolver(new BuildRuleResolver()))
-            .build()
-            .getTotalRuleKey();
+            .newInstance(rule)
+            .build();
 
     Files.write(temp, "I really like cheese".getBytes(UTF_8));
 
@@ -207,11 +208,11 @@ public class ExportFileTest {
     rule = (ExportFile) builder.build(new BuildRuleResolver(), filesystem);
 
     hashCache = new DefaultFileHashCache(filesystem);
-    ruleKeyFactory = new DefaultRuleKeyBuilderFactory(hashCache);
+    resolver = new SourcePathResolver(new BuildRuleResolver());
+    ruleKeyFactory = new DefaultRuleKeyBuilderFactory(hashCache, resolver);
     RuleKey refreshed = ruleKeyFactory
-        .newInstance(rule, new SourcePathResolver(new BuildRuleResolver()))
-        .build()
-        .getTotalRuleKey();
+        .newInstance(rule)
+        .build();
 
     assertNotEquals(original, refreshed);
   }
@@ -240,34 +241,41 @@ public class ExportFileTest {
                 return null;
               }
             })
-        .setActionGraph(new ActionGraph(new MutableDirectedGraph<BuildRule>()))
+        .setActionGraph(new ActionGraph(ImmutableList.<BuildRule>of()))
         .setStepRunner(
             new StepRunner() {
-              @Override
-              public void runStep(Step step) throws StepFailedException {
-                // Do nothing.
-              }
 
               @Override
-              public void runStepForBuildTarget(Step step, BuildTarget buildTarget)
+              public void runStepForBuildTarget(Step step, Optional<BuildTarget> buildTarget)
                   throws StepFailedException {
                 // Do nothing.
               }
 
               @Override
               public <T> ListenableFuture<T> runStepsAndYieldResult(
-                  List<Step> steps, Callable<T> interpretResults, BuildTarget buildTarget) {
+                  List<Step> steps,
+                  Callable<T> interpretResults,
+                  Optional<BuildTarget> buildTarget,
+                  ListeningExecutorService service,
+                  StepRunner.StepRunningCallback callback) {
                 return null;
               }
 
               @Override
-              public void runStepsInParallelAndWait(List<Step> steps) throws StepFailedException {
+              public void runStepsInParallelAndWait(
+                  List<Step> steps,
+                  Optional<BuildTarget> target,
+                  ListeningExecutorService service,
+                  StepRunner.StepRunningCallback callback)
+                  throws StepFailedException {
                 // Do nothing.
               }
 
               @Override
               public <T> ListenableFuture<Void> addCallback(
-                  ListenableFuture<List<T>> allBuiltDeps, FutureCallback<List<T>> futureCallback) {
+                  ListenableFuture<List<T>> allBuiltDeps,
+                  FutureCallback<List<T>> futureCallback,
+                  ListeningExecutorService service) {
                 // Do nothing.
                 return Futures.immediateFuture(null);
               }

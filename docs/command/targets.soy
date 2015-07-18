@@ -77,7 +77,19 @@ buck targets --type java_test \
 {call buck.param}
   {param name: 'json' /}
   {param desc}
-  Print JSON representation of each target
+  Print JSON representation of each target.
+  
+  <p><p>
+
+  In addition, the JSON includes the list of 'direct_dependencies' for each target, which may include additional
+  dependencies for targets whose descriptions implement ImplicitDepsInferringDescription. The fully qualified
+  names of targets are given.
+
+  <p>
+
+  For example, when resolving a genrule, the direct dependencies includes 
+  both the build targets in 'deps' as well as any build targets in a 
+  script associated with the genrule.
   {/param}
 {/call}
 
@@ -94,7 +106,7 @@ buck targets --print0 | xargs -0 buck build
   {/call}
 
 {call buck.param}
-  {param name: 'resolvealias' /}
+  {param name: 'resolve-alias' /}
   {param desc}
   Print the fully-qualified build target for the specified alias[es].  This
   command also accepts build targets.  See  <a

@@ -24,6 +24,7 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.testutil.integration.TestDataHelper;
 import com.facebook.buck.util.XmlDomParser;
+import com.google.common.base.Function;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -59,6 +60,7 @@ public class CompileStringsStepTest extends EasyMockSupport {
   private Path secondFile;
   private Path thirdFile;
   private Path fourthFile;
+  private Path fifthFile;
 
   @Before
   public void findTestData() {
@@ -68,6 +70,7 @@ public class CompileStringsStepTest extends EasyMockSupport {
     secondFile = testdataDir.resolve("second/res/values-es/strings.xml");
     thirdFile = testdataDir.resolve("third/res/values-pt/strings.xml");
     fourthFile = testdataDir.resolve("third/res/values-pt-rBR/strings.xml");
+    fifthFile = testdataDir.resolve("third/res/values/strings.xml");
   }
 
   @Test
@@ -87,7 +90,7 @@ public class CompileStringsStepTest extends EasyMockSupport {
   }
 
   private void testStringPathRegex(String input, boolean matches, String locale, String country) {
-    Matcher matcher = CompileStringsStep.STRING_FILE_PATTERN.matcher(input);
+    Matcher matcher = CompileStringsStep.NON_ENGLISH_STRING_FILE_PATTERN.matcher(input);
     assertEquals(matches, matcher.matches());
     if (!matches) {
       return;
@@ -130,20 +133,21 @@ public class CompileStringsStepTest extends EasyMockSupport {
   public void testGroupFilesByLocale() {
     Path path0 = Paths.get("project/dir/res/values-da/strings.xml");
     Path path1 = Paths.get("project/dir/res/values-da-rAB/strings.xml");
-    Path path2 = Paths.get("project/dir/dontmatch/res/values/strings.xml");
+    Path path2 = Paths.get("project/dir/res/values/strings.xml");
     Path path3 = Paths.get("project/groupme/res/values-da/strings.xml");
     Path path4 = Paths.get("project/groupmetoo/res/values-da-rAB/strings.xml");
     Path path5 = Paths.get("project/foreveralone/res/values-es/strings.xml");
-    ImmutableSet<Path> files = ImmutableSet.of(path0, path1, path2, path3, path4, path5);
+    ImmutableList<Path> files = ImmutableList.of(path0, path1, path2, path3, path4, path5);
 
     ImmutableMultimap<String, Path> groupedByLocale =
-        createNonExecutingStep().groupFilesByLocale(ImmutableSet.copyOf(files));
+        createNonExecutingStep().groupFilesByLocale(ImmutableList.copyOf(files));
 
     ImmutableMultimap<String, Path> expectedMap =
         ImmutableMultimap.<String, Path>builder()
           .putAll("da", ImmutableSet.of(path0, path3))
           .putAll("da_AB", ImmutableSet.of(path1, path4))
           .putAll("es", ImmutableSet.of(path5))
+          .putAll("en", ImmutableSet.of(path2))
           .build();
 
     assertEquals(
@@ -261,9 +265,14 @@ public class CompileStringsStepTest extends EasyMockSupport {
 
   private CompileStringsStep createNonExecutingStep() {
     return new CompileStringsStep(
-        ImmutableSet.<Path>of(),
+        ImmutableList.<Path>of(),
         createMock(Path.class),
-        createMock(Path.class));
+        new Function<String, Path>() {
+          @Override
+          public Path apply(String locale) {
+            throw new UnsupportedOperationException();
+          }
+        });
   }
 
   private String createResourcesXml(String contents) {
@@ -272,27 +281,33 @@ public class CompileStringsStepTest extends EasyMockSupport {
 
   @Test
   public void testSuccessfulStepExecution() throws IOException {
-    Path destinationDir = Paths.get("");
+    final Path destinationDir = Paths.get("");
     Path rDotJavaSrcDir = Paths.get("");
 
     ExecutionContext context = createMock(ExecutionContext.class);
     FakeProjectFileSystem fileSystem = new FakeProjectFileSystem();
     expect(context.getProjectFilesystem()).andStubReturn(fileSystem);
 
-    ImmutableSet<Path> filteredStringFiles = ImmutableSet.of(
+    ImmutableList<Path> stringFiles = ImmutableList.of(
         firstFile,
         secondFile,
         thirdFile,
-        fourthFile);
+        fourthFile,
+        fifthFile);
 
     replayAll();
     CompileStringsStep step = new CompileStringsStep(
-        filteredStringFiles,
+        stringFiles,
         rDotJavaSrcDir,
-        destinationDir);
+        new Function<String, Path>() {
+          @Override
+          public Path apply(String input) {
+            return destinationDir.resolve(input + PackageStringAssets.STRING_ASSET_FILE_EXTENSION);
+          }
+        });
     assertEquals(0, step.execute(context));
     Map<String, byte[]> fileContentsMap = fileSystem.getFileContents();
-    assertEquals("Incorrect number of string files written.", 3, fileContentsMap.size());
+    assertEquals("Incorrect number of string files written.", 4, fileContentsMap.size());
     for (Map.Entry<String, byte[]> entry : fileContentsMap.entrySet()) {
       File expectedFile = testdataDir.resolve(entry.getKey()).toFile();
       assertArrayEquals(createBinaryStream(expectedFile), fileContentsMap.get(entry.getKey()));

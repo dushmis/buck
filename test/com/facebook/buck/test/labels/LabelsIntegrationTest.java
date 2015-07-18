@@ -92,7 +92,7 @@ public class LabelsIntegrationTest {
     // testy, so asking for all tests that match "testy OR lighty" will fail.
     //
     // NB: A bug in the way args are parsed means that even though "testy light" is a single arg
-    // here, it is split into multiple labels in by TestCommandOptions.
+    // here, it is split into multiple labels in by TestCommand.
     assertTestsFail("test", "--all", "--include", "testy", "lighty");
 
     // ...but "testy AND lighty" only matches the passing test.
@@ -103,7 +103,7 @@ public class LabelsIntegrationTest {
     ProjectWorkspace.ProcessResult result = workspace.runBuckCommand(args);
     result.assertTestFailure();
     assertThat(result.getStderr(), containsString("Earth should be flat!"));
-    assertThat(result.getStderr(), containsString("TESTS FAILED: 1 Failures"));
+    assertThat(result.getStderr(), containsString("TESTS FAILED: 1 FAILURE"));
   }
 
   private void assertTestsPass(String... args) throws IOException {

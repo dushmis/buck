@@ -41,6 +41,8 @@ public class TestResults {
   private final ImmutableSet<String> labels;
   private final boolean hasAssumptionViolations;
   private boolean dependenciesPassTheirTests = true;
+  private int sequenceNumber;
+  private int totalNumberOfTests;
 
   @VisibleForTesting
   public TestResults(List<TestCaseSummary> testCases) {
@@ -120,5 +122,25 @@ public class TestResults {
   public boolean getDependenciesPassTheirTests() {
     return dependenciesPassTheirTests;
   }
-}
 
+  public void setSequenceNumber(int sequenceNumber) {
+    this.sequenceNumber = sequenceNumber;
+  }
+
+  public int getSequenceNumber() {
+    return sequenceNumber;
+  }
+
+  public void setTotalNumberOfTests(int totalNumberOfTests) {
+    this.totalNumberOfTests = totalNumberOfTests;
+  }
+
+  public int getTotalNumberOfTests() {
+    return totalNumberOfTests;
+  }
+
+  @Override
+  public String toString() {
+    return String.format("%s (success=%s) %s", super.toString(), isSuccess(), testCases);
+  }
+}

@@ -10,6 +10,7 @@ java_library(
     '//src/com/facebook/buck/parser:parser',
     '//src/com/facebook/buck/rules:build_rule',
     '//src/com/facebook/buck/rules:rules',
+    '//src/com/facebook/buck/step:step',
     '//src/com/facebook/buck/test:test',
     '//src/com/facebook/buck/util:constants',
     '//src/com/facebook/buck/util:exceptions',
@@ -25,6 +26,7 @@ java_library(
   visibility = [
     '//src/com/facebook/buck/cli:cli',
     '//src/com/facebook/buck/event/listener:listener',
+    '//test/com/facebook/buck/cli:',
     '//test/com/facebook/buck/httpserver:',
     '//test/com/facebook/buck/event/listener:',
   ],

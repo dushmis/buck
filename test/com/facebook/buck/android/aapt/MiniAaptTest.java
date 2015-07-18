@@ -25,10 +25,15 @@ import static org.junit.Assert.fail;
 import com.facebook.buck.android.aapt.MiniAapt.ResourceParseException;
 import com.facebook.buck.android.aapt.RDotTxtEntry.IdType;
 import com.facebook.buck.android.aapt.RDotTxtEntry.RType;
+import com.facebook.buck.event.BuckEventBus;
+import com.facebook.buck.model.BuildId;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
+import com.facebook.buck.timing.FakeClock;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
+import org.hamcrest.junit.ExpectedException;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -49,11 +54,14 @@ public class MiniAaptTest {
         "<Button android:id=\"@+id/button3\" ",
         "style:attribute=\"@style/Buck.Theme\" ",
         "android:background=\"@drawable/some_image\" />",
-        "<TextView android:id=\"@id/android:empty\" />",
+        "<TextView tools:showIn=\"@layout/some_layout\" android:id=\"@id/android:empty\" />",
         "</LinearLayout>")
         .build();
 
   private final FakeProjectFilesystem filesystem = new FakeProjectFilesystem();
+
+  @Rule
+  public ExpectedException thrown = ExpectedException.none();
 
   @Test
   public void testFindingResourceIdsInXml()
@@ -167,6 +175,21 @@ public class MiniAaptTest {
     aapt.processValuesFile(filesystem, Paths.get("values.xml"));
   }
 
+  @Test(expected = ResourceParseException.class)
+  public void testInvalidItemResource() throws IOException, ResourceParseException {
+    ImmutableList<String> lines = ImmutableList.<String>builder().add(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<resources>",
+        "<item name=\"number\">100</item>",
+        "</resources>")
+        .build();
+
+    filesystem.writeLinesToPath(lines, Paths.get("values.xml"));
+
+    MiniAapt aapt = new MiniAapt(Paths.get("res"), Paths.get("R.txt"), ImmutableSet.<Path>of());
+    aapt.processValuesFile(filesystem, Paths.get("values.xml"));
+  }
+
   @Test
   public void testInvalidDefinition() throws XPathExpressionException, IOException {
     ImmutableList<String> lines = ImmutableList.<String>builder().add(
@@ -214,6 +237,24 @@ public class MiniAaptTest {
   }
 
   @Test
+  public void testMissingNameAttribute() throws IOException, ResourceParseException {
+    thrown.expect(ResourceParseException.class);
+    thrown.expectMessage("Error: expected a 'name' attribute in node 'string' with value 'Howdy!'");
+
+    ImmutableList<String> lines = ImmutableList.<String>builder().add(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<resources>",
+        "<string notname=\"hello\">Howdy!</string>",
+        "</resources>")
+        .build();
+
+    filesystem.writeLinesToPath(lines, Paths.get("values.xml"));
+
+    MiniAapt aapt = new MiniAapt(Paths.get("res"), Paths.get("R.txt"), ImmutableSet.<Path>of());
+    aapt.processValuesFile(filesystem, Paths.get("values.xml"));
+  }
+
+  @Test
   public void testVerifyReferences()
       throws IOException, XPathExpressionException, ResourceParseException {
     filesystem.writeLinesToPath(RESOURCES, Paths.get("resource.xml"));
@@ -239,20 +280,54 @@ public class MiniAaptTest {
   }
 
   @Test
+  public void testInvalidNodeId() throws
+      IOException, XPathExpressionException, ResourceParseException {
+    thrown.expect(ResourceParseException.class);
+    thrown.expectMessage("Invalid definition of a resource: '@button2'");
+
+    ImmutableList<String> lines = ImmutableList.<String>builder().add(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<LinearLayout>",
+        "<Button android:id=\"@+id/button1\" ",
+        "android:layout_toLeftOf=\"@button2\" />",
+        "</LinearLayout>")
+        .build();
+
+    Path resource = Paths.get("resource.xml");
+    filesystem.writeLinesToPath(lines, resource);
+
+    MiniAapt aapt = new MiniAapt(Paths.get("res"), Paths.get("R.txt"), ImmutableSet.<Path>of());
+    aapt.processXmlFile(filesystem, resource, ImmutableSet.<RDotTxtEntry>builder());
+  }
+
+  @Test
   public void testProcessFileNamesInDirectory() throws IOException, ResourceParseException {
     filesystem.touch(Paths.get("res/drawable/icon.png"));
     filesystem.touch(Paths.get("res/drawable/another_icon.png.orig"));
     filesystem.touch(Paths.get("res/drawable-ldpi/nine_patch.9.png"));
     filesystem.touch(Paths.get("res/drawable-ldpi/.DS_Store"));
+    filesystem.touch(Paths.get("res/transition-v19/some_transition.xml"));
+    filesystem.writeContentsToPath(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+            "<resources>" +
+            "<bool name=\"v\">false</bool>" +
+            "</resources>",
+        Paths.get("res/values/value.xml~"));
 
     MiniAapt aapt = new MiniAapt(Paths.get("res"), Paths.get("R.txt"), ImmutableSet.<Path>of());
     aapt.processFileNamesInDirectory(filesystem, Paths.get("res/drawable"));
     aapt.processFileNamesInDirectory(filesystem, Paths.get("res/drawable-ldpi"));
+    aapt.processFileNamesInDirectory(filesystem, Paths.get("res/transition-v19"));
+    aapt.processValues(
+        filesystem,
+        new BuckEventBus(new FakeClock(0), new BuildId("")),
+        Paths.get("res/values"));
 
     assertEquals(
         ImmutableSet.<RDotTxtEntry>of(
             new FakeRDotTxtEntry(IdType.INT, RType.DRAWABLE, "icon"),
-            new FakeRDotTxtEntry(IdType.INT, RType.DRAWABLE, "nine_patch")),
+            new FakeRDotTxtEntry(IdType.INT, RType.DRAWABLE, "nine_patch"),
+            new FakeRDotTxtEntry(IdType.INT, RType.TRANSITION, "some_transition")),
         aapt.getResourceCollector().getResources());
   }
 }

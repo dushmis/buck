@@ -17,7 +17,6 @@
 package com.facebook.buck.android;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 
 import java.nio.file.Path;
 
@@ -35,12 +34,7 @@ public class IdentityResourcesProvider implements FilteredResourcesProvider {
   }
 
   @Override
-  public ImmutableSet<Path> getNonEnglishStringFiles() {
-    return ImmutableSet.of();
-  }
-
-  @Override
-  public boolean isStoreStringsAsAssets() {
-    return false;
+  public ImmutableList<Path> getStringFiles() {
+    return ImmutableList.of();
   }
 }

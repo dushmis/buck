@@ -8,7 +8,9 @@ java_library(
     'CustomZipEntry.java',
     'EntryAccounting.java',
     'OverwritingZipOutputStream.java',
+    'ZipConstants.java',
     'ZipOutputStreams.java',
+    'ZipWriteTest.java',
   ],
   deps = [
     '//third-party/java/guava:guava',
@@ -40,6 +42,7 @@ java_library(
     ':unzip',
     '//src/com/facebook/buck/event:event',
     '//src/com/facebook/buck/log:api',
+    '//src/com/facebook/buck/model:model',
     '//src/com/facebook/buck/shell:steps',
     '//src/com/facebook/buck/step:step',
     '//src/com/facebook/buck/step/fs:fs',
@@ -50,9 +53,18 @@ java_library(
   ],
   visibility = [
     '//src/com/facebook/buck/android/...',
+    '//src/com/facebook/buck/apple:rules',
     '//src/com/facebook/buck/java:rules',
     '//src/com/facebook/buck/rules:rules',
     '//src/com/facebook/buck/thrift:rules',
     '//test/com/facebook/buck/zip:zip',
+  ],
+)
+
+java_binary(
+  name = 'zip-write-test',
+  main_class = 'com.facebook.buck.zip.ZipWriteTest',
+  deps = [
+    ':stream',
   ],
 )

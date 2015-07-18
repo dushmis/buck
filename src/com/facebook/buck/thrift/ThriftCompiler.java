@@ -16,30 +16,25 @@
 
 package com.facebook.buck.thrift;
 
-import com.facebook.buck.rules.AbiRule;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
-import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.ImmutableSortedSet;
-import com.google.common.hash.HashCode;
 
 import java.nio.file.Path;
+import java.util.Map;
 
 import javax.annotation.Nullable;
 
-public class ThriftCompiler extends AbstractBuildRule implements AbiRule {
+public class ThriftCompiler extends AbstractBuildRule {
 
   @AddToRuleKey
   private final SourcePath compiler;
@@ -54,7 +49,9 @@ public class ThriftCompiler extends AbstractBuildRule implements AbiRule {
   @AddToRuleKey
   private final ImmutableSet<String> options;
   private final ImmutableList<Path> includeRoots;
-  private final ImmutableMap<Path, SourcePath> includes;
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey
+  private final ImmutableMap<String, SourcePath> includes;
 
   public ThriftCompiler(
       BuildRuleParams params,
@@ -75,32 +72,22 @@ public class ThriftCompiler extends AbstractBuildRule implements AbiRule {
     this.language = language;
     this.options = options;
     this.includeRoots = includeRoots;
-    this.includes = includes;
-  }
 
-  @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableSet.of();
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
     // Hash the layout of each potentially included thrift file dependency and it's contents.
     // We do this here, rather than returning them from `getInputsToCompareToOutput` so that
     // we can match the contents hash up with where it was laid out in the include search path.
-    // TODO(simons): Implement handling of maps to the reflective rule key magic
-    for (Path path : ImmutableSortedSet.copyOf(includes.keySet())) {
-      builder.setReflectively("include(" + path + ")", includes.get(path));
+    ImmutableMap.Builder<String, SourcePath> builder = ImmutableMap.builder();
+    for (Map.Entry<Path, SourcePath> entry : includes.entrySet()) {
+      builder.put(entry.getKey().toString(), entry.getValue());
     }
-
-    return builder;
+    this.includes = builder.build();
   }
 
   @Override
   public ImmutableList<Step> getBuildSteps(
       BuildContext context, BuildableContext buildableContext) {
 
-    buildableContext.recordArtifactsInDirectory(outputDir);
+    buildableContext.recordArtifact(outputDir);
 
     return ImmutableList.of(
         new MakeCleanDirectoryStep(outputDir),
@@ -116,13 +103,8 @@ public class ThriftCompiler extends AbstractBuildRule implements AbiRule {
 
   @Nullable
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return null;
-  }
-
-  @Override
-  public Sha1HashCode getAbiKeyForDeps() {
-    return Sha1HashCode.fromHashCode(HashCode.fromInt(0));
   }
 
 }

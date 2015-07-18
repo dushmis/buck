@@ -21,6 +21,7 @@ import com.facebook.buck.event.BuckEvent;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.base.Objects;
 import com.google.common.base.Optional;
+import com.google.common.hash.HashCode;
 
 /**
  * Base class for events about build rules.
@@ -72,8 +73,18 @@ public abstract class BuildRuleEvent extends AbstractBuckEvent {
   public static Finished finished(BuildRule rule,
       BuildRuleStatus status,
       CacheResult cacheResult,
-      Optional<BuildRuleSuccess.Type> successType) {
-    return new Finished(rule, status, cacheResult, successType);
+      Optional<BuildRuleSuccessType> successType,
+      Optional<HashCode> outputHash,
+      Optional<Long> outputSize) {
+    return new Finished(rule, status, cacheResult, successType, outputHash, outputSize);
+  }
+
+  public static Suspended suspended(BuildRule rule) {
+    return new Suspended(rule);
+  }
+
+  public static Resumed resumed(BuildRule rule) {
+    return new Resumed(rule);
   }
 
   public static class Started extends BuildRuleEvent {
@@ -88,18 +99,25 @@ public abstract class BuildRuleEvent extends AbstractBuckEvent {
   }
 
   public static class Finished extends BuildRuleEvent {
+
     private final BuildRuleStatus status;
     private final CacheResult cacheResult;
-    private final Optional<BuildRuleSuccess.Type> successType;
+    private final Optional<BuildRuleSuccessType> successType;
+    private final Optional<HashCode> outputHash;
+    private final Optional<Long> outputSize;
 
     protected Finished(BuildRule rule,
         BuildRuleStatus status,
         CacheResult cacheResult,
-        Optional<BuildRuleSuccess.Type> successType) {
+        Optional<BuildRuleSuccessType> successType,
+        Optional<HashCode> outputHash,
+        Optional<Long> outputSize) {
       super(rule);
       this.status = status;
       this.cacheResult = cacheResult;
       this.successType = successType;
+      this.outputHash = outputHash;
+      this.outputSize = outputSize;
     }
 
     public BuildRuleStatus getStatus() {
@@ -111,8 +129,18 @@ public abstract class BuildRuleEvent extends AbstractBuckEvent {
     }
 
     @JsonIgnore
-    public Optional<BuildRuleSuccess.Type> getSuccessType() {
+    public Optional<BuildRuleSuccessType> getSuccessType() {
       return successType;
+    }
+
+    @JsonIgnore
+    public Optional<HashCode> getOutputHash() {
+      return outputHash;
+    }
+
+    @JsonIgnore
+    public Optional<Long> getOutputSize() {
+      return outputSize;
     }
 
     @Override
@@ -153,6 +181,32 @@ public abstract class BuildRuleEvent extends AbstractBuckEvent {
     public String getEventName() {
       return "BuildRuleFinished";
     }
+  }
+
+  public static class Suspended extends BuildRuleEvent {
+
+    protected Suspended(BuildRule rule) {
+      super(rule);
+    }
+
+    @Override
+    public String getEventName() {
+      return "BuildRuleSuspended";
+    }
+
+  }
+
+  public static class Resumed extends BuildRuleEvent {
+
+    protected Resumed(BuildRule rule) {
+      super(rule);
+    }
+
+    @Override
+    public String getEventName() {
+      return "BuildRuleResumed";
+    }
+
   }
 
 }

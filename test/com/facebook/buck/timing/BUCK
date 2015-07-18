@@ -7,7 +7,7 @@ UTIL_SRCS = [
 java_library(
   name = 'testutil',
   srcs = UTIL_SRCS,
-  deps = [
+  exported_deps = [
     '//src/com/facebook/buck/timing:timing',
   ],
   visibility = [
@@ -23,8 +23,7 @@ java_test(
   ],
   deps = [
     ':testutil',
-    '//third-party/java/hamcrest:hamcrest-core',
-    '//third-party/java/hamcrest:hamcrest-library',
+    '//third-party/java/hamcrest:hamcrest',
     '//third-party/java/junit:junit',
     '//src/com/facebook/buck/timing:timing'
   ]

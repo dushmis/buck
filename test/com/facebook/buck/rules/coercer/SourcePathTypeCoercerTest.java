@@ -19,16 +19,14 @@ package com.facebook.buck.rules.coercer;
 import static org.junit.Assert.assertEquals;
 
 import com.facebook.buck.io.MorePathsForTests;
+import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.Flavor;
-import com.facebook.buck.model.ImmutableBuildTarget;
-import com.facebook.buck.model.ImmutableUnflavoredBuildTarget;
-import com.facebook.buck.parser.BuildTargetParser;
+import com.facebook.buck.model.UnflavoredBuildTarget;
 import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 
 import org.junit.Before;
@@ -41,7 +39,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public class SourcePathTypeCoercerTest {
-  private final BuildTargetParser buildTargetParser = new BuildTargetParser();
   private FakeProjectFilesystem projectFilesystem;
   private final Path pathRelativeToProjectRoot = Paths.get("");
   private final SourcePathTypeCoercer sourcePathTypeCoercer =
@@ -61,7 +58,6 @@ public class SourcePathTypeCoercerTest {
     projectFilesystem.touch(Paths.get(path));
 
     SourcePath sourcePath = sourcePathTypeCoercer.coerce(
-        buildTargetParser,
         projectFilesystem,
         pathRelativeToProjectRoot,
         path);
@@ -72,16 +68,14 @@ public class SourcePathTypeCoercerTest {
   @Test
   public void coerceAbsoluteBuildTarget() throws CoerceFailedException, IOException {
     SourcePath sourcePath = sourcePathTypeCoercer.coerce(
-        buildTargetParser,
         projectFilesystem,
         pathRelativeToProjectRoot,
         "//:hello");
 
     assertEquals(
         new BuildTargetSourcePath(
-            projectFilesystem,
-            ImmutableBuildTarget.of(
-                ImmutableUnflavoredBuildTarget.of(
+            BuildTarget.of(
+                UnflavoredBuildTarget.of(
                     Optional.<String>absent(),
                     "//",
                     "hello"),
@@ -92,16 +86,14 @@ public class SourcePathTypeCoercerTest {
   @Test
   public void coerceRelativeBuildTarget() throws CoerceFailedException, IOException {
     SourcePath sourcePath = sourcePathTypeCoercer.coerce(
-        buildTargetParser,
         projectFilesystem,
         pathRelativeToProjectRoot,
         ":hello");
 
     assertEquals(
         new BuildTargetSourcePath(
-            projectFilesystem,
-            ImmutableBuildTarget.of(
-                ImmutableUnflavoredBuildTarget.of(
+            BuildTarget.of(
+                UnflavoredBuildTarget.of(
                       Optional.<String>absent(),
                       "//",
                       "hello"),
@@ -111,20 +103,15 @@ public class SourcePathTypeCoercerTest {
 
   @Test
   public void coerceCrossRepoBuildTarget() throws CoerceFailedException, IOException {
-    BuildTargetParser buildTargetParser = new BuildTargetParser(
-        ImmutableMap.of(Optional.of("hello"), Optional.of("hello")));
-
     SourcePath sourcePath = sourcePathTypeCoercer.coerce(
-        buildTargetParser,
         projectFilesystem,
         pathRelativeToProjectRoot,
         "@hello//:hello");
 
     assertEquals(
         new BuildTargetSourcePath(
-            projectFilesystem,
-            ImmutableBuildTarget.of(
-                ImmutableUnflavoredBuildTarget.of(
+            BuildTarget.of(
+                UnflavoredBuildTarget.of(
                     Optional.of("hello"),
                     "//",
                     "hello"),
@@ -142,7 +129,6 @@ public class SourcePathTypeCoercerTest {
         "SourcePath cannot contain an absolute path");
 
     sourcePathTypeCoercer.coerce(
-        buildTargetParser,
         projectFilesystem,
         pathRelativeToProjectRoot,
         path.toString());

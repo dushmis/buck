@@ -16,16 +16,23 @@
 
 package com.facebook.buck.android;
 
+import static org.junit.Assert.assertThat;
+
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.facebook.buck.testutil.integration.ProjectWorkspace;
 import com.facebook.buck.testutil.integration.TestDataHelper;
 import com.facebook.buck.testutil.integration.ZipInspector;
+import com.facebook.buck.zip.Unzip;
 
+import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
+import java.util.jar.JarFile;
 
 public class AndroidAarIntegrationTest {
 
@@ -46,7 +53,8 @@ public class AndroidAarIntegrationTest {
     workspace.setUp();
     workspace.runBuckBuild("//:app").assertSuccess();
 
-    ZipInspector zipInspector = new ZipInspector(workspace.getFile("buck-out/gen/app.aar"));
+    File aar = workspace.getFile("buck-out/gen/app.aar");
+    ZipInspector zipInspector = new ZipInspector(aar);
     zipInspector.assertFileExists("AndroidManifest.xml");
     zipInspector.assertFileExists("classes.jar");
     zipInspector.assertFileExists("R.txt");
@@ -54,6 +62,12 @@ public class AndroidAarIntegrationTest {
     zipInspector.assertFileExists("assets/b.txt");
     zipInspector.assertFileExists("res/raw/helloworld.txt");
     zipInspector.assertFileExists("res/values/A.xml");
+
+    Path contents = tmp.getRootPath().resolve("aar-contents");
+    Unzip.extractZipFile(aar.toPath(), contents, Unzip.ExistingFileMode.OVERWRITE);
+    try (JarFile classes = new JarFile(contents.resolve("classes.jar").toFile())) {
+      assertThat(classes.getJarEntry("com/example/HelloWorld.class"), Matchers.notNullValue());
+    }
   }
 
   @Test
@@ -112,5 +126,16 @@ public class AndroidAarIntegrationTest {
     zipInspector.assertFileExists("jni/armeabi/libbar.so");
     zipInspector.assertFileExists("jni/armeabi-v7a/libbar.so");
     zipInspector.assertFileExists("jni/x86/libbar.so");
+  }
+
+  @Test
+  public void testEmptyExceptManifest() throws IOException {
+    AssumeAndroidPlatform.assumeNdkIsAvailable();
+    ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
+        this,
+        "android_project",
+        tmp);
+    workspace.setUp();
+    workspace.runBuckBuild("//apps/sample:nearly_empty_aar").assertSuccess();
   }
 }

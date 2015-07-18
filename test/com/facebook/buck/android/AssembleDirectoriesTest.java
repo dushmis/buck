@@ -23,8 +23,8 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
-import com.facebook.buck.rules.FakeBuildableContext;
 import com.facebook.buck.rules.FakeBuildContext;
+import com.facebook.buck.rules.FakeBuildableContext;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TestSourcePath;
@@ -77,7 +77,7 @@ public class AssembleDirectoriesTest {
     for (Step step : steps) {
       assertEquals(0, step.execute(context));
     }
-    File outputFile = filesystem.resolve(assembleDirectories.getPathToOutputFile()).toFile();
+    File outputFile = filesystem.resolve(assembleDirectories.getPathToOutput()).toFile();
     assertEquals(4, outputFile.list().length);
   }
 }

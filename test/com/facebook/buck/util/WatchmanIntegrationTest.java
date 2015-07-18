@@ -21,10 +21,12 @@ import static org.easymock.EasyMock.replay;
 import static org.easymock.EasyMock.verify;
 import static org.junit.Assume.assumeTrue;
 
-import com.facebook.buck.io.ProjectFilesystem;
+import com.facebook.buck.event.BuckEventBus;
+import com.facebook.buck.model.BuildId;
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.facebook.buck.timing.FakeClock;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.eventbus.EventBus;
 
@@ -87,13 +89,14 @@ public class WatchmanIntegrationTest {
     replay(eventBus);
     try (WatchmanWatch watch = new WatchmanWatch(tmp.getRoot().toPath())) {
       WatchmanWatcher watcher = new WatchmanWatcher(
-          new ProjectFilesystem(tmp.getRoot().toPath()),
+          tmp.getRoot().toPath().toString(),
+          Optional.<String>absent(),
           eventBus,
           new FakeClock(0),
           new ObjectMapper(),
           new ArrayList<Path>(),
           new ArrayList<String>());
-      watcher.postEvents();
+      watcher.postEvents(new BuckEventBus(new FakeClock(0), new BuildId()));
     }
     verify(eventBus);
   }

@@ -16,39 +16,35 @@
 
 package com.facebook.buck.ocaml;
 
-import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MkdirStep;
-import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 
 import java.nio.file.Path;
 
 public class OCamlLink extends AbstractBuildRule {
+
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey
+  private final ImmutableList<SourcePath> inputs;
+  @AddToRuleKey
   private final OCamlLinkStep.Args args;
 
-  public OCamlLink(BuildRuleParams params, SourcePathResolver resolver, OCamlLinkStep.Args args) {
+  public OCamlLink(
+      BuildRuleParams params,
+      SourcePathResolver resolver,
+      ImmutableList<SourcePath> inputs,
+      OCamlLinkStep.Args args) {
     super(params, resolver);
+    this.inputs = inputs;
     this.args = args;
-  }
-
-  @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return FluentIterable.from(args.input)
-        .transform(MorePaths.TO_PATH)
-        .toList();
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return args.appendDetailsToRuleKey(builder);
   }
 
   @Override
@@ -64,7 +60,7 @@ public class OCamlLink extends AbstractBuildRule {
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return args.output;
   }
 }

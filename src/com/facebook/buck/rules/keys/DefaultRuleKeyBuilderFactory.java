@@ -16,43 +16,58 @@
 
 package com.facebook.buck.rules.keys;
 
-import com.facebook.buck.model.BuckVersion;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.RuleKey;
-import com.facebook.buck.rules.RuleKeyBuilderFactory;
+import com.facebook.buck.rules.RuleKeyAppendable;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.util.FileHashCache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
-import com.google.common.collect.ImmutableCollection;
 
-import java.util.concurrent.ExecutionException;
+import javax.annotation.Nonnull;
 
+public class DefaultRuleKeyBuilderFactory extends AbstractRuleKeyBuilderFactory {
 
-public class DefaultRuleKeyBuilderFactory implements RuleKeyBuilderFactory {
-  private final FileHashCache hashCache;
-  private LoadingCache<Class<? extends BuildRule>, ImmutableCollection<AlterRuleKey>> knownFields;
+  private final LoadingCache<RuleKeyAppendable, RuleKey> cache;
 
-  public DefaultRuleKeyBuilderFactory(FileHashCache hashCache) {
-    this.hashCache = hashCache;
+  public DefaultRuleKeyBuilderFactory(
+      final FileHashCache hashCache,
+      final SourcePathResolver pathResolver) {
+    super(hashCache, pathResolver);
+    cache = CacheBuilder.newBuilder().weakKeys().build(
+        new CacheLoader<RuleKeyAppendable, RuleKey>() {
+          @Override
+          public RuleKey load(@Nonnull RuleKeyAppendable appendable) throws Exception {
+            RuleKey.Builder subKeyBuilder = newBuilder(pathResolver, hashCache);
+            appendable.appendToRuleKey(subKeyBuilder);
+            return subKeyBuilder.build();
+          }
+        });
+  }
 
-    knownFields = CacheBuilder.newBuilder().build(new ReflectiveAlterKeyLoader());
+  private RuleKey.Builder newBuilder(
+      SourcePathResolver pathResolver,
+      FileHashCache hashCache) {
+    return new RuleKey.Builder(
+        pathResolver,
+        hashCache) {
+      @Override
+      protected RuleKey getAppendableRuleKey(
+          SourcePathResolver resolver,
+          FileHashCache hashCache,
+          RuleKeyAppendable appendable) {
+        return cache.getUnchecked(appendable);
+      }
+    };
   }
 
   @Override
-  public RuleKey.Builder newInstance(BuildRule buildRule, SourcePathResolver resolver) {
-    RuleKey.Builder builder = RuleKey.builder(buildRule, resolver, hashCache);
-    builder.setReflectively("buckVersionUid", BuckVersion.getVersion());
-
-    try {
-      for (AlterRuleKey alterRuleKey : knownFields.get(buildRule.getClass())) {
-        alterRuleKey.amendKey(builder, buildRule);
-      }
-    } catch (ExecutionException e) {
-      throw new RuntimeException(e);
-    }
-
-    return builder;
+  protected RuleKey.Builder newBuilder(
+      SourcePathResolver pathResolver,
+      FileHashCache hashCache,
+      BuildRule rule) {
+    return newBuilder(pathResolver, hashCache);
   }
 
 }

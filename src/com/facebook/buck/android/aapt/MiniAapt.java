@@ -16,6 +16,7 @@
 
 package com.facebook.buck.android.aapt;
 
+import com.facebook.buck.android.AaptStep;
 import com.facebook.buck.android.aapt.RDotTxtEntry.IdType;
 import com.facebook.buck.android.aapt.RDotTxtEntry.RType;
 import com.facebook.buck.event.BuckEventBus;
@@ -301,7 +302,14 @@ public class MiniAapt implements Step {
 
         String resourceType = node.getNodeName();
         if (resourceType.equals(ITEM_TAG)) {
-          resourceType = node.getAttributes().getNamedItem("type").getNodeValue();
+          Node typeNode = node.getAttributes().getNamedItem("type");
+          if (typeNode == null) {
+            throw new ResourceParseException(
+                "Error parsing file '%s', expected a 'type' attribute in: \n'%s'\n",
+                valuesFile,
+                node.toString());
+          }
+          resourceType = typeNode.getNodeValue();
         }
 
         if (IGNORED_TAGS.contains(resourceType)) {
@@ -321,7 +329,7 @@ public class MiniAapt implements Step {
     }
   }
 
-  private void addToResourceCollector(Node node, RType rType) {
+  private void addToResourceCollector(Node node, RType rType) throws ResourceParseException {
     String resourceName = sanitizeName(extractNameAttribute(node));
     if (rType.equals(RType.STYLEABLE)) {
 
@@ -396,14 +404,16 @@ public class MiniAapt implements Step {
           (NodeList) ANDROID_ID_USAGE.evaluate(dom, XPathConstants.NODESET);
       for (int i = 0; i < nodesUsingIds.getLength(); i++) {
         String resourceName = nodesUsingIds.item(i).getNodeValue();
-        Preconditions.checkState(resourceName.charAt(0) == '@');
         int slashPosition = resourceName.indexOf('/');
-        Preconditions.checkState(slashPosition != -1);
+        if (resourceName.charAt(0) != '@' || slashPosition == -1) {
+          throw new ResourceParseException("Invalid definition of a resource: '%s'", resourceName);
+        }
 
         String rawRType = resourceName.substring(1, slashPosition);
         String name = resourceName.substring(slashPosition + 1);
 
-        if (name.startsWith("android:")) {
+        String nodeName = nodesUsingIds.item(i).getNodeName();
+        if (name.startsWith("android:") || nodeName.startsWith("tools:")) {
           continue;
         }
         if (!RESOURCE_TYPES.containsKey(rawRType)) {
@@ -429,8 +439,15 @@ public class MiniAapt implements Step {
     }
   }
 
-  private static String extractNameAttribute(Node node) {
-    return node.getAttributes().getNamedItem("name").getNodeValue();
+  private static String extractNameAttribute(Node node) throws ResourceParseException {
+    Node attribute = node.getAttributes().getNamedItem("name");
+    if (attribute == null) {
+      throw new ResourceParseException(
+          "Error: expected a 'name' attribute in node '%s' with value '%s'",
+          node.getNodeName(),
+          node.getTextContent());
+    }
+    return attribute.getNodeValue();
   }
 
   private static String sanitizeName(String rawName) {
@@ -445,7 +462,8 @@ public class MiniAapt implements Step {
       throws IOException{
     return filesystem.isHidden(path) ||
         IGNORED_FILE_EXTENSIONS.contains(
-            com.google.common.io.Files.getFileExtension(path.getFileName().toString()));
+            com.google.common.io.Files.getFileExtension(path.getFileName().toString())) ||
+        AaptStep.isSilentlyIgnored(path);
   }
 
   @VisibleForTesting

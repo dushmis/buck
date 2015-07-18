@@ -20,7 +20,6 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.ImmutableFlavor;
 import com.facebook.buck.python.PythonLibrary;
-import com.facebook.buck.python.PythonLibraryDescription;
 import com.facebook.buck.python.PythonUtil;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
@@ -117,9 +116,7 @@ public class ThriftPythonEnhancer implements ThriftLanguageSpecificEnhancer {
             .resolve(module);
         modulesBuilder.put(
             module,
-            new BuildTargetSourcePath(
-                source.getCompileRule().getProjectFilesystem(),
-                source.getCompileRule().getBuildTarget(), path));
+            new BuildTargetSourcePath(source.getCompileRule().getBuildTarget(), path));
       }
 
     }
@@ -128,7 +125,6 @@ public class ThriftPythonEnhancer implements ThriftLanguageSpecificEnhancer {
 
     // Create params which only use the language specific deps.
     BuildRuleParams langParams = params.copyWithChanges(
-        PythonLibraryDescription.TYPE,
         params.getBuildTarget(),
         Suppliers.ofInstance(deps),
         Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()));
@@ -139,7 +135,8 @@ public class ThriftPythonEnhancer implements ThriftLanguageSpecificEnhancer {
         langParams,
         new SourcePathResolver(resolver),
         modules,
-        ImmutableMap.<Path, SourcePath>of());
+        ImmutableMap.<Path, SourcePath>of(),
+        Optional.of(true));
   }
 
   private ImmutableSet<BuildTarget> getImplicitDeps() {
@@ -188,6 +185,11 @@ public class ThriftPythonEnhancer implements ThriftLanguageSpecificEnhancer {
     }
 
     return options.build();
+  }
+
+  @Override
+  public ThriftLibraryDescription.CompilerType getCompilerType() {
+    return ThriftLibraryDescription.CompilerType.THRIFT;
   }
 
 }

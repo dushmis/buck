@@ -18,7 +18,6 @@ package com.facebook.buck.event;
 
 import static org.junit.Assert.assertEquals;
 
-import com.facebook.buck.java.JavaLibraryDescription;
 import com.facebook.buck.model.BuildId;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
@@ -29,7 +28,7 @@ import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleEvent;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleStatus;
-import com.facebook.buck.rules.BuildRuleSuccess;
+import com.facebook.buck.rules.BuildRuleSuccessType;
 import com.facebook.buck.rules.CacheResult;
 import com.facebook.buck.rules.FakeBuildRule;
 import com.facebook.buck.rules.IndividualTestEvent;
@@ -52,6 +51,7 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.hash.HashCode;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -97,24 +97,23 @@ public class EventSerializationTest {
 
   @Test
   public void testBuildEventStarted() throws IOException {
-    BuildEvent.Started event = BuildEvent.started(ImmutableSet.<BuildTarget>of(
-        BuildTarget.builder("//base", "short").build()));
+    BuildEvent.Started event = BuildEvent.started(ImmutableSet.of("//base:short"));
     event.configure(timestamp, nanoTime, threadId, buildId);
     String message = new ObjectMapper().writeValueAsString(event);
-    assertJsonEquals("{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\"," +
-        "\"buildTargets\":[{\"repository\":{\"present\":false},\"baseName\":\"//base\"," +
-        "\"shortName\":\"short\",\"flavor\":\"\"}],\"type\":\"BuildStarted\"}", message);
+    assertJsonEquals(
+        "{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\"," +
+        "\"buildArgs\":[\"//base:short\"], \"type\":\"BuildStarted\"}",
+        message);
   }
 
   @Test
   public void testBuildEventFinished() throws IOException {
-    BuildEvent.Finished event = BuildEvent.finished(ImmutableSet.<BuildTarget>of(
-        BuildTarget.builder("//base", "short").build()), 0);
+    BuildEvent.Finished event = BuildEvent.finished(ImmutableSet.of("//base:short"), 0);
     event.configure(timestamp, nanoTime, threadId, buildId);
     String message = new ObjectMapper().writeValueAsString(event);
-    assertJsonEquals("{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\"," +
-        "\"buildTargets\":[{\"repository\":{\"present\":false},\"baseName\":\"//base\"," +
-        "\"shortName\":\"short\",\"flavor\":\"\"}],\"exitCode\":0,\"type\":\"BuildFinished\"}",
+    assertJsonEquals(
+        "{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\"," +
+        "\"buildArgs\":[\"//base:short\"], \"exitCode\":0,\"type\":\"BuildFinished\"}",
         message);
   }
 
@@ -123,24 +122,33 @@ public class EventSerializationTest {
     BuildRuleEvent.Started event = BuildRuleEvent.started(generateFakeBuildRule());
     event.configure(timestamp, nanoTime, threadId, buildId);
     String message = new ObjectMapper().writeValueAsString(event);
-    assertJsonEquals("{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\"," +
-        "\"buildRule\":{\"type\":{\"name\":\"java_library\",\"testRule\":false}," +
-        "\"name\":\"//fake:rule\"},\"ruleKeySafe\":\"aaaa\",\"type\":\"BuildRuleStarted\"}",
+    assertJsonEquals(
+        "{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\"," +
+            "\"buildRule\":{\"type\":\"fake_build_rule\",\"name\":\"//fake:rule\"}," +
+            "\"ruleKeySafe\":\"aaaa\",\"type\":\"BuildRuleStarted\"}",
         message);
   }
 
   @Test
   public void testBuildRuleEventFinished() throws IOException {
-    BuildRuleEvent.Finished event = BuildRuleEvent.finished(generateFakeBuildRule(),
-        BuildRuleStatus.SUCCESS,
-        CacheResult.MISS,
-        Optional.<BuildRuleSuccess.Type>absent());
+    BuildRuleEvent.Finished event =
+        BuildRuleEvent.finished(
+            generateFakeBuildRule(),
+            BuildRuleStatus.SUCCESS,
+            CacheResult.miss(),
+            Optional.<BuildRuleSuccessType>absent(),
+            Optional.<HashCode>absent(),
+            Optional.<Long>absent());
     event.configure(timestamp, nanoTime, threadId, buildId);
     String message = new ObjectMapper().writeValueAsString(event);
-    assertJsonEquals("{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\"," +
-        "\"status\":\"SUCCESS\",\"cacheResult\":\"MISS\",\"buildRule\":{\"type\":" +
-        "{\"name\":\"java_library\",\"testRule\":false},\"name\":\"//fake:rule\"}," +
-        "\"ruleKeySafe\":\"aaaa\",\"type\":\"BuildRuleFinished\"}", message);
+    assertJsonEquals(
+        "{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\"," +
+            "\"status\":\"SUCCESS\",\"cacheResult\":{\"type\":\"MISS\",\"cacheSource\":{" +
+            "\"present\":false},\"cacheError\":{\"present\":false}," +
+            "\"metadata\":{\"present\":false}}, \"buildRule\":{\"type\":" +
+            "\"fake_build_rule\",\"name\":\"//fake:rule\"},\"ruleKeySafe\":\"aaaa\"," +
+            "\"type\":\"BuildRuleFinished\"}",
+        message);
   }
 
   @Test
@@ -156,18 +164,20 @@ public class EventSerializationTest {
 
   @Test
   public void testTestRunEventFinished() throws IOException {
-    TestRunEvent.Finished event = TestRunEvent.finished(ImmutableSet.of("target"),
+    TestRunEvent.Finished event = TestRunEvent.finished(
+        ImmutableSet.of("target"),
         ImmutableList.of(generateFakeTestResults()));
     event.configure(timestamp, nanoTime, threadId, buildId);
     String message = new ObjectMapper().writeValueAsString(event);
     assertJsonEquals("{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\",\"" +
         "results\":[{\"testCases\":[{\"testCaseName\":\"Test1\",\"testResults\":[{\"testName\":" +
-        "null,\"type\":\"FAILURE\",\"time\":0,\"message\":null," +
+        "null,\"testCaseName\":\"Test1\",\"type\":\"FAILURE\",\"time\":0,\"message\":null," +
         "\"stacktrace\":null,\"stdOut\":null," +
-        "\"stdErr\":null}],\"failureCount\":1,\"totalTime\":0,\"success\":false}]," +
+        "\"stdErr\":null}],\"failureCount\":1,\"skippedCount\":0,\"totalTime\":0," +
+        "\"success\":false}]," +
         "\"failureCount\":1,\"contacts\":[],\"labels\":[]," +
-        "\"dependenciesPassTheirTests\":true,\"success\":false}]," +
-        "\"type\":\"RunComplete\"}", message);
+        "\"dependenciesPassTheirTests\":true,\"sequenceNumber\":0,\"totalNumberOfTests\":0," +
+        "\"success\":false}],\"type\":\"RunComplete\"}", message);
   }
 
   @Test
@@ -187,22 +197,21 @@ public class EventSerializationTest {
     String message = new ObjectMapper().writeValueAsString(event);
     assertJsonEquals("{\"timestamp\":%d,\"nanoTime\":%d,\"threadId\":%d,\"buildId\":\"%s\"," +
         "\"results\":{\"testCases\":[{\"testCaseName\":\"Test1\",\"testResults\":[{\"testName\"" +
-        ":null,\"type\":\"FAILURE\",\"time\":0,\"message\":null," +
+        ":null,\"testCaseName\":\"Test1\",\"type\":\"FAILURE\",\"time\":0,\"message\":null," +
         "\"stacktrace\":null,\"stdOut\":null," +
-        "\"stdErr\":null}],\"failureCount\":1,\"totalTime\":0,\"success\":false}]," +
+        "\"stdErr\":null}],\"failureCount\":1,\"skippedCount\":0,\"totalTime\":0," +
+        "\"success\":false}]," +
         "\"failureCount\":1,\"contacts\":[],\"labels\":[]," +
-        "\"dependenciesPassTheirTests\":true,\"success\":false}," +
-        "\"type\":\"ResultsAvailable\"}", message);
+        "\"dependenciesPassTheirTests\":true,\"sequenceNumber\":0,\"totalNumberOfTests\":0," +
+        "\"success\":false},\"type\":\"ResultsAvailable\"}", message);
   }
 
   private BuildRule generateFakeBuildRule() {
     BuildTarget buildTarget = BuildTargetFactory.newInstance("//fake:rule");
     FakeBuildRule result = new FakeBuildRule(
-        JavaLibraryDescription.TYPE,
         buildTarget,
         new SourcePathResolver(new BuildRuleResolver()),
-        ImmutableSortedSet.<BuildRule>of()
-    );
+        ImmutableSortedSet.<BuildRule>of());
     result.setRuleKey(new RuleKey("aaaa"));
     return result;
   }

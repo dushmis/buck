@@ -23,54 +23,73 @@ import com.facebook.buck.model.BuildTargetException;
 import com.facebook.buck.parser.ParserConfig;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNodes;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Multimaps;
 import com.google.common.collect.TreeMultimap;
 
+import org.kohsuke.args4j.Argument;
+import org.kohsuke.args4j.Option;
+
 import java.io.IOException;
+import java.util.List;
 
-
-public class AuditTestsCommand extends AbstractCommandRunner<AuditCommandOptions> {
+public class AuditTestsCommand extends AbstractCommand {
 
   private static final Logger LOG = Logger.get(AuditTestsCommand.class);
 
-  public AuditTestsCommand(CommandRunnerParams params) {
-    super(params);
+  @Option(name = "--json",
+      usage = "Output in JSON format")
+  private boolean generateJsonOutput;
+
+  public boolean shouldGenerateJsonOutput() {
+    return generateJsonOutput;
+  }
+
+  @Argument
+  private List<String> arguments = Lists.newArrayList();
+
+  public List<String> getArguments() {
+    return arguments;
+  }
+
+  @VisibleForTesting
+  void setArguments(List<String> arguments) {
+    this.arguments = arguments;
+  }
+
+  public List<String> getArgumentsFormattedAsBuildTargets(BuckConfig buckConfig) {
+    return getCommandLineBuildTargetNormalizer(buckConfig).normalizeAll(getArguments());
   }
 
   @Override
-  AuditCommandOptions createOptions(BuckConfig buckConfig) {
-    return new AuditCommandOptions(buckConfig);
-  }
-
-  @Override
-  int runCommandWithOptionsInternal(AuditCommandOptions options)
-      throws IOException, InterruptedException {
+  public int runWithoutHelp(CommandRunnerParams params) throws IOException, InterruptedException {
     final ImmutableSet<String> fullyQualifiedBuildTargets = ImmutableSet.copyOf(
-        options.getArgumentsFormattedAsBuildTargets());
+        getArgumentsFormattedAsBuildTargets(params.getBuckConfig()));
 
     if (fullyQualifiedBuildTargets.isEmpty()) {
-      console.printBuildFailure("Must specify at least one build target.");
+      params.getConsole().printBuildFailure("Must specify at least one build target.");
       return 1;
     }
 
-    ImmutableSet<BuildTarget> targets =
-        getBuildTargets(ImmutableSet.copyOf(options.getArgumentsFormattedAsBuildTargets()));
+    ImmutableSet<BuildTarget> targets = getBuildTargets(
+        ImmutableSet.copyOf(getArgumentsFormattedAsBuildTargets(params.getBuckConfig())));
 
     TargetGraph graph;
     try {
-      graph = getParser().buildTargetGraphForBuildTargets(
+      graph = params.getParser().buildTargetGraphForBuildTargets(
           targets,
-          new ParserConfig(options.getBuckConfig()),
-          getBuckEventBus(),
-          console,
-          environment,
-          options.getEnableProfiling());
+          new ParserConfig(params.getBuckConfig()),
+          params.getBuckEventBus(),
+          params.getConsole(),
+          params.getEnvironment(),
+          getEnableProfiling());
     } catch (BuildTargetException | BuildFileParseException e) {
-      console.printBuildFailureWithoutStacktrace(e);
+      params.getConsole().printBuildFailureWithoutStacktrace(e);
       return 1;
     }
 
@@ -78,13 +97,18 @@ public class AuditTestsCommand extends AbstractCommandRunner<AuditCommandOptions
         getTestsForTargets(targets, graph);
     LOG.debug("Printing out the following targets: " + targetsToPrint);
 
-    if (options.shouldGenerateJsonOutput()) {
-      printJSON(targetsToPrint);
+    if (shouldGenerateJsonOutput()) {
+      printJSON(params, targetsToPrint);
     } else {
-      printToConsole(targetsToPrint);
+      printToConsole(params, targetsToPrint);
     }
 
     return 0;
+  }
+
+  @Override
+  public boolean isReadOnly() {
+    return true;
   }
 
   TreeMultimap<BuildTarget, BuildTarget> getTestsForTargets(
@@ -92,33 +116,40 @@ public class AuditTestsCommand extends AbstractCommandRunner<AuditCommandOptions
       final TargetGraph graph) {
     TreeMultimap<BuildTarget, BuildTarget> multimap = TreeMultimap.create();
     for (BuildTarget target : targets) {
-      multimap.putAll(target, TargetNodes.getTestTargetsForNode(graph.get(target)));
+      multimap.putAll(
+          target,
+          TargetNodes.getTestTargetsForNode(Preconditions.checkNotNull(graph.get(target))));
     }
     return multimap;
   }
 
-  private void printJSON(Multimap<BuildTarget, BuildTarget> targetsAndTests)
+  private void printJSON(
+      CommandRunnerParams params,
+      Multimap<BuildTarget, BuildTarget> targetsAndTests)
       throws IOException {
     Multimap<BuildTarget, String> targetsAndTestNames =
-        Multimaps.transformValues(targetsAndTests, new Function<BuildTarget, String>() {
+        Multimaps.transformValues(
+            targetsAndTests, new Function<BuildTarget, String>() {
               @Override
               public String apply(BuildTarget input) {
                 return Preconditions.checkNotNull(input.getFullyQualifiedName());
               }
             });
-    getObjectMapper().writeValue(
-        console.getStdOut(),
+    params.getObjectMapper().writeValue(
+        params.getConsole().getStdOut(),
         targetsAndTestNames.asMap());
   }
 
-  private void printToConsole(Multimap<BuildTarget, BuildTarget> targetsAndTests) {
+  private void printToConsole(
+      CommandRunnerParams params,
+      Multimap<BuildTarget, BuildTarget> targetsAndTests) {
     for (BuildTarget target : targetsAndTests.values()) {
-      getStdOut().println(target.getFullyQualifiedName());
+      params.getConsole().getStdOut().println(target.getFullyQualifiedName());
     }
   }
 
   @Override
-  String getUsageIntro() {
+  public String getShortDescription() {
     return "provides facilities to audit build targets' tests";
   }
 

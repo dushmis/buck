@@ -59,7 +59,6 @@ java_library(
   name = 'javac-env',
   srcs = [ 'JavaCompilationConstants.java', ],
   deps = [
-    '//src/com/facebook/buck/java:javac',
     '//src/com/facebook/buck/java:support',
     '//src/com/facebook/buck/rules:build_rule',
     '//third-party/java/guava:guava',
@@ -69,9 +68,31 @@ java_library(
   ],
 )
 
+SLOW_INTEGRATION_TESTS = [
+  'JavaTestIntegrationTest.java',
+]
+
+java_test(
+  name = 'integration-slow',
+  srcs = SLOW_INTEGRATION_TESTS,
+  resources = glob(['testdata/**'], include_dotfiles=True),
+  source_under_test = [
+    '//src/com/facebook/buck/java:rules',
+    '//src/com/facebook/buck/java:steps',
+    '//src/com/facebook/buck/java:support',
+  ],
+  run_test_separately = True,
+  deps = [
+    ':testutil',
+    '//test/com/facebook/buck/testutil/integration:integration',
+    '//third-party/java/hamcrest:hamcrest',
+    '//third-party/java/junit:junit',
+  ],
+)
+
 java_test(
   name = 'java',
-  srcs = glob(['*Test.java']),
+  srcs = glob(['*Test.java'], excludes = SLOW_INTEGRATION_TESTS),
   resources = glob(['testdata/**'], include_dotfiles=True),
   source_under_test = [
     '//src/com/facebook/buck/java:rules',
@@ -98,16 +119,17 @@ java_test(
     '//src/com/facebook/buck/java/runner:runner',
     '//src/com/facebook/buck/java:steps',
     '//src/com/facebook/buck/java:support',
-    '//src/com/facebook/buck/java:javac',
     '//src/com/facebook/buck/java/abi:protocol',
     '//src/com/facebook/buck/java/classes:classes',
     '//src/com/facebook/buck/json:json',
     '//src/com/facebook/buck/model:model',
     '//src/com/facebook/buck/parser:config',
     '//src/com/facebook/buck/parser:rule_pattern',
+    '//src/com/facebook/buck/python:config',
     '//src/com/facebook/buck/rules:build_rule',
     '//src/com/facebook/buck/rules:rules',
     '//src/com/facebook/buck/rules:types',
+    '//src/com/facebook/buck/rules/keys:keys',
     '//src/com/facebook/buck/shell:rules',
     '//src/com/facebook/buck/shell:steps',
     '//src/com/facebook/buck/step:step',
@@ -125,17 +147,19 @@ java_test(
     '//test/com/facebook/buck/cli:FakeBuckConfig',
     '//test/com/facebook/buck/cli:testutil',
     '//test/com/facebook/buck/event:testutil',
+    '//test/com/facebook/buck/io:testutil',
     '//test/com/facebook/buck/model:BuildTargetFactory',
+    '//test/com/facebook/buck/rules/keys:testutil',
     '//test/com/facebook/buck/rules:testutil',
     '//test/com/facebook/buck/shell:testutil',
     '//test/com/facebook/buck/step:testutil',
     '//test/com/facebook/buck/testutil:testutil',
     '//test/com/facebook/buck/testutil/integration:integration',
     '//test/com/facebook/buck/util:testutil',
+    '//third-party/java/commons-compress:commons-compress',
     '//third-party/java/easymock:easymock',
     '//third-party/java/guava:guava',
-    '//third-party/java/hamcrest:hamcrest-core',
-    '//third-party/java/hamcrest:hamcrest-library',
+    '//third-party/java/hamcrest:hamcrest',
     '//third-party/java/jsr:jsr305',
     '//third-party/java/junit:junit',
   ],

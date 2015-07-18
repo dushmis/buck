@@ -16,44 +16,59 @@
 
 package com.facebook.buck.cxx;
 
-import com.facebook.buck.io.ProjectFilesystem;
+import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.BinaryBuildRule;
 import com.facebook.buck.rules.BuildContext;
+import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
+import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.CommandTool;
+import com.facebook.buck.rules.HasRuntimeDeps;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.Tool;
 import com.facebook.buck.step.Step;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
 
-public class CxxBinary extends AbstractBuildRule implements BinaryBuildRule {
+public class CxxBinary
+    extends AbstractBuildRule
+    implements BinaryBuildRule, NativeTestable, HasRuntimeDeps {
 
+  private final BuildRuleParams params;
+  private final BuildRuleResolver ruleResolver;
   private final Path output;
   private final CxxLink rule;
+  private final ImmutableSortedSet<BuildTarget> tests;
+  private final ImmutableList<Path> frameworkSearchPaths;
 
-  public CxxBinary(BuildRuleParams params, SourcePathResolver resolver, Path output, CxxLink rule) {
+  public CxxBinary(
+      BuildRuleParams params,
+      BuildRuleResolver ruleResolver,
+      SourcePathResolver resolver,
+      Path output,
+      CxxLink rule,
+      Iterable<Path> frameworkSearchPaths,
+      Iterable<BuildTarget> tests) {
     super(params, resolver);
+    this.params = params;
+    this.ruleResolver = ruleResolver;
     this.output = output;
     this.rule = rule;
+    this.tests = ImmutableSortedSet.copyOf(tests);
+    this.frameworkSearchPaths = ImmutableList.copyOf(frameworkSearchPaths);
   }
 
   @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableList.of();
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
-  }
-
-  @Override
-  public ImmutableList<String> getExecutableCommand(ProjectFilesystem projectFilesystem) {
-    return ImmutableList.of(projectFilesystem.resolve(output).toString());
+  public Tool getExecutableCommand() {
+    return new CommandTool.Builder()
+        .addArg(new BuildTargetSourcePath(rule.getBuildTarget(), output))
+        .build();
   }
 
   @Override
@@ -63,12 +78,38 @@ public class CxxBinary extends AbstractBuildRule implements BinaryBuildRule {
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return output;
   }
 
   public CxxLink getRule() {
     return rule;
+  }
+
+  @Override
+  public boolean isTestedBy(BuildTarget testRule) {
+    return tests.contains(testRule);
+  }
+
+  @Override
+  public CxxPreprocessorInput getCxxPreprocessorInput(
+      CxxPlatform cxxPlatform,
+      HeaderVisibility headerVisibility) {
+    return CxxPreprocessables.getCxxPreprocessorInput(
+        params,
+        ruleResolver,
+        cxxPlatform.getFlavor(),
+        headerVisibility,
+        CxxPreprocessables.IncludeType.LOCAL,
+        ImmutableMultimap.<CxxSource.Type, String>of(),
+        frameworkSearchPaths);
+  }
+
+  // This rule just delegates to the output of the `CxxLink` rule and so needs that available at
+  // runtime.  Model this via `HasRuntimeDeps`.
+  @Override
+  public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
+    return ImmutableSortedSet.<BuildRule>of(rule);
   }
 
 }

@@ -15,11 +15,9 @@
  */
 package com.facebook.buck.android;
 
-import static com.google.common.util.concurrent.MoreExecutors.listeningDecorator;
-
 import com.facebook.buck.android.DxStep.Option;
-import com.facebook.buck.log.CommandThreadFactory;
 import com.facebook.buck.io.ProjectFilesystem;
+import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.step.CompositeStep;
 import com.facebook.buck.step.DefaultStepRunner;
@@ -29,7 +27,6 @@ import com.facebook.buck.step.StepFailedException;
 import com.facebook.buck.step.fs.RmStep;
 import com.facebook.buck.step.fs.WriteFileStep;
 import com.facebook.buck.step.fs.XzStep;
-import com.facebook.buck.util.concurrent.MoreExecutors;
 import com.facebook.buck.zip.RepackZipEntriesStep;
 import com.facebook.buck.zip.ZipStep;
 import com.google.common.annotations.VisibleForTesting;
@@ -50,6 +47,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
+import com.google.common.util.concurrent.ListeningExecutorService;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -59,7 +57,6 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
 
 import javax.annotation.Nullable;
 
@@ -74,6 +71,8 @@ import javax.annotation.Nullable;
  */
 public class SmartDexingStep implements Step {
 
+  public static final String SHORT_NAME = "smart_dex";
+
   public static interface DexInputHashesProvider {
     ImmutableMap<Path, Sha1HashCode> getDexInputHashes();
   }
@@ -82,8 +81,9 @@ public class SmartDexingStep implements Step {
   private final Optional<Path> secondaryOutputDir;
   private final DexInputHashesProvider dexInputHashesProvider;
   private final Path successDir;
-  private final Optional<Integer> numThreads;
   private final EnumSet<DxStep.Option> dxOptions;
+  private final ListeningExecutorService executorService;
+  private final Optional<Integer> xzCompressionLevel;
 
   /**
    * @param primaryOutputPath Path for the primary dex artifact.
@@ -96,8 +96,7 @@ public class SmartDexingStep implements Step {
    *     Note that for each output file (key), a separate dx invocation will be started with the
    *     corresponding jar files (value) as the input.
    * @param successDir Directory where success artifacts are written.
-   * @param numThreads Number of threads to use when invoking dx commands.  If absent, a
-   *     reasonable default will be selected based on the number of available processors.
+   * @param executorService The thread pool to execute the dx command on.
    */
   public SmartDexingStep(
       final Path primaryOutputPath,
@@ -106,8 +105,9 @@ public class SmartDexingStep implements Step {
       final Optional<Supplier<Multimap<Path, Path>>> secondaryInputsToDex,
       DexInputHashesProvider dexInputHashesProvider,
       Path successDir,
-      Optional<Integer> numThreads,
-      EnumSet<Option> dxOptions) {
+      EnumSet<Option> dxOptions,
+      ListeningExecutorService executorService,
+      Optional<Integer> xzCompressionLevel) {
     this.outputToInputsSupplier = Suppliers.memoize(
         new Supplier<Multimap<Path, Path>>() {
           @Override
@@ -123,11 +123,12 @@ public class SmartDexingStep implements Step {
     this.secondaryOutputDir = secondaryOutputDir;
     this.dexInputHashesProvider = dexInputHashesProvider;
     this.successDir = successDir;
-    this.numThreads = numThreads;
     this.dxOptions = dxOptions;
+    this.executorService = executorService;
+    this.xzCompressionLevel = xzCompressionLevel;
   }
 
-  static int determineOptimalThreadCount() {
+  public static int determineOptimalThreadCount() {
     return (int) (1.25 * Runtime.getRuntime().availableProcessors());
   }
 
@@ -153,22 +154,15 @@ public class SmartDexingStep implements Step {
 
   private void runDxCommands(ExecutionContext context, Multimap<Path, Path> outputToInputs)
       throws StepFailedException, IOException, InterruptedException {
-
-    ExecutorService service =
-        MoreExecutors.newMultiThreadExecutor(
-            new CommandThreadFactory("SmartDexing"),
-            numThreads.or(determineOptimalThreadCount()));
-    try {
-      DefaultStepRunner stepRunner = new DefaultStepRunner(context, listeningDecorator(service));
-      // Invoke dx commands in parallel for maximum thread utilization.  In testing, dx revealed
-      // itself to be CPU (and not I/O) bound making it a good candidate for parallelization.
-      List<Step> dxSteps = generateDxCommands(context.getProjectFilesystem(), outputToInputs);
-      stepRunner.runStepsInParallelAndWait(dxSteps);
-    } finally {
-      // Wait for however long necessary for threads to finish.  This should be fine, since we'll
-      // detect deadlocks at the top-level (since this thread won't return).
-      MoreExecutors.shutdown(service);
-    }
+    DefaultStepRunner stepRunner = new DefaultStepRunner(context);
+    // Invoke dx commands in parallel for maximum thread utilization.  In testing, dx revealed
+    // itself to be CPU (and not I/O) bound making it a good candidate for parallelization.
+    List<Step> dxSteps = generateDxCommands(context.getProjectFilesystem(), outputToInputs);
+    stepRunner.runStepsInParallelAndWait(
+        dxSteps,
+        Optional.<BuildTarget>absent(),
+        executorService,
+        DefaultStepRunner.NOOP_CALLBACK);
   }
 
   /**
@@ -187,14 +181,14 @@ public class SmartDexingStep implements Step {
     for (Path secondaryOutput : projectFilesystem.getDirectoryContents(secondaryOutputDir)) {
       if (!producedArtifacts.contains(secondaryOutput) &&
           !secondaryOutput.getFileName().toString().endsWith(".meta")) {
-        projectFilesystem.rmdir(secondaryOutput);
+        projectFilesystem.deleteRecursivelyIfExists(secondaryOutput);
       }
     }
   }
 
   @Override
   public String getShortName() {
-    return "smart_dex";
+    return SHORT_NAME;
   }
 
   @Override
@@ -234,7 +228,8 @@ public class SmartDexingStep implements Step {
               FluentIterable.from(outputToInputs.get(outputFile)).toSet(),
               outputFile,
               successDir.resolve(outputFile.getFileName()),
-              dxOptions));
+              dxOptions,
+              xzCompressionLevel));
     }
 
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
@@ -266,6 +261,7 @@ public class SmartDexingStep implements Step {
     private final EnumSet<Option> dxOptions;
     @Nullable
     private String newInputsHash;
+    private final Optional<Integer> xzCompressionLevel;
 
     public DxPseudoRule(
         ProjectFilesystem filesystem,
@@ -273,13 +269,15 @@ public class SmartDexingStep implements Step {
         Set<Path> srcs,
         Path outputPath,
         Path outputHashPath,
-        EnumSet<Option> dxOptions) {
+        EnumSet<Option> dxOptions,
+        Optional<Integer> xzCompressionLevel) {
       this.filesystem = filesystem;
       this.dexInputHashes = ImmutableMap.copyOf(dexInputHashes);
       this.srcs = ImmutableSet.copyOf(srcs);
       this.outputPath = outputPath;
       this.outputHashPath = outputHashPath;
       this.dxOptions = dxOptions;
+      this.xzCompressionLevel = xzCompressionLevel;
     }
 
     /**
@@ -323,7 +321,7 @@ public class SmartDexingStep implements Step {
 
       List<Step> steps = Lists.newArrayList();
 
-      steps.add(createDxStepForDxPseudoRule(srcs, outputPath, dxOptions));
+      steps.add(createDxStepForDxPseudoRule(srcs, outputPath, dxOptions, xzCompressionLevel));
       steps.add(new WriteFileStep(newInputsHash, outputHashPath));
 
       // Use a composite step to ensure that runDxSteps can still make use of
@@ -342,7 +340,8 @@ public class SmartDexingStep implements Step {
    */
   static Step createDxStepForDxPseudoRule(Collection<Path> filesToDex,
       Path outputPath,
-      EnumSet<Option> dxOptions) {
+      EnumSet<Option> dxOptions,
+      Optional<Integer> xzCompressionLevel) {
 
     String output = outputPath.toString();
     List<Step> steps = Lists.newArrayList();
@@ -364,7 +363,12 @@ public class SmartDexingStep implements Step {
               repackedJar,
               repackedJar.resolveSibling(
                   repackedJar.getFileName() + ".meta")));
-      steps.add(new XzStep(repackedJar));
+
+      if (xzCompressionLevel.isPresent()) {
+        steps.add(new XzStep(repackedJar, xzCompressionLevel.get().intValue()));
+      } else {
+        steps.add(new XzStep(repackedJar));
+      }
     } else if (DexStore.JAR.matchesPath(outputPath) || DexStore.RAW.matchesPath(outputPath) ||
         output.endsWith("classes.dex")) {
       steps.add(new DxStep(outputPath, filesToDex, dxOptions));

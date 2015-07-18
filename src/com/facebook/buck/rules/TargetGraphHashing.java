@@ -18,12 +18,12 @@ package com.facebook.buck.rules;
 
 import com.facebook.buck.graph.AbstractAcyclicDepthFirstPostOrderTraversal;
 import com.facebook.buck.graph.AbstractAcyclicDepthFirstPostOrderTraversal.CycleException;
-import com.facebook.buck.hashing.StringHashing;
 import com.facebook.buck.hashing.PathHashing;
+import com.facebook.buck.hashing.StringHashing;
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTarget;
-import com.facebook.buck.io.ProjectFilesystem;
-
+import com.facebook.buck.util.HumanReadableException;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -118,13 +118,21 @@ public class TargetGraphHashing {
     }
 
     @Override
-    protected void onNodeExplored(TargetNode<?> node) throws IOException {
+    protected void onNodeExplored(TargetNode<?> node) {
       if (buildTargetHashes.containsKey(node.getBuildTarget())) {
         LOG.verbose("Already hashed node %s, not hashing again.", node);
         return;
       }
       Hasher hasher = Hashing.sha1().newHasher();
-      hashNode(hasher, node);
+      try {
+        hashNode(hasher, node);
+      } catch (IOException e) {
+        throw new HumanReadableException(
+            e,
+            "Exception while attempting to hash %s: %s",
+            node.getBuildTarget().getFullyQualifiedName(),
+            e.getMessage());
+      }
       HashCode result = hasher.hash();
       LOG.debug("Hash for target %s: %s", node.getBuildTarget(), result);
       buildTargetHashes.put(node.getBuildTarget(), result);

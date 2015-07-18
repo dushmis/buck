@@ -16,16 +16,17 @@
 
 package com.facebook.buck.android;
 
+import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.util.XmlDomParser;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 
 import org.w3c.dom.Document;
@@ -44,9 +45,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * This {@link Step} takes in a {@link FilterResourcesStep} that provides a list of string resource
- * files (strings.xml), groups them by locales, and for each locale generates a file with all the
- * string resources for that locale.
+ * This {@link Step} takes a list of string resource files (strings.xml), groups them by locales,
+ * and for each locale generates a file with all the string resources for that locale.
+ * Strings.xml files without a resource qualifier are mapped to the "en" locale.
  *
  * <p>A typical strings.xml file looks like:
  * <pre>
@@ -84,38 +85,41 @@ import java.util.regex.Pattern;
  */
 public class CompileStringsStep implements Step {
 
+  private static final String ENGLISH_STRING_PATH_SUFFIX = "res/values/strings.xml";
+  private static final String ENGLISH_LOCALE = "en";
+
   @VisibleForTesting
-  static final Pattern STRING_FILE_PATTERN = Pattern.compile(
+  static final Pattern NON_ENGLISH_STRING_FILE_PATTERN = Pattern.compile(
       ".*res/values-([a-z]{2})(?:-r([A-Z]{2}))*/strings.xml");
 
   @VisibleForTesting
   static final Pattern R_DOT_TXT_STRING_RESOURCE_PATTERN = Pattern.compile(
       "^int (string|plurals|array) (\\w+) 0x([0-9a-f]+)$");
 
-  private final ImmutableSet<Path> filteredStringFiles;
+  private final ImmutableList<Path> stringFiles;
   private final Path rDotTxtDir;
-  private final Path destinationDir;
   private final Map<String, String> regionSpecificToBaseLocaleMap;
   private final Map<String, Integer> resourceNameToIdMap;
+  private final Function<String, Path> pathBuilder;
 
   /**
    * Note: The ordering of files in the input list determines which resource value ends up in the
-   * output json file, in the event of multiple xml files of a locale sharing the same string
+   * output .fbstr file, in the event of multiple xml files of a locale sharing the same string
    * resource name - file that appears first in the list wins.
    *
-   * @param filteredStringFiles Set containing paths to non-english
-   *     string files, matching {@link FilterResourcesStep#NON_ENGLISH_STRING_PATH} regex.
+   * @param stringFiles Set containing paths to strings.xml files matching
+   *                    {@link GetStringsFilesStep#STRINGS_FILE_PATH}
    * @param rDotTxtDir Path to the directory where aapt generates R.txt file along with the
    *     final R.java files per package.
-   * @param destinationDir Output directory for the generated json files.
+   * @param pathBuilder Builds a path to store a .fbstr file at.
    */
   public CompileStringsStep(
-      ImmutableSet<Path> filteredStringFiles,
+      ImmutableList<Path> stringFiles,
       Path rDotTxtDir,
-      Path destinationDir) {
-    this.filteredStringFiles = filteredStringFiles;
+      Function<String, Path> pathBuilder) {
+    this.stringFiles = stringFiles;
     this.rDotTxtDir = rDotTxtDir;
-    this.destinationDir = destinationDir;
+    this.pathBuilder = pathBuilder;
     this.regionSpecificToBaseLocaleMap = Maps.newHashMap();
     this.resourceNameToIdMap = Maps.newHashMap();
   }
@@ -130,7 +134,7 @@ public class CompileStringsStep implements Step {
       return 1;
     }
 
-    ImmutableMultimap<String, Path> filesByLocale = groupFilesByLocale(filteredStringFiles);
+    ImmutableMultimap<String, Path> filesByLocale = groupFilesByLocale(stringFiles);
     Map<String, StringResources> resourcesByLocale = Maps.newHashMap();
     for (String locale : filesByLocale.keySet()) {
       try {
@@ -147,7 +151,7 @@ public class CompileStringsStep implements Step {
     // "es" and "es_US", when an application running on a device with locale set to "Spanish
     // (United States)" requests for a string, the Android runtime first looks for the string in
     // "es_US" set of resources, and if not found, returns the resource from the "es" set.
-    // We merge these because we want the individual string json files to be self contained for
+    // We merge these because we want the individual .fbstr files to be self contained for
     // simplicity.
     for (String regionSpecificLocale : regionSpecificToBaseLocaleMap.keySet()) {
       String baseLocale = regionSpecificToBaseLocaleMap.get(regionSpecificLocale);
@@ -162,8 +166,9 @@ public class CompileStringsStep implements Step {
 
     for (String locale : filesByLocale.keySet()) {
       try {
-        filesystem.writeBytesToPath(resourcesByLocale.get(locale).getBinaryFileContent(),
-            destinationDir.resolve(locale + ".fbstr"));
+        filesystem.writeBytesToPath(
+            Preconditions.checkNotNull(resourcesByLocale.get(locale)).getBinaryFileContent(),
+            pathBuilder.apply(locale));
       } catch (IOException e) {
         context.logError(e, "Error creating binary file for locale: %s", locale);
         return 1;
@@ -174,42 +179,51 @@ public class CompileStringsStep implements Step {
   }
 
   /**
-   * Groups a list of file paths matching STRING_FILE_PATTERN by the locale.
+   * Groups a list of strings.xml files by locale.
+   * String files with no resource qualifier (eg. values/strings.xml) are mapped to the "en" locale
    *
    * eg. given the following list:
    *
-   * ImmutableSet.of(
+   * ImmutableList.of(
    *   Paths.get("one/res/values-es/strings.xml"),
    *   Paths.get("two/res/values-es/strings.xml"),
    *   Paths.get("three/res/values-pt-rBR/strings.xml"),
-   *   Paths.get("four/res/values/-pt-rPT/strings.xml"));
+   *   Paths.get("four/res/values-pt-rPT/strings.xml"),
+   *   Paths.get("five/res/values/strings.xml"));
    *
    * returns:
    *
    * ImmutableMap.of(
-   *   "es", ImmutableSet.of(Paths.get("one/res/values-es/strings.xml"),
+   *   "es", ImmutableList.of(Paths.get("one/res/values-es/strings.xml"),
    *        Paths.get("two/res/values-es/strings.xml")),
-   *   "pt_BR", ImmutableSet.of(Paths.get("three/res/values-pt-rBR/strings.xml'),
-   *   "pt_PT", ImmutableSet.of(Paths.get("four/res/values/-pt-rPT/strings.xml")));
+   *   "pt_BR", ImmutableList.of(Paths.get("three/res/values-pt-rBR/strings.xml'),
+   *   "pt_PT", ImmutableList.of(Paths.get("four/res/values-pt-rPT/strings.xml"),
+   *   "en", ImmutableList.of(Paths.get("five/res/values/strings.xml")));
    */
   @VisibleForTesting
-  ImmutableMultimap<String, Path> groupFilesByLocale(ImmutableSet<Path> files) {
+  ImmutableMultimap<String, Path> groupFilesByLocale(ImmutableList<Path> files) {
     ImmutableMultimap.Builder<String, Path> localeToFiles = ImmutableMultimap.builder();
 
     for (Path filepath : files) {
-      Matcher matcher = STRING_FILE_PATTERN.matcher(filepath.toString());
-      if (!matcher.matches()) {
-        continue;
-      }
+      String path = MorePaths.pathWithUnixSeparators(filepath);
+      Matcher matcher = NON_ENGLISH_STRING_FILE_PATTERN.matcher(path);
 
-      String baseLocale = matcher.group(1);
-      String country = matcher.group(2);
-      String locale = country == null ? baseLocale : baseLocale + "_" + country;
-      if (country != null && !regionSpecificToBaseLocaleMap.containsKey(locale)) {
-        regionSpecificToBaseLocaleMap.put(locale, baseLocale);
-      }
+      if (matcher.matches()) {
+        String baseLocale = matcher.group(1);
+        String country = matcher.group(2);
+        String locale = country == null ? baseLocale : baseLocale + "_" + country;
+        if (country != null && !regionSpecificToBaseLocaleMap.containsKey(locale)) {
+          regionSpecificToBaseLocaleMap.put(locale, baseLocale);
+        }
 
-      localeToFiles.put(locale, filepath);
+        localeToFiles.put(locale, filepath);
+      } else {
+        Preconditions.checkState(
+            path.endsWith(ENGLISH_STRING_PATH_SUFFIX),
+            "Invalid path passed to compile strings: " + path);
+
+        localeToFiles.put(ENGLISH_LOCALE, filepath);
+      }
     }
 
     return localeToFiles.build();

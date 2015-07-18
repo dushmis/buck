@@ -25,40 +25,37 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
-import javax.annotation.Nullable;
-
 public class FakeOnDiskBuildInfo implements OnDiskBuildInfo {
 
-  @Nullable private RuleKey ruleKey;
-  @Nullable private RuleKey ruleKeyWithoutDeps;
   private Map<String, String> metadata = Maps.newHashMap();
+  private Map<String, ImmutableList<String>> metadataValues = Maps.newHashMap();
   private Map<Path, ImmutableList<String>> pathsToContents = Maps.newHashMap();
 
   /** @return this */
-  public FakeOnDiskBuildInfo setRuleKey(@Nullable RuleKey ruleKey) {
-    this.ruleKey = ruleKey;
-    return this;
-  }
-
-  @Override
-  public Optional<RuleKey> getRuleKey() {
-    return Optional.fromNullable(ruleKey);
+  public FakeOnDiskBuildInfo setRuleKey(RuleKey ruleKey) {
+    return putMetadata(BuildInfo.METADATA_KEY_FOR_RULE_KEY, ruleKey.toString());
   }
 
   /** @return this */
-  public FakeOnDiskBuildInfo setRuleKeyWithoutDeps(@Nullable RuleKey ruleKeyWithoutDeps) {
-    this.ruleKeyWithoutDeps = ruleKeyWithoutDeps;
-    return this;
+  public FakeOnDiskBuildInfo setRuleKeyWithoutDeps(RuleKey ruleKeyWithoutDeps) {
+    return putMetadata(
+        BuildInfo.METADATA_KEY_FOR_RULE_KEY_WITHOUT_DEPS,
+        ruleKeyWithoutDeps.toString());
   }
 
   @Override
-  public Optional<RuleKey> getRuleKeyWithoutDeps() {
-    return Optional.fromNullable(ruleKeyWithoutDeps);
+  public Optional<RuleKey> getRuleKey(String key) {
+    return getValue(key).transform(RuleKey.TO_RULE_KEY);
   }
 
   /** @return this */
   public FakeOnDiskBuildInfo putMetadata(String key, String value) {
     this.metadata.put(key, value);
+    return this;
+  }
+
+  public FakeOnDiskBuildInfo putMetadata(String key, ImmutableList<String> value) {
+    this.metadataValues.put(key, value);
     return this;
   }
 
@@ -69,8 +66,7 @@ public class FakeOnDiskBuildInfo implements OnDiskBuildInfo {
 
   @Override
   public Optional<ImmutableList<String>> getValues(String key) {
-    // TODO(mbolin): Implement.
-    throw new UnsupportedOperationException();
+    return Optional.fromNullable(metadataValues.get(key));
   }
 
   @Override
@@ -86,11 +82,6 @@ public class FakeOnDiskBuildInfo implements OnDiskBuildInfo {
     } else {
       throw new RuntimeException("No lines for path: " + path);
     }
-  }
-
-  @Override
-  public void makeOutputFileExecutable(BuildRule buildRule) {
-    throw new UnsupportedOperationException();
   }
 
   @Override

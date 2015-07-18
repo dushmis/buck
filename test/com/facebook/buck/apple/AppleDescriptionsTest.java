@@ -26,8 +26,8 @@ import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TestSourcePath;
-import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.rules.coercer.FrameworkPath;
+import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
@@ -53,7 +53,7 @@ public class AppleDescriptionsTest {
         AppleDescriptions.parseAppleHeadersForUseFromOtherTargets(
             new SourcePathResolver(new BuildRuleResolver()).getPathFunction(),
             Paths.get("prefix"),
-            Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofLeft(
+            SourceList.ofUnnamedSources(
                 ImmutableSortedSet.<SourcePath>of(
                     new TestSourcePath("path/to/some_file.h"),
                     new TestSourcePath("path/to/another_file.h"),
@@ -71,7 +71,7 @@ public class AppleDescriptionsTest {
             "file.h", new TestSourcePath("file.h")),
         AppleDescriptions.parseAppleHeadersForUseFromTheSameTarget(
             new SourcePathResolver(new BuildRuleResolver()).getPathFunction(),
-            Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofLeft(
+            SourceList.ofUnnamedSources(
                 ImmutableSortedSet.<SourcePath>of(
                     new TestSourcePath("path/to/some_file.h"),
                     new TestSourcePath("path/to/another_file.h"),
@@ -91,8 +91,7 @@ public class AppleDescriptionsTest {
         AppleDescriptions.parseAppleHeadersForUseFromOtherTargets(
             new SourcePathResolver(new BuildRuleResolver()).getPathFunction(),
             Paths.get("prefix"),
-            Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofRight(
-                headerMap)));
+            SourceList.ofNamedSources(headerMap)));
   }
 
   @Test
@@ -106,8 +105,7 @@ public class AppleDescriptionsTest {
         ImmutableMap.of(),
         AppleDescriptions.parseAppleHeadersForUseFromTheSameTarget(
             new SourcePathResolver(new BuildRuleResolver()).getPathFunction(),
-            Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofRight(
-                headerMap)));
+            SourceList.ofNamedSources(headerMap)));
   }
 
   @Test
@@ -171,7 +169,11 @@ public class AppleDescriptionsTest {
                 new PathSourcePath(projectFilesystem, Paths.get("Vendor/Bar/Bar.framework")))));
 
     assertEquals(
-        ImmutableList.of("-lz", "-framework", "XCTest", "-framework", "Bar", "-lFoo"),
+        ImmutableList.of(
+            "-lz",
+            "-framework", "XCTest",
+            "-framework", "Bar",
+            "-lFoo"),
         linkerFlags);
   }
 
@@ -180,8 +182,8 @@ public class AppleDescriptionsTest {
     ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     SourcePathResolver resolver = new SourcePathResolver(new BuildRuleResolver());
     Path appleSdkRoot = Paths.get("Root");
-    ImmutableAppleSdkPaths appleSdkPaths =
-        ImmutableAppleSdkPaths.builder()
+    AppleSdkPaths appleSdkPaths =
+        AppleSdkPaths.builder()
             .setDeveloperPath(appleSdkRoot)
             .addToolchainPaths(appleSdkRoot.resolve("Toolchain"))
             .setPlatformPath(appleSdkRoot.resolve("Platform"))
@@ -215,6 +217,36 @@ public class AppleDescriptionsTest {
             Paths.get("Vendor/Bar"),
             Paths.get("Vendor/Foo")),
         searchPaths);
+  }
+
+  @Test
+  public void expandSdkVariableReferences() {
+    Path appleSdkRoot = Paths.get("Root");
+    AppleSdkPaths appleSdkPaths =
+        AppleSdkPaths.builder()
+            .setDeveloperPath(appleSdkRoot)
+            .addToolchainPaths(appleSdkRoot.resolve("Toolchain"))
+            .setPlatformPath(appleSdkRoot.resolve("Platform"))
+            .setSdkPath(appleSdkRoot.resolve("SDK"))
+            .build();
+
+    Function<ImmutableList<String>, ImmutableList<String>> expandSdkVariableRefs =
+        AppleDescriptions.expandSdkVariableReferencesFunction(appleSdkPaths);
+
+    ImmutableList<String> expandedRefs = expandSdkVariableRefs.apply(
+        ImmutableList.of(
+            "-Ifoo/bar/baz",
+            "-L$DEVELOPER_DIR/blech",
+            "-I$SDKROOT/quux",
+            "-F$PLATFORM_DIR/xyzzy"));
+
+    assertEquals(
+        ImmutableList.of(
+            "-Ifoo/bar/baz",
+            "-LRoot/blech",
+            "-IRoot/SDK/quux",
+            "-FRoot/Platform/xyzzy"),
+        expandedRefs);
   }
 
 }

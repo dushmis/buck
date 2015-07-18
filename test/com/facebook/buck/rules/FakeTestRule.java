@@ -20,7 +20,7 @@ import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.test.TestResults;
 import com.facebook.buck.test.selectors.TestSelectorList;
-import com.google.common.collect.ImmutableCollection;
+import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
@@ -31,9 +31,12 @@ import java.util.concurrent.Callable;
 public class FakeTestRule extends AbstractBuildRule implements TestRule {
 
   private final ImmutableSet<Label> labels;
+  private final Optional<Path> pathToTestOutputDirectory;
+  private final boolean runTestSeparately;
+  private final ImmutableList<Step> testSteps;
+  private final Callable<TestResults> interpretedTestResults;
 
   public FakeTestRule(
-      BuildRuleType type,
       ImmutableSet<Label> labels,
       BuildTarget target,
       SourcePathResolver resolver,
@@ -41,7 +44,6 @@ public class FakeTestRule extends AbstractBuildRule implements TestRule {
     this(
         new FakeBuildRuleParamsBuilder(target)
             .setDeps(deps)
-            .setType(type)
             .build(),
         resolver,
         labels
@@ -52,13 +54,35 @@ public class FakeTestRule extends AbstractBuildRule implements TestRule {
       BuildRuleParams buildRuleParams,
       SourcePathResolver resolver,
       ImmutableSet<Label> labels) {
-    super(buildRuleParams, resolver);
-    this.labels = labels;
+    this(
+        buildRuleParams,
+        resolver,
+        labels,
+        Optional.<Path>absent(),
+        false, // runTestSeparately
+        ImmutableList.<Step>of(),
+        new Callable<TestResults>() {
+          @Override
+          public TestResults call() {
+            throw new UnsupportedOperationException("interpretTestResults() not implemented");
+          }
+        });
   }
 
-  @Override
-  public ImmutableCollection<Path> getInputs() {
-    return ImmutableList.of();
+  public FakeTestRule(
+      BuildRuleParams buildRuleParams,
+      SourcePathResolver resolver,
+      ImmutableSet<Label> labels,
+      Optional<Path> pathToTestOutputDirectory,
+      boolean runTestSeparately,
+      ImmutableList<Step> testSteps,
+      Callable<TestResults> interpretedTestResults) {
+    super(buildRuleParams, resolver);
+    this.labels = labels;
+    this.pathToTestOutputDirectory = pathToTestOutputDirectory;
+    this.runTestSeparately = runTestSeparately;
+    this.testSteps = testSteps;
+    this.interpretedTestResults = interpretedTestResults;
   }
 
   @Override
@@ -68,18 +92,8 @@ public class FakeTestRule extends AbstractBuildRule implements TestRule {
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return null;
-  }
-
-  @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableList.of();
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
   }
 
   @Override
@@ -93,8 +107,9 @@ public class FakeTestRule extends AbstractBuildRule implements TestRule {
       ExecutionContext executionContext,
       boolean isDryRun,
       boolean isShufflingTests,
-      TestSelectorList testSelectorList) {
-    throw new UnsupportedOperationException("runTests() not supported in fake");
+      TestSelectorList testSelectorList,
+      TestRule.TestReportingCallback testReportingCallback) {
+    return testSteps;
   }
 
   @Override
@@ -102,7 +117,7 @@ public class FakeTestRule extends AbstractBuildRule implements TestRule {
       ExecutionContext executionContext,
       boolean isUsingTestSelectors,
       boolean isDryRun) {
-    throw new UnsupportedOperationException("interpretTestResults() not supported in fake");
+    return interpretedTestResults;
   }
 
   @Override
@@ -122,6 +137,20 @@ public class FakeTestRule extends AbstractBuildRule implements TestRule {
 
   @Override
   public Path getPathToTestOutputDirectory() {
-    throw new UnsupportedOperationException("getPathToTestOutput() not supported in fake");
+    if (!pathToTestOutputDirectory.isPresent()) {
+      throw new UnsupportedOperationException("getPathToTestOutput() not supported in fake");
+    } else {
+      return pathToTestOutputDirectory.get();
+    }
+  }
+
+  @Override
+  public boolean runTestSeparately() {
+    return runTestSeparately;
+  }
+
+  @Override
+  public boolean supportsStreamingTests() {
+    return false;
   }
 }

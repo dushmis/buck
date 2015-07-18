@@ -16,10 +16,19 @@
 
 package com.facebook.buck.apple;
 
+import com.facebook.buck.js.IosReactNativeLibraryDescription;
+import com.facebook.buck.js.ReactNativeBundle;
+import com.facebook.buck.js.ReactNativeFlavors;
+import com.facebook.buck.js.ReactNativeLibraryArgs;
+import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.rules.BuildRuleType;
+import com.facebook.buck.rules.BuildTargetSourcePath;
+import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNode;
-
 import com.google.common.base.Function;
+import com.google.common.base.Optional;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
 
@@ -52,5 +61,48 @@ public class AppleResources {
               }
             })
         .toSet();
+  }
+
+  public static <T> void collectResourceDirsAndFiles(
+      TargetGraph targetGraph,
+      TargetNode<T> targetNode,
+      ImmutableSet.Builder<SourcePath> resourceDirs,
+      ImmutableSet.Builder<SourcePath> dirsContainingResourceDirs,
+      ImmutableSet.Builder<SourcePath> resourceFiles,
+      ImmutableSet.Builder<SourcePath> bundleVariantFiles) {
+    ImmutableSet<BuildRuleType> types =
+        ReactNativeFlavors.skipBundling(targetNode.getBuildTarget())
+            ? ImmutableSet.of(AppleResourceDescription.TYPE)
+            : ImmutableSet.of(AppleResourceDescription.TYPE, IosReactNativeLibraryDescription.TYPE);
+
+    Iterable<TargetNode<?>> resourceNodes =
+        AppleBuildRules.getRecursiveTargetNodeDependenciesOfTypes(
+            targetGraph,
+            AppleBuildRules.RecursiveDependenciesMode.COPYING,
+            targetNode,
+            Optional.of(types));
+
+    for (TargetNode<?> resourceNode : resourceNodes) {
+      Object constructorArg = resourceNode.getConstructorArg();
+      if (constructorArg instanceof AppleResourceDescription.Arg) {
+        AppleResourceDescription.Arg appleResource = (AppleResourceDescription.Arg) constructorArg;
+        resourceDirs.addAll(appleResource.dirs);
+        resourceFiles.addAll(appleResource.files);
+        if (appleResource.variants.isPresent()) {
+          bundleVariantFiles.addAll(appleResource.variants.get());
+        }
+      } else {
+        Preconditions.checkState(constructorArg instanceof ReactNativeLibraryArgs);
+        BuildTarget buildTarget = resourceNode.getBuildTarget();
+
+        dirsContainingResourceDirs.add(
+            new BuildTargetSourcePath(
+                buildTarget,
+                ReactNativeBundle.getPathToJSBundleDir(buildTarget)),
+            new BuildTargetSourcePath(
+                buildTarget,
+                ReactNativeBundle.getPathToResources(buildTarget)));
+      }
+    }
   }
 }

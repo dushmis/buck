@@ -20,6 +20,7 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.AbstractNodeBuilder;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 
 public class XcodeWorkspaceConfigBuilder
@@ -44,6 +45,12 @@ public class XcodeWorkspaceConfigBuilder
     return this;
   }
 
+  public XcodeWorkspaceConfigBuilder setExtraTargets(
+      Optional<ImmutableSortedSet<BuildTarget>> extraTargets) {
+    arg.extraTargets = extraTargets;
+    return this;
+  }
+
   public XcodeWorkspaceConfigBuilder setWorkspaceName(Optional<String> workspaceName) {
     arg.workspaceName = workspaceName;
     return this;
@@ -52,6 +59,12 @@ public class XcodeWorkspaceConfigBuilder
   public XcodeWorkspaceConfigBuilder setActionConfigNames(
       Optional<ImmutableMap<SchemeActionType, String>> actionConfigNames) {
     arg.actionConfigNames = actionConfigNames;
+    return this;
+  }
+
+  public XcodeWorkspaceConfigBuilder setExtraSchemes(
+      Optional<ImmutableSortedMap<String, BuildTarget>> extraSchemes) {
+    arg.extraSchemes = extraSchemes;
     return this;
   }
 

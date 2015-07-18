@@ -16,20 +16,17 @@
 
 package com.facebook.buck.ocaml;
 
-import com.facebook.buck.cxx.Tool;
+import com.facebook.buck.cxx.Compiler;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 
 import java.nio.file.Path;
 
@@ -41,16 +38,16 @@ public class OCamlBuild extends AbstractBuildRule {
   @AddToRuleKey
   private final OCamlBuildContext ocamlContext;
   @AddToRuleKey
-  private final Tool cCompiler;
+  private final Compiler cCompiler;
   @AddToRuleKey
-  private final Tool cxxCompiler;
+  private final Compiler cxxCompiler;
 
   public OCamlBuild(
       BuildRuleParams params,
       SourcePathResolver resolver,
       OCamlBuildContext ocamlContext,
-      Tool cCompiler,
-      Tool cxxCompiler) {
+      Compiler cCompiler,
+      Compiler cxxCompiler) {
     super(params, resolver);
     this.ocamlContext = ocamlContext;
     this.cCompiler = cCompiler;
@@ -60,24 +57,14 @@ public class OCamlBuild extends AbstractBuildRule {
   }
 
   @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableSet.of();
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
-  }
-
-  @Override
   public ImmutableList<Step> getBuildSteps(
       BuildContext context,
       BuildableContext buildableContext) {
     Path baseArtifactDir = ocamlContext.getOutput().getParent();
-    buildableContext.recordArtifactsInDirectory(baseArtifactDir);
-    buildableContext.recordArtifactsInDirectory(
+    buildableContext.recordArtifact(baseArtifactDir);
+    buildableContext.recordArtifact(
         baseArtifactDir.resolve(OCamlBuildContext.OCAML_COMPILED_DIR));
-    buildableContext.recordArtifactsInDirectory(
+    buildableContext.recordArtifact(
         baseArtifactDir.resolve(OCamlBuildContext.OCAML_COMPILED_BYTECODE_DIR));
     return ImmutableList.of(
         new MakeCleanDirectoryStep(ocamlContext.getOutput().getParent()),
@@ -88,7 +75,7 @@ public class OCamlBuild extends AbstractBuildRule {
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return ocamlContext.getOutput();
   }
 

@@ -16,18 +16,17 @@
 
 package com.facebook.buck.apple;
 
-import com.facebook.buck.io.DefaultDirectoryTraverser;
+import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.Description;
+import com.facebook.buck.rules.NoopBuildRule;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.base.Optional;
 
-import java.nio.file.Path;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -48,21 +47,17 @@ public class AppleResourceDescription implements Description<AppleResourceDescri
   }
 
   @Override
-  public <A extends Arg> AppleResource createBuildRule(
+  public <A extends Arg> BuildRule createBuildRule(
       BuildRuleParams params,
       BuildRuleResolver resolver,
       A args) {
-    return new AppleResource(
-        params,
-        new SourcePathResolver(resolver),
-        new DefaultDirectoryTraverser(),
-        args);
+    return new NoopBuildRule(params, new SourcePathResolver(resolver));
   }
 
   @SuppressFieldNotInitialized
   public static class Arg {
-    public Set<Path> dirs;
+    public Set<SourcePath> dirs;
     public Set<SourcePath> files;
-    public Optional<Map<String, Map<String, SourcePath>>> variants;
+    public Optional<Set<SourcePath>> variants;
   }
 }

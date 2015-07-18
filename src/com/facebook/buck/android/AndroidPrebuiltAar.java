@@ -20,6 +20,7 @@ import com.facebook.buck.java.JavacOptions;
 import com.facebook.buck.java.PrebuiltJar;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
+import com.facebook.buck.rules.HasRuntimeDeps;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -32,20 +33,23 @@ import java.nio.file.Path;
 
 import javax.annotation.Nullable;
 
-public class AndroidPrebuiltAar extends AndroidLibrary implements HasAndroidResourceDeps {
+public class AndroidPrebuiltAar
+    extends AndroidLibrary
+    implements HasAndroidResourceDeps, HasRuntimeDeps {
 
   private final AndroidResource androidResource;
-  private final Path nativeLibsDirectory;
+  private final SourcePath nativeLibsDirectory;
   private final PrebuiltJar prebuiltJar;
 
   public AndroidPrebuiltAar(
       BuildRuleParams androidLibraryParams,
       SourcePathResolver resolver,
-      Path proguardConfig,
-      Path nativeLibsDirectory,
+      SourcePath proguardConfig,
+      SourcePath nativeLibsDirectory,
       PrebuiltJar prebuiltJar,
       AndroidResource androidResource,
-      JavacOptions javacOptions) {
+      JavacOptions javacOptions,
+      Iterable<PrebuiltJar> exportedDeps) {
     super(
         androidLibraryParams,
         resolver,
@@ -53,7 +57,10 @@ public class AndroidPrebuiltAar extends AndroidLibrary implements HasAndroidReso
         /* resources */ ImmutableSortedSet.<SourcePath>of(),
         Optional.of(proguardConfig),
         /* postprocessClassesCommands */ ImmutableList.<String>of(),
-        ImmutableSortedSet.<BuildRule>of(prebuiltJar),
+        /* deps */ ImmutableSortedSet.<BuildRule>naturalOrder()
+            .add(prebuiltJar)
+            .addAll(exportedDeps)
+            .build(),
         /* providedDeps */ ImmutableSortedSet.<BuildRule>of(),
         /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
         javacOptions,
@@ -83,13 +90,13 @@ public class AndroidPrebuiltAar extends AndroidLibrary implements HasAndroidReso
 
   @Nullable
   @Override
-  public Path getRes() {
+  public SourcePath getRes() {
     return androidResource.getRes();
   }
 
   @Nullable
   @Override
-  public Path getAssets() {
+  public SourcePath getAssets() {
     return androidResource.getAssets();
   }
 
@@ -99,8 +106,20 @@ public class AndroidPrebuiltAar extends AndroidLibrary implements HasAndroidReso
     collector.addNativeLibsDirectory(getBuildTarget(), nativeLibsDirectory);
   }
 
+  public PrebuiltJar getPrebuiltJar() {
+    return prebuiltJar;
+  }
+
   public Path getBinaryJar() {
-    return prebuiltJar.getPathToOutputFile();
+    return prebuiltJar.getPathToOutput();
+  }
+
+  // This class is basically a wrapper around its android resource rule, since dependents will
+  // use this interface to access the underlying R.java package, so make sure it's available when
+  // a dependent is building against us.
+  @Override
+  public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
+    return ImmutableSortedSet.<BuildRule>of(androidResource);
   }
 
 }

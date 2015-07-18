@@ -20,8 +20,8 @@ import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.not;
-
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 
@@ -42,17 +42,20 @@ import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.shell.Genrule;
 import com.facebook.buck.shell.GenruleBuilder;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
+import com.google.common.base.Predicates;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.io.Files;
 
 import org.junit.Test;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Map;
 
 public class CxxDescriptionEnhancerTest {
 
@@ -67,7 +70,7 @@ public class CxxDescriptionEnhancerTest {
     Path yaccPath = Paths.get("yacc");
     filesystem.touch(yaccPath);
     FakeBuckConfig buckConfig = new FakeBuckConfig(
-        ImmutableMap.<String, Map<String, String>>of(
+        ImmutableMap.of(
             "cxx", ImmutableMap.of(
                 "lex", lexPath.toString(),
                 "yacc", yaccPath.toString())),
@@ -85,7 +88,7 @@ public class CxxDescriptionEnhancerTest {
         .newGenruleBuilder(genruleTarget)
         .setOut(lexSourceName)
         .build(resolver);
-    SourcePath lexSource = new BuildTargetSourcePath(filesystem, genrule.getBuildTarget());
+    SourcePath lexSource = new BuildTargetSourcePath(genrule.getBuildTarget());
 
     // Use a regular path for our yacc source.
     String yaccSourceName = "test.yy";
@@ -120,31 +123,35 @@ public class CxxDescriptionEnhancerTest {
     // Check the header/source spec is correct.
     Path lexOutputSource = CxxDescriptionEnhancer.getLexSourceOutputPath(target, lexSourceName);
     Path lexOutputHeader = CxxDescriptionEnhancer.getLexHeaderOutputPath(target, lexSourceName);
-    Path yaccOutputPrefix = CxxDescriptionEnhancer.getYaccOutputPrefix(target, yaccSourceName);
+    Path yaccOutputPrefix =
+        CxxDescriptionEnhancer.getYaccOutputPrefix(
+            target,
+            Files.getNameWithoutExtension(yaccSourceName));
     Path yaccOutputSource = Yacc.getSourceOutputPath(yaccOutputPrefix);
     Path yaccOutputHeader = Yacc.getHeaderOutputPath(yaccOutputPrefix);
-    CxxHeaderSourceSpec expected = ImmutableCxxHeaderSourceSpec.of(
-        ImmutableMap.<Path, SourcePath>of(
-            target.getBasePath().resolve(lexSourceName + ".h"),
-            new BuildTargetSourcePath(filesystem, lex.getBuildTarget(), lexOutputHeader),
-            target.getBasePath().resolve(yaccSourceName + ".h"),
-            new BuildTargetSourcePath(filesystem, yacc.getBuildTarget(), yaccOutputHeader)),
-        ImmutableMap.<String, CxxSource>of(
-            lexSourceName + ".cc",
-            ImmutableCxxSource.of(
-                CxxSource.Type.CXX,
-                new BuildTargetSourcePath(filesystem, lex.getBuildTarget(), lexOutputSource),
-                ImmutableList.<String>of()),
-            yaccSourceName + ".cc",
-            ImmutableCxxSource.of(
-                CxxSource.Type.CXX,
-                new BuildTargetSourcePath(filesystem, yacc.getBuildTarget(), yaccOutputSource),
-                ImmutableList.<String>of())));
+    CxxHeaderSourceSpec expected =
+        CxxHeaderSourceSpec.of(
+            ImmutableMap.<Path, SourcePath>of(
+                target.getBasePath().resolve(lexSourceName + ".h"),
+                new BuildTargetSourcePath(lex.getBuildTarget(), lexOutputHeader),
+                target.getBasePath().resolve(yaccSourceName + ".h"),
+                new BuildTargetSourcePath(yacc.getBuildTarget(), yaccOutputHeader)),
+            ImmutableMap.of(
+                lexSourceName + ".cc",
+                CxxSource.of(
+                    CxxSource.Type.CXX,
+                    new BuildTargetSourcePath(lex.getBuildTarget(), lexOutputSource),
+                    ImmutableList.<String>of()),
+                yaccSourceName + ".cc",
+                CxxSource.of(
+                    CxxSource.Type.CXX,
+                    new BuildTargetSourcePath(yacc.getBuildTarget(), yaccOutputSource),
+                    ImmutableList.<String>of())));
     assertEquals(expected, actual);
   }
 
   @Test
-  public void libraryTestIncludesPrivateHeadersOfLibraryUnderTest() {
+  public void libraryTestIncludesPrivateHeadersOfLibraryUnderTest() throws Exception {
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
 
     BuildTarget libTarget = BuildTargetFactory.newInstance("//:lib");
@@ -173,24 +180,29 @@ public class CxxDescriptionEnhancerTest {
         .setDeps(ImmutableSortedSet.<BuildRule>of(libRule))
         .build();
 
-    CxxPreprocessorInput combinedInput = CxxDescriptionEnhancer.combineCxxPreprocessorInput(
-        testParams,
-        CxxPlatformUtils.DEFAULT_PLATFORM,
-        ImmutableMultimap.<CxxSource.Type, String>of(),
-        ImmutableList.<SourcePath>of(),
-        ImmutableList.<SymlinkTree>of(),
-        ImmutableList.<Path>of());
+    ImmutableList<CxxPreprocessorInput> combinedInput =
+        CxxDescriptionEnhancer.collectCxxPreprocessorInput(
+            testParams,
+            CxxPlatformUtils.DEFAULT_PLATFORM,
+            ImmutableMultimap.<CxxSource.Type, String>of(),
+            ImmutableList.<SourcePath>of(),
+            ImmutableList.<SymlinkTree>of(),
+            ImmutableSet.<Path>of(),
+            CxxPreprocessables.getTransitiveCxxPreprocessorInput(
+                CxxPlatformUtils.DEFAULT_PLATFORM,
+                FluentIterable.from(testParams.getDeps())
+                    .filter(Predicates.instanceOf(CxxPreprocessorDep.class))));
 
     assertThat(
         "Test of library should include both public and private headers",
-        combinedInput.getIncludeRoots(),
+        CxxPreprocessorInput.concat(combinedInput).getIncludeRoots(),
         hasItems(
             Paths.get("symlink/tree/lib"),
             Paths.get("private/symlink/tree/lib")));
   }
 
   @Test
-  public void nonTestLibraryDepDoesNotIncludePrivateHeadersOfLibrary() {
+  public void nonTestLibraryDepDoesNotIncludePrivateHeadersOfLibrary() throws Exception {
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
 
     BuildTarget libTarget = BuildTargetFactory.newInstance("//:lib");
@@ -219,20 +231,38 @@ public class CxxDescriptionEnhancerTest {
         .setDeps(ImmutableSortedSet.<BuildRule>of(libRule))
         .build();
 
-    CxxPreprocessorInput otherInput = CxxDescriptionEnhancer.combineCxxPreprocessorInput(
-        otherLibDepParams,
-        CxxPlatformUtils.DEFAULT_PLATFORM,
-        ImmutableMultimap.<CxxSource.Type, String>of(),
-        ImmutableList.<SourcePath>of(),
-        ImmutableList.<SymlinkTree>of(),
-        ImmutableList.<Path>of());
+    ImmutableList<CxxPreprocessorInput> otherInput =
+        CxxDescriptionEnhancer.collectCxxPreprocessorInput(
+            otherLibDepParams,
+            CxxPlatformUtils.DEFAULT_PLATFORM,
+            ImmutableMultimap.<CxxSource.Type, String>of(),
+            ImmutableList.<SourcePath>of(),
+            ImmutableList.<SymlinkTree>of(),
+            ImmutableSet.<Path>of(),
+            CxxPreprocessables.getTransitiveCxxPreprocessorInput(
+                CxxPlatformUtils.DEFAULT_PLATFORM,
+                FluentIterable.from(otherLibDepParams.getDeps())
+                    .filter(Predicates.instanceOf(CxxPreprocessorDep.class))));
 
     assertThat(
         "Non-test rule with library dep should include public and not private headers",
-        otherInput.getIncludeRoots(),
+        CxxPreprocessorInput.concat(otherInput).getIncludeRoots(),
         allOf(
             hasItem(Paths.get("symlink/tree/lib")),
             not(hasItem(Paths.get("private/symlink/tree/lib")))));
+  }
+
+  @Test
+  public void buildTargetsWithDifferentFlavorsProduceDifferentDefaultSonames() {
+    BuildTarget target1 = BuildTargetFactory.newInstance("//:rule#one");
+    BuildTarget target2 = BuildTargetFactory.newInstance("//:rule#two");
+    assertNotEquals(
+        CxxDescriptionEnhancer.getDefaultSharedLibrarySoname(
+            target1,
+            CxxPlatformUtils.DEFAULT_PLATFORM),
+        CxxDescriptionEnhancer.getDefaultSharedLibrarySoname(
+            target2,
+            CxxPlatformUtils.DEFAULT_PLATFORM));
   }
 
 }

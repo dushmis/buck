@@ -17,7 +17,6 @@
 package com.facebook.buck.parser;
 
 import com.facebook.buck.cli.BuckConfig;
-import com.facebook.buck.python.PythonBuckConfig;
 import com.google.common.base.Function;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
@@ -30,25 +29,32 @@ import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 
 public class ParserConfig {
-  private static final String DEFAULT_ALLOW_EMPTY_GLOBS = "true";
-  private static final String DEFAULT_BUILD_FILE_NAME = "BUCK";
+  public static final boolean DEFAULT_ALLOW_EMPTY_GLOBS = true;
+  public static final String DEFAULT_BUILD_FILE_NAME = "BUCK";
+  public static final String BUILDFILE_SECTION_NAME = "buildfile";
+  public static final String INCLUDES_PROPERTY_NAME = "includes";
 
   private final BuckConfig delegate;
-  private final PythonBuckConfig pythonBuckConfig;
 
   public ParserConfig(BuckConfig delegate) {
     this.delegate = delegate;
-    this.pythonBuckConfig = new PythonBuckConfig(delegate);
   }
 
   public boolean getAllowEmptyGlobs() {
-    return Boolean.parseBoolean(
-        delegate.getValue("build", "allow_empty_globs").or(DEFAULT_ALLOW_EMPTY_GLOBS)
-    );
+    return delegate
+        .getValue("build", "allow_empty_globs")
+        .transform(
+            new Function<String, Boolean>() {
+              @Override
+              public Boolean apply(String input) {
+                return Boolean.parseBoolean(input);
+              }
+            })
+        .or(DEFAULT_ALLOW_EMPTY_GLOBS);
   }
 
   public String getBuildFileName() {
-    return delegate.getValue("buildfile", "name").or(DEFAULT_BUILD_FILE_NAME);
+    return delegate.getValue(BUILDFILE_SECTION_NAME, "name").or(DEFAULT_BUILD_FILE_NAME);
   }
 
   /**
@@ -56,7 +62,7 @@ public class ParserConfig {
    * evaluating a build file.
    */
   public Iterable<String> getDefaultIncludes() {
-    ImmutableMap<String, String> entries = delegate.getEntriesForSection("buildfile");
+    ImmutableMap<String, String> entries = delegate.getEntriesForSection(BUILDFILE_SECTION_NAME);
     String includes = Strings.nullToEmpty(entries.get("includes"));
     return Splitter.on(' ').trimResults().omitEmptyStrings().split(includes);
   }
@@ -65,13 +71,9 @@ public class ParserConfig {
     return delegate.getBooleanValue("project", "check_package_boundary", true);
   }
 
-  public String getPythonInterpreter() {
-    return pythonBuckConfig.getPythonInterpreter();
-  }
-
   public ImmutableSet<Pattern> getTempFilePatterns() {
     return FluentIterable
-        .from(delegate.asListWithoutComments(delegate.getValue("project", "temp_files")))
+        .from(delegate.getListWithoutComments("project", "temp_files"))
         .transform(
             new Function<String, Pattern>() {
               @Nullable

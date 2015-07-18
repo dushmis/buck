@@ -37,6 +37,15 @@ version control because it contains user-specific overrides (such as personal al
 
 <p>
 
+If a configuration option is not found in the project's <code>.buckconfig</code>, it will fall
+back to a <code>.buckconfig</code> file and <code>.buckconfig.d</code> directory in your home
+directory. Each of those has the same format as a <code>.buckconfig</code> file but will have
+any settings overridden by project-specific configurations. If you have build issues, make sure
+that there is nothing in your <code>.buckconfig</code> or <code>.buckconfig.d</code> that could
+be conflicting with the project you're trying to build.
+
+<p>
+
 The following sections are recognized by Buck:
 
 <p>
@@ -45,6 +54,7 @@ The following sections are recognized by Buck:
     'adb',
     'alias',
     'android',
+    'build',
     'buildfile',
     'cache',
     'color',
@@ -55,6 +65,7 @@ The following sections are recognized by Buck:
     'ndk',
     'project',
     'test',
+    'thrift',
     'tools',
     ]}
   <a href="#{$name}"><code>[{$name}]</code></a><br>
@@ -92,13 +103,22 @@ $ buck build app
 $ buck test apptest
 </pre>{/literal}
 
+Note that you can also suffix aliases with flavors:
+
+{literal}<pre class="prettyprint">
+$ buck build app#src_jar
+# This will expand the alias and effectively build the target returned by:
+$ buck targets --resolve-alias app#src_jar
+//apps/myapp:app#src_jar
+</pre>{/literal}
+
 {call .section}{param title: 'android' /}{/call}
 
 Specify the version of the Android SDK that all Android code
 in the project should be built against as follows:
 
 {literal}<pre class="prettyprint lang-ini">
-[alias]
+[android]
   target = Google Inc.:Google APIs:21
 </pre>{/literal}
 
@@ -111,6 +131,25 @@ the version of the SDK that Buck has chosen will be printed to the console.
 
 You can find the list of valid values on your system by running{sp}
 <code>android list targets --compact</code>.
+
+{call .section}{param title: 'build' /}{/call}
+
+This section includes settings that control build engine behavior.
+
+{literal}<pre class="prettyprint lang-ini">
+[build]
+  # Build engine mode.
+  #
+  # engine_mode is one of:
+  #   deep     : When building a target, ensure that all transitive
+  #              dependencies of that target are materialized locally.
+  #   shallow  : When building a target, don't require that it's
+  #              transitive dependencies are materialized locally.
+  #
+  # The default is shallow.
+  engine_mode = shallow
+</pre>{/literal}
+
 
 {call .section}{param title: 'buildfile' /}{/call}
 
@@ -135,7 +174,7 @@ This section configures build artifact caching, which can be disabled
 among developers. Note that the <code>mode</code> property determines which
 other properties, if any, are relevant to caching configuration; the irrelevant
 properties are ignored. The following example configures Buck to use both
-directory-based and Cassandra caching.
+directory-based and http caching.
 
 {literal}<pre class="prettyprint lang-ini">
 [cache]
@@ -143,11 +182,10 @@ directory-based and Cassandra caching.
     #
     # mode is a comma-separated set of caching mechanisms to use:
     #   dir       : Use a directory-based cache.
-    #   cassandra : Use a distributed Cassandra cache.
     #   http      : Use an http cache.
     #
     # The default set is empty.
-    mode = dir, cassandra
+    mode = dir, http
 
     # Directory path used for directory-based caching. The default directory
     # is buck-cache.
@@ -157,21 +195,6 @@ directory-based and Cassandra caching.
     # is unlimited.
     dir_max_size = 10GB
 
-    # Comma-separated set of known Cassandra cache nodes, for example:
-    #
-    #   hosts = artifactcache1.example.com, artifactcache2.example.com
-    #
-    # The default set is empty.
-    hosts = localhost
-
-    # Port on which to connect to Cassandra cache nodes. The default port is
-    # 9160.
-    port = 9160
-
-    # Treat the Cassandra cache as readonly or readwrite.  The default mode
-    # is readwrite.
-    cassandra_mode = readwrite
-
     # URL for http cache. The default is http://localhost:8080.
     http_url = http://localhost:8080
 
@@ -179,22 +202,9 @@ directory-based and Cassandra caching.
     # readwrite.
     http_mode = readwrite
 
-    # Timeout for http requests.
-    http_timeout_seconds = 10
+    # Timeout for http requests (defaults to 3 seconds).
+    http_timeout_seconds = 3
 </pre>{/literal}
-
-Initial Cassandra setup is generally straightforward, and warrants no special
-instructions beyond the following:
-<ul>
-  <li>The <code>thrift_framed_transport_size_in_mb</code> and
-      {sp}<code>thrift_max_message_length_in_mb</code> defaults may be too low,
-      depending on maximum artifact size. If these settings are left too low,
-      then larger artifacts will not be cached and throughput may suffer due to
-      network transport error recovery.
-  <li>The <code>scripts/init_cassandra_node.cql</code> script must be run once
-      in order to create the <code>ArtifactCache</code> keyspace that Buck
-      uses.
-</ul>
 
 Buck communicates with the http cache using a
 {sp}<a href="{ROOT}concept/http_cache_api.html">simple API</a>.
@@ -257,8 +267,8 @@ It also configures configures the default flags to pass to all invocations of sa
   # Flags to pass to the C preprocessor
   cppflags =
 
-  # Flags to pass to the C compiler
-  ccflags =
+  # Flags to pass to the C compiler and preprocessor
+  cflags =
 
   # Flags to pass to the C linker
   ldflags =
@@ -266,7 +276,7 @@ It also configures configures the default flags to pass to all invocations of sa
   # Flags to pass to the C++ preprocessor
   cxxppflags =
 
-  # Flags to pass to the C++ compiler
+  # Flags to pass to the C++ compiler and preprocessor
   cxxflags =
 
   # Flags to pass to the c++ linker
@@ -275,7 +285,7 @@ It also configures configures the default flags to pass to all invocations of sa
   # Flags to pass to the assembly preprocessor
   asppflags =
 
-  # Flags to pass to the assembler
+  # Flags to pass to the assembler and assembly preprocessor
   asflags =
 
   # Flags to pass to the archiver
@@ -286,6 +296,17 @@ It also configures configures the default flags to pass to all invocations of sa
 
   # Flags to pass to the compiler compiler
   yaccflags =
+</pre>{/literal}
+
+Adding a section with header [cxx#<i>flavor</i>] to the .buckconfig will add 
+an alternate cxx section. This cxx section will be used instead of [cxx]
+if the compilation flavor is invoked by appending <i>#flavor</i> to a build
+target. So to build with [cxx#example] rather than [cxx] use
+
+<p>
+
+{literal}<pre class="prettyprint">
+$ buck build app#example
 </pre>{/literal}
 
 {call .section}{param title: 'java' /}{/call}
@@ -372,11 +393,20 @@ inspection.
   max_traces = 25
 </pre>{/literal}
 
-Will limit Buck to creating, at most, 25{sp}
-<a href="{ROOT}about/performance_tuning.html">Chrome Traces</a>.
+<p>Will limit Buck to creating, at most, 25{sp}
+<a href="{ROOT}about/performance_tuning.html">Chrome Traces</a>.</p>
 
+{literal}<pre class="prettyprint lang-ini">
+[log]
+  compress_traces = true
+</pre>{/literal}
+
+<p>Will compress the traces with GZIP.</p>
 
 {call .section}{param title: 'ndk' /}{/call}
+
+This section defines properties to configure building native code against
+the Android NDK.
 
 This section may define both <code>min_version</code> and{sp}
 <code>max_version</code> properties to enable Buck to check before building an{sp}
@@ -389,6 +419,36 @@ only versions r7 through r8d:
   max_version = r8d
 </pre>{/literal}
 
+This section may also define an <code>app_platform</code> which is the android
+platform libraries should target.  This is equivalent to{sp}
+<code>APP_TARGET</code> in the NDK build system.  This setting defaults to{sp}
+<code>android-9</code>.
+ {literal}<pre class="prettyprint lang-ini">
+[ndk]
+  app_platform = android-21
+</pre>{/literal}
+
+This section also supports parameters to control how {call buck.cxx_library /} rules
+build C/C++ for NDK platforms:
+{literal}<pre class="prettyprint lang-ini">
+[ndk]
+  # The compiler family to use, either "gcc" or "clang".  The default is "gcc".
+  compiler = gcc
+
+  # The version of GCC to use from the provided NDK.  This will be used whether
+  # "gcc" is selected above or not, as other compiler families still use tools
+  # from the "gcc" toolchain (e.g. `ar`).  The default is "4.8".
+  gcc_version = 4.8
+
+  # The version of Clang to use from the provided NDK when "clang" is selected
+  # above.  The default is "3.4".
+  clang_version = 3.4
+
+  # The variant of the C/C++ runtime to use, either "gnustl", "libcxx", "stlport",
+  # "gabixx", or "system" (http://www.kandroid.org/ndk/docs/CPLUSPLUS-SUPPORT.html).
+  # The default is "gnustl".
+  cxx_runtime = gnustl
+</pre>{/literal}
 
 {call .section}{param title: 'project' /}{/call}
 
@@ -484,6 +544,23 @@ The value given is in milliseconds.
   timeout = 300000
 </pre>{/literal}
 
+{call .section}{param title: 'thrift' /}{/call}
+
+This section provides settings to locate required thrift components.
+
+{literal}<pre class="prettyprint lang-ini">
+[thrift]
+  # The thrift compiler (https://thrift.apache.org).  Can be either a path
+  # or a build target that builds it.
+  compiler = /usr/local/bin/thrift
+
+  # The thrift2 compiler (https://github.com/facebook/fbthrift).  Can be
+  # either a path or a build target that builds it.
+  #
+  # If unset, defaults to the value in compiler, above.
+  compiler2 = //thrift2:compiler
+</pre>{/literal}
+
 {call .section}{param title: 'tools' /}{/call}
 This section tells Buck how to find certain tools.
 <p>
@@ -497,6 +574,8 @@ containing a javac-like compiler.
 When <code>javac_jar</code> is set, Buck loads the referenced compiler in-memory.
 When neither option is set, Buck defaults to using the system compiler
 in-memory.
+<p>The <code>proguard-max-heap-size</code> specifies how much memory is used when running proguard.
+Defaults to <code>1024M</code>.</p>
 
     {/param}
   {/call}

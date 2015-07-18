@@ -18,12 +18,14 @@ package com.facebook.buck.cli;
 
 import com.facebook.buck.android.AndroidPlatformTarget;
 import com.facebook.buck.event.BuckEventBus;
+import com.facebook.buck.httpserver.WebServer;
 import com.facebook.buck.java.JavaPackageFinder;
 import com.facebook.buck.parser.Parser;
-import com.facebook.buck.rules.BuildEngine;
 import com.facebook.buck.rules.Repository;
+import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.timing.Clock;
 import com.facebook.buck.util.Console;
+import com.facebook.buck.util.FileHashCache;
 import com.facebook.buck.util.ProcessManager;
 import com.facebook.buck.util.environment.Platform;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,12 +34,10 @@ import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableMap;
 
 /**
- * {@link CommandRunnerParams} is the collection of parameters needed to create a
- * {@link CommandRunner}.
+ * {@link CommandRunnerParams} is the collection of parameters needed to run a {@link Command}.
  */
 class CommandRunnerParams {
 
-  private final BuildEngine buildEngine;
   private final ArtifactCacheFactory artifactCacheFactory;
   private final Console console;
   private final ImmutableMap<String, String> environment;
@@ -50,12 +50,14 @@ class CommandRunnerParams {
   private final ObjectMapper objectMapper;
   private final Clock clock;
   private final Optional<ProcessManager> processManager;
+  private final Optional<WebServer> webServer;
+  private final BuckConfig buckConfig;
+  private final FileHashCache fileHashCache;
 
   public CommandRunnerParams(
       Console console,
       Repository repository,
       Supplier<AndroidPlatformTarget> androidPlatformTargetSupplier,
-      BuildEngine buildEngine,
       ArtifactCacheFactory artifactCacheFactory,
       BuckEventBus eventBus,
       Parser parser,
@@ -64,10 +66,12 @@ class CommandRunnerParams {
       JavaPackageFinder javaPackageFinder,
       ObjectMapper objectMapper,
       Clock clock,
-      Optional<ProcessManager> processManager) {
+      Optional<ProcessManager> processManager,
+      Optional<WebServer> webServer,
+      BuckConfig buckConfig,
+      FileHashCache fileHashCache) {
     this.console = console;
     this.repository = repository;
-    this.buildEngine = buildEngine;
     this.artifactCacheFactory = artifactCacheFactory;
     this.eventBus = eventBus;
     this.parser = parser;
@@ -78,6 +82,9 @@ class CommandRunnerParams {
     this.objectMapper = objectMapper;
     this.clock = clock;
     this.processManager = processManager;
+    this.webServer = webServer;
+    this.buckConfig = buckConfig;
+    this.fileHashCache = fileHashCache;
   }
 
   public Console getConsole() {
@@ -108,10 +115,6 @@ class CommandRunnerParams {
     return platform;
   }
 
-  public BuildEngine getBuildEngine() {
-    return buildEngine;
-  }
-
   public ImmutableMap<String, String> getEnvironment() {
     return environment;
   }
@@ -131,4 +134,30 @@ class CommandRunnerParams {
   public Optional<ProcessManager> getProcessManager() {
     return processManager;
   }
+
+  public Optional<WebServer> getWebServer() {
+    return webServer;
+  }
+
+  public BuckConfig getBuckConfig() {
+    return buckConfig;
+  }
+
+  public FileHashCache getFileHashCache() {
+    return fileHashCache;
+  }
+
+  protected ExecutionContext createExecutionContext() {
+    return ExecutionContext.builder()
+        .setProjectFilesystem(repository.getFilesystem())
+        .setConsole(console)
+        .setAndroidPlatformTargetSupplier(androidPlatformTargetSupplier)
+        .setEventBus(eventBus)
+        .setPlatform(platform)
+        .setEnvironment(environment)
+        .setJavaPackageFinder(javaPackageFinder)
+        .setObjectMapper(objectMapper)
+        .build();
+  }
+
 }

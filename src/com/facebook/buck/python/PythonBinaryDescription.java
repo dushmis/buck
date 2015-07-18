@@ -46,6 +46,7 @@ public class PythonBinaryDescription implements Description<PythonBinaryDescript
 
   private final Path pathToPex;
   private final Path pathToPexExecuter;
+  private final String pexExtension;
   private final PythonEnvironment pythonEnvironment;
   private final CxxPlatform defaultCxxPlatform;
   private final FlavorDomain<CxxPlatform> cxxPlatforms;
@@ -53,11 +54,13 @@ public class PythonBinaryDescription implements Description<PythonBinaryDescript
   public PythonBinaryDescription(
       Path pathToPex,
       Path pathToPexExecuter,
+      String pexExtension,
       PythonEnvironment pythonEnv,
       CxxPlatform defaultCxxPlatform,
       FlavorDomain<CxxPlatform> cxxPlatforms) {
     this.pathToPex = pathToPex;
     this.pathToPexExecuter = pathToPexExecuter;
+    this.pexExtension = pexExtension;
     this.pythonEnvironment = pythonEnv;
     this.defaultCxxPlatform = defaultCxxPlatform;
     this.cxxPlatforms = cxxPlatforms;
@@ -105,7 +108,9 @@ public class PythonBinaryDescription implements Description<PythonBinaryDescript
     // If `main` is set, add it to the map of modules for this binary and also set it as the
     // `mainModule`, otherwise, use the explicitly set main module.
     if (args.main.isPresent()) {
-      LOG.warn("%s: parameter `main` is deprecated, please use `main_module` instead.");
+      LOG.warn(
+          "%s: parameter `main` is deprecated, please use `main_module` instead.",
+          params.getBuildTarget());
       String mainName = pathResolver.getSourcePathName(params.getBuildTarget(), args.main.get());
       Path main = baseModule.resolve(mainName);
       modules.put(baseModule.resolve(mainName), args.main.get());
@@ -115,10 +120,12 @@ public class PythonBinaryDescription implements Description<PythonBinaryDescript
     }
 
     // Build up the list of all components going into the python binary.
-    PythonPackageComponents binaryPackageComponents = ImmutablePythonPackageComponents.of(
+    PythonPackageComponents binaryPackageComponents = PythonPackageComponents.of(
         modules.build(),
         /* resources */ ImmutableMap.<Path, SourcePath>of(),
-        /* nativeLibraries */ ImmutableMap.<Path, SourcePath>of());
+        /* nativeLibraries */ ImmutableMap.<Path, SourcePath>of(),
+        /* prebuiltLibraries */ ImmutableSet.<SourcePath>of(),
+        /* zipSafe */ args.zipSafe);
     PythonPackageComponents allPackageComponents = PythonUtil.getAllComponents(
         params,
         binaryPackageComponents,
@@ -134,6 +141,7 @@ public class PythonBinaryDescription implements Description<PythonBinaryDescript
         pathResolver,
         pathToPex,
         pathToPexExecuter,
+        pexExtension,
         pythonEnvironment,
         mainModule,
         allPackageComponents);
@@ -145,6 +153,7 @@ public class PythonBinaryDescription implements Description<PythonBinaryDescript
     public Optional<String> mainModule;
     public Optional<ImmutableSortedSet<BuildTarget>> deps;
     public Optional<String> baseModule;
+    public Optional<Boolean> zipSafe;
   }
 
 }

@@ -1,22 +1,5 @@
 {namespace buck.audit}
 
-/**
- * Used to format the description of an audit command.
- *
- * Very similar to `buck.param`, but without the forced '--' prefix and
- * the optional alias parameter
- *
- * @param name Name of the command.
- * @param desc Prose description of the command.
- */
-{template .command}
-  <li class={css arg}>
-    <code>{$name}</code>
-    {sp}
-    {$desc|noAutoescape}
-  </li>
-{/template}
-
 /***/
 {template .soyweb}
   {call buck.page}
@@ -38,24 +21,29 @@ Provide build information about build targets and outputs.
 <h2>Commands</h2>
 
 <ul class="{css arglist}">
-  {call buck.audit.command}
-    {param name: 'input <targets>' /}
+  {call buck.param}
+    {param name: 'alias --list' /}
+    {param nodash: true /}
     {param desc}
-    Lists the input source and resource files used to build the
-    given targets.
+    Lists the set of aliases declared in
+    either <tt>.buckconfig</tt> or <tt>.buckconfig.local</tt>.
+    (Currently, <tt>--list</tt> is the only flag supported
+    by <tt>buck audit alias</tt>, but we are considering others.)
    {/param}
   {/call}
 
-  {call buck.audit.command}
+  {call buck.param}
     {param name: 'classpath <targets>' /}
+    {param nodash: true /}
     {param desc}
     Lists the classpath used to build the given targets. This does
     not work for all build rule types.
     {/param}
   {/call}
 
-  {call buck.audit.command}
+  {call buck.param}
     {param name: 'dependencies <targets>' /}
+    {param nodash: true /}
     {param desc}
     Lists the dependencies used to build the given targets. Results are listed
     in alphabetical order. By default, only direct dependencies are listed.
@@ -67,8 +55,18 @@ Provide build information about build targets and outputs.
     {/param}
   {/call}
 
-  {call buck.audit.command}
+  {call buck.param}
+    {param name: 'input <targets>' /}
+    {param nodash: true /}
+    {param desc}
+    Lists the input source and resource files used to build the
+    given targets.
+   {/param}
+  {/call}
+
+  {call buck.param}
     {param name: 'tests <targets>' /}
+    {param nodash: true /}
     {param desc}
     Lists the tests for the given targets. Results are listed in alphabetical
     order. Only tests for the given targets are printed, though multiple
@@ -90,9 +88,7 @@ Provide build information about build targets and outputs.
 {call buck.param}
   {param name: 'json' /}
   {param desc}
-  Outputs the results as JSON. The format of the JSON depends on the command
-  used. For example, <code>buck audit dependencies</code> returns an array of
-  results, while <code>buck audit input</code> will return an object
+  Outputs the results as JSON.
   {/param}
 {/call}
 
@@ -194,12 +190,21 @@ library transitively depends on.
 <pre>buck audit dependencies --transitive --json /&#x2F;examples:two</pre>
 <pre class="prettyprint lang-js">
 {literal}
-[
-  "//examples:five",
-  "//examples:four",
-  "//examples:three",
-  "//examples:two",
-]
+{
+  "//examples:two": ["//examples:five","//examples:four"]
+}
+{/literal}
+</pre>
+
+Outputs a JSON representation of the direct dependencies of the{sp}
+<code>two</code> and <code>three</code> libraries.
+<pre>buck audit dependencies --json /&#x2F;examples:two /&#x2F;examples:three</pre>
+<pre class="prettyprint lang-js">
+{literal}
+{
+  "//examples:three": ["//examples:five","//examples:four"],
+  "//examples:two": ["//examples:four"]
+}
 {/literal}
 </pre>
 

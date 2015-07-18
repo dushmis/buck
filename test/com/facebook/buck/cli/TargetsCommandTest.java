@@ -27,6 +27,7 @@ import com.facebook.buck.apple.AppleLibraryBuilder;
 import com.facebook.buck.apple.AppleTestBuilder;
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckEventBusFactory;
+import com.facebook.buck.httpserver.WebServer;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.FakeJavaPackageFinder;
 import com.facebook.buck.java.JavaLibraryBuilder;
@@ -40,7 +41,6 @@ import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.parser.ParserConfig;
 import com.facebook.buck.rules.ArtifactCache;
 import com.facebook.buck.rules.BuildRuleType;
-import com.facebook.buck.rules.FakeRepositoryFactory;
 import com.facebook.buck.rules.NoopArtifactCache;
 import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.Repository;
@@ -56,6 +56,9 @@ import com.facebook.buck.testutil.FakeOutputStream;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.testutil.TargetGraphFactory;
 import com.facebook.buck.testutil.TestConsole;
+import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
+import com.facebook.buck.testutil.integration.ProjectWorkspace;
+import com.facebook.buck.testutil.integration.ProjectWorkspace.ProcessResult;
 import com.facebook.buck.testutil.integration.TestDataHelper;
 import com.facebook.buck.util.environment.Platform;
 import com.fasterxml.jackson.core.JsonParser.Feature;
@@ -71,6 +74,7 @@ import com.google.common.collect.Maps;
 import com.google.common.io.Files;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.kohsuke.args4j.CmdLineException;
 
@@ -86,6 +90,7 @@ public class TargetsCommandTest {
 
   private TestConsole console;
   private TargetsCommand targetsCommand;
+  private CommandRunnerParams params;
   private ObjectMapper objectMapper;
 
   private SortedMap<String, TargetNode<?>> buildTargetNodes(String baseName, String name) {
@@ -105,6 +110,9 @@ public class TargetsCommandTest {
         .toString();
   }
 
+  @Rule
+  public DebuggableTemporaryFolder tmp = new DebuggableTemporaryFolder();
+
   @Before
   public void setUp() throws IOException, InterruptedException {
     console = new TestConsole();
@@ -116,19 +124,19 @@ public class TargetsCommandTest {
     BuckEventBus eventBus = BuckEventBusFactory.newInstance();
     objectMapper = new ObjectMapper();
 
-    targetsCommand =
-        new TargetsCommand(CommandRunnerParamsForTesting.createCommandRunnerParamsForTesting(
-            console,
-            new FakeRepositoryFactory(),
-            repository,
-            androidDirectoryResolver,
-            new InstanceArtifactCacheFactory(artifactCache),
-            eventBus,
-            new ParserConfig(new FakeBuckConfig()),
-            Platform.detect(),
-            ImmutableMap.copyOf(System.getenv()),
-            new FakeJavaPackageFinder(),
-            objectMapper));
+    targetsCommand = new TargetsCommand();
+    params = CommandRunnerParamsForTesting.createCommandRunnerParamsForTesting(
+        console,
+        repository,
+        androidDirectoryResolver,
+        new InstanceArtifactCacheFactory(artifactCache),
+        eventBus,
+        new FakeBuckConfig(),
+        Platform.detect(),
+        ImmutableMap.copyOf(System.getenv()),
+        new FakeJavaPackageFinder(),
+        objectMapper,
+        Optional.<WebServer>absent());
   }
 
   @Test
@@ -141,7 +149,7 @@ public class TargetsCommandTest {
         "//" + testDataPath(""),
         "test-library");
 
-    targetsCommand.printJsonForTargets(nodes, new ParserConfig(new FakeBuckConfig()));
+    targetsCommand.printJsonForTargets(params, nodes, new ParserConfig(new FakeBuckConfig()));
     String observedOutput = console.getTextWrittenToStdOut();
     JsonNode observed = objectMapper.readTree(
         objectMapper.getJsonFactory().createJsonParser(observedOutput));
@@ -149,13 +157,48 @@ public class TargetsCommandTest {
     // parse the expected JSON.
     String expectedJson = Files.toString(new File(testBuckFileJson1), Charsets.UTF_8);
     JsonNode expected = objectMapper.readTree(
-        objectMapper.getJsonFactory().createJsonParser(expectedJson)
-            .enable(Feature.ALLOW_COMMENTS));
+      objectMapper.getJsonFactory().createJsonParser(expectedJson)
+        .enable(Feature.ALLOW_COMMENTS)
+    );
 
     assertEquals("Output from targets command should match expected JSON.", expected, observed);
-    assertEquals("Nothing should be printed to stderr.",
+    assertEquals(
+      "Nothing should be printed to stderr.",
         "",
         console.getTextWrittenToStdErr());
+  }
+
+  @Test
+  public void testJsonOutputWithDirectDependencies() throws IOException {
+    final String testBuckFileJson2 = testDataPath("TargetsCommandTestBuckJson2.js");
+    ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
+      this, "target_command", tmp
+    );
+    workspace.setUp();
+
+    // Run Buck targets command on a case where the deps and direct_dependencies differ
+    ProcessResult result = workspace.runBuckCommand(
+      "targets", "--json", "//:B");
+
+    // Parse the observed JSON.
+    JsonNode observed = objectMapper.readTree(
+      objectMapper.getJsonFactory().createJsonParser(result.getStdout())
+        .enable(Feature.ALLOW_COMMENTS)
+    );
+
+    // Parse the expected JSON.
+    String expectedJson = Files.toString(new File(testBuckFileJson2), Charsets.UTF_8);
+    JsonNode expected = objectMapper.readTree(
+      objectMapper.getJsonFactory().createJsonParser(expectedJson)
+        .enable(Feature.ALLOW_COMMENTS)
+    );
+
+    assertEquals("Output from targets command should match expected JSON.", expected, observed);
+    assertEquals(
+      "Nothing should be printed to stderr.",
+      "",
+      console.getTextWrittenToStdErr()
+    );
   }
 
   @Test
@@ -163,7 +206,7 @@ public class TargetsCommandTest {
       throws BuildFileParseException, IOException, InterruptedException {
     // nonexistent target should not exist.
     SortedMap<String, TargetNode<?>> buildRules = buildTargetNodes("//", "nonexistent");
-    targetsCommand.printJsonForTargets(buildRules, new ParserConfig(new FakeBuckConfig()));
+    targetsCommand.printJsonForTargets(params, buildRules, new ParserConfig(new FakeBuckConfig()));
 
     String output = console.getTextWrittenToStdOut();
     assertEquals("[\n]\n", output);
@@ -254,7 +297,7 @@ public class TargetsCommandTest {
         ImmutableSet.of("//javatest:test-java-library", "//javasrc:java-library"),
         matchingBuildRules.keySet());
 
-    // Verify that BUCK files show up as referenced_files.
+    // Verify that BUCK files show up as referenced files.
     referencedFiles = ImmutableSet.of(
         Paths.get("javasrc/BUCK"));
     matchingBuildRules =

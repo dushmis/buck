@@ -21,11 +21,11 @@ import com.facebook.buck.java.JavaLibrary;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey.Builder;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.shell.ShellStep;
 import com.facebook.buck.step.ExecutionContext;
@@ -35,7 +35,6 @@ import com.facebook.buck.step.fs.MkdirStep;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
@@ -66,20 +65,27 @@ public class GwtBinary extends AbstractBuildRule {
   private static final String GWT_COMPILER_CLASS = "com.google.gwt.dev.Compiler";
 
   private final Path outputFile;
+  @AddToRuleKey
   private final ImmutableSortedSet<String> modules;
+  @AddToRuleKey
   private final ImmutableList<String> vmArgs;
+  @AddToRuleKey
   private final Style style;
+  @AddToRuleKey
   private final boolean draftCompile;
+  @AddToRuleKey
   private final int optimize;
+  @AddToRuleKey
   private final int localWorkers;
+  @AddToRuleKey
   private final boolean strict;
+  @AddToRuleKey
   private final ImmutableList<String> experimentalArgs;
-  private final ImmutableSortedSet<BuildRule> moduleDeps;
+  // Deliberately not added to rule key
   private final ImmutableSortedSet<Path> gwtModuleJars;
 
   /**
    * @param modules The GWT modules to build with the GWT compiler.
-   * @param moduleDeps The rules passed to the {@code module_deps} argument in the build file.
    */
   GwtBinary(
       BuildRuleParams buildRuleParams,
@@ -92,7 +98,6 @@ public class GwtBinary extends AbstractBuildRule {
       int localWorkers,
       boolean strict,
       List<String> experimentalArgs,
-      ImmutableSortedSet<BuildRule> moduleDeps,
       ImmutableSortedSet<Path> gwtModuleJars) {
     super(buildRuleParams, resolver);
     BuildTarget buildTarget = buildRuleParams.getBuildTarget();
@@ -111,20 +116,15 @@ public class GwtBinary extends AbstractBuildRule {
     // No need for bounds-checking this int because GWT does it internally: http://bit.ly/1kFN5M7.
     this.optimize = optimize;
 
-    Preconditions.checkArgument(localWorkers > 0,
+    Preconditions.checkArgument(
+        localWorkers > 0,
         "localWorkers must be greater than zero: %d",
         localWorkers);
     this.localWorkers = localWorkers;
 
     this.strict = strict;
     this.experimentalArgs = ImmutableList.copyOf(experimentalArgs);
-    this.moduleDeps = moduleDeps;
     this.gwtModuleJars = gwtModuleJars;
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableList.of();
   }
 
   @Override
@@ -135,7 +135,7 @@ public class GwtBinary extends AbstractBuildRule {
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
 
     // Create a clean directory where the .zip file will be written.
-    Path workingDirectory = getPathToOutputFile().getParent();
+    Path workingDirectory = getPathToOutput().getParent();
     steps.add(new MakeCleanDirectoryStep(workingDirectory));
 
     // Write the deploy files into a separate directory so that the generated .zip is smaller.
@@ -160,7 +160,7 @@ public class GwtBinary extends AbstractBuildRule {
             "-classpath", Joiner.on(File.pathSeparator).join(
                 Iterables.transform(getClasspathEntries(), projectFilesystem.getAbsolutifier())),
             GWT_COMPILER_CLASS,
-            "-war", projectFilesystem.resolve(getPathToOutputFile()).toString(),
+            "-war", projectFilesystem.resolve(getPathToOutput()).toString(),
             "-style", style.name(),
             "-optimize", String.valueOf(optimize),
             "-localWorkers", String.valueOf(localWorkers),
@@ -180,30 +180,16 @@ public class GwtBinary extends AbstractBuildRule {
     };
     steps.add(javaStep);
 
-    buildableContext.recordArtifact(getPathToOutputFile());
+    buildableContext.recordArtifact(getPathToOutput());
 
     return steps.build();
-  }
-
-  @Override
-  public Builder appendDetailsToRuleKey(Builder builder) {
-    return builder
-        .setReflectively("moduleDeps", moduleDeps)
-        .setReflectively("modules", modules)
-        .setReflectively("vmArgs", vmArgs)
-        .setReflectively("style", style.name())
-        .setReflectively("draftCompile", draftCompile)
-        .setReflectively("optimize", optimize)
-        .setReflectively("localWorkers", localWorkers)
-        .setReflectively("strict", strict)
-        .setReflectively("experimentalArgs", experimentalArgs);
   }
 
   /**
    * @return The {@code .zip} file produced by this rule.
    */
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return outputFile;
   }
 

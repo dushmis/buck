@@ -22,7 +22,6 @@ import com.facebook.buck.model.HasBuildTarget;
 import com.facebook.buck.step.Step;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 
@@ -30,15 +29,10 @@ import java.nio.file.Path;
 
 import javax.annotation.Nullable;
 
-// This should be Comparable<BuildRule>, but we need to also compare with PrebuiltJar (and, later,
-// the other java library rules once they've migrated to Buildable. As such, the only sane interface
-// to compare to is HasBuildTarget. Ultimately, when we collapse BuildRule and Buildable, this
-// should be Comparable<Buildable>
-// TODO(simons): Fix the horror of Comparable.
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE,
     getterVisibility = JsonAutoDetect.Visibility.NONE,
     setterVisibility = JsonAutoDetect.Visibility.NONE)
-public interface BuildRule extends Comparable<HasBuildTarget>, HasBuildTarget {
+public interface BuildRule extends Comparable<BuildRule>, HasBuildTarget {
 
   @Override
   public BuildTarget getBuildTarget();
@@ -47,7 +41,7 @@ public interface BuildRule extends Comparable<HasBuildTarget>, HasBuildTarget {
   public String getFullyQualifiedName();
 
   @JsonProperty("type")
-  public BuildRuleType getType();
+  public String getType();
 
   public BuildableProperties getProperties();
 
@@ -62,11 +56,6 @@ public interface BuildRule extends Comparable<HasBuildTarget>, HasBuildTarget {
    *     custom getter provided by the build rule.
    */
   public ImmutableSortedSet<BuildRule> getDeps();
-
-  /**
-   * @return the inputs needed to build this build rule
-   */
-  public ImmutableCollection<Path> getInputs();
 
   /**
    * @return key based on the BuildRule's state, including the transitive closure of its
@@ -90,9 +79,7 @@ public interface BuildRule extends Comparable<HasBuildTarget>, HasBuildTarget {
   public ImmutableList<Step> getBuildSteps(BuildContext context, BuildableContext buildableContext);
 
   @Nullable
-  public Path getPathToOutputFile();
-
-  public CacheMode getCacheMode();
+  public Path getPathToOutput();
 
   public ProjectFilesystem getProjectFilesystem();
 

@@ -16,11 +16,13 @@
 
 package com.facebook.buck.cxx;
 
-import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.Tool;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
 
@@ -41,13 +43,13 @@ public class HashedFileTool implements Tool {
   }
 
   @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder, String key) {
-    return builder.setReflectively(key, path);
+  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+    return builder.setReflectively("path", path);
   }
 
   @Override
-  public ImmutableList<BuildRule> getBuildRules(SourcePathResolver resolver) {
-    return ImmutableList.of();
+  public ImmutableSortedSet<SourcePath> getInputs() {
+    return ImmutableSortedSet.of();
   }
 
   @Override

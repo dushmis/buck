@@ -62,8 +62,6 @@ public class ThriftLibraryDescription
   public static final BuildRuleType TYPE = BuildRuleType.of("thrift_library");
   private static final Flavor INCLUDE_SYMLINK_TREE_FLAVOR =
       ImmutableFlavor.of("include_symlink_tree");
-  private static final BuildRuleType INCLUDE_SYMLINK_TREE_TYPE =
-      BuildRuleType.of("include_symlink_tree");
 
   private final ThriftBuckConfig thriftBuckConfig;
   private final FlavorDomain<ThriftLanguageSpecificEnhancer> enhancers;
@@ -146,12 +144,6 @@ public class ThriftLibraryDescription
   }
 
   /**
-   * Build rule type to use for the rule which generates the language sources.
-   */
-  private static final BuildRuleType THRIFT_COMPILE_TYPE =
-      BuildRuleType.of("thrift_compile");
-
-  /**
    * Create the build rules which compile the input thrift sources into their respective
    * language specific sources.
    */
@@ -159,13 +151,14 @@ public class ThriftLibraryDescription
   protected ImmutableMap<String, ThriftCompiler> createThriftCompilerBuildRules(
       BuildRuleParams params,
       BuildRuleResolver resolver,
+      CompilerType compilerType,
       ImmutableList<String> flags,
       String language,
       ImmutableSet<String> options,
       ImmutableMap<String, SourcePath> srcs,
       ImmutableSortedSet<ThriftLibrary> deps) {
 
-    SourcePath compiler = thriftBuckConfig.getCompiler();
+    SourcePath compiler = thriftBuckConfig.getCompiler(compilerType);
 
     // Build up the include roots to find thrift file deps and also the build rules that
     // generate them.
@@ -195,7 +188,6 @@ public class ThriftLibraryDescription
           name,
           new ThriftCompiler(
               params.copyWithChanges(
-                  THRIFT_COMPILE_TYPE,
                   target,
                   Suppliers.ofInstance(
                       ImmutableSortedSet.<BuildRule>naturalOrder()
@@ -290,7 +282,6 @@ public class ThriftLibraryDescription
       BuildTarget symlinkTreeTarget = createThriftIncludeSymlinkTreeTarget(target);
       SymlinkTree symlinkTree = new SymlinkTree(
           params.copyWithChanges(
-              INCLUDE_SYMLINK_TREE_TYPE,
               symlinkTreeTarget,
               Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
               Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of())),
@@ -334,8 +325,7 @@ public class ThriftLibraryDescription
                 ImmutableList.<FlavorDomain<?>>of(enhancers),
                 FluentIterable.from(thriftDeps)
                     .transform(HasBuildTarget.TO_TARGET)),
-            implicitDeps),
-        false);
+            implicitDeps));
 
     // Create a a build rule for thrift source file, to compile the language specific sources.
     // They keys in this map are the logical names of the thrift files (e.g as specific in a BUCK
@@ -343,6 +333,7 @@ public class ThriftLibraryDescription
     ImmutableMap<String, ThriftCompiler> compilerRules = createThriftCompilerBuildRules(
         params,
         resolver,
+        enhancer.getCompilerType(),
         args.flags.or(ImmutableList.<String>of()),
         language,
         options,
@@ -426,7 +417,8 @@ public class ThriftLibraryDescription
             arg.deps.get()));
 
     // Add the compiler target, if there is one.
-    SourcePath compiler = thriftBuckConfig.getCompiler();
+    SourcePath compiler =
+        thriftBuckConfig.getCompiler(enhancerFlavor.get().getValue().getCompilerType());
     if (compiler instanceof BuildTargetSourcePath) {
       deps.add(((BuildTargetSourcePath) compiler).getTarget());
     }
@@ -440,6 +432,12 @@ public class ThriftLibraryDescription
     deps.addAll(implicitDeps);
 
     return deps;
+  }
+
+  // The version of thrift compiler to use.
+  public enum CompilerType {
+    THRIFT,
+    THRIFT2
   }
 
 }

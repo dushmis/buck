@@ -17,10 +17,13 @@
 package com.facebook.buck.apple;
 
 import com.facebook.buck.util.HumanReadableException;
-
 import com.google.common.base.Function;
+import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -62,13 +65,22 @@ public class InfoPlistSubstitution {
   public static String replaceVariablesInString(
       String input,
       Map<String, String> variablesToExpand) {
+    return replaceVariablesInString(input, variablesToExpand, ImmutableList.<String>of());
+  }
+
+  private static String replaceVariablesInString(
+      String input,
+      Map<String, String> variablesToExpand,
+      List<String> maskedVariables) {
     Matcher variableMatcher = PLIST_VARIABLE_PATTERN.matcher(input);
+
     StringBuffer result = new StringBuffer();
     while (variableMatcher.find()) {
       String openParen = variableMatcher.group(OPEN_PAREN_GROUP_NAME);
       String closeParen = variableMatcher.group(CLOSE_PAREN_GROUP_NAME);
 
-      if (!MATCHING_PARENS.get(openParen).equals(closeParen)) {
+      String expectedCloseParen = Preconditions.checkNotNull(MATCHING_PARENS.get(openParen));
+      if (!expectedCloseParen.equals(closeParen)) {
         // Mismatching parens; don't substitute.
         variableMatcher.appendReplacement(
             result,
@@ -77,12 +89,26 @@ public class InfoPlistSubstitution {
       }
 
       String variableName = variableMatcher.group(VARIABLE_GROUP_NAME);
+      if (maskedVariables.contains(variableName)) {
+        throw new HumanReadableException(
+            "Recursive plist variable: %s -> %s",
+            Joiner.on(" -> ").join(maskedVariables),
+            variableName);
+      }
+
       String expansion = variablesToExpand.get(variableName);
       if (expansion == null) {
         throw new HumanReadableException(
             "Unrecognized plist variable: %s",
             variableMatcher.group(0));
       }
+
+      // Variable replacements are allowed to reference other variables (but be careful to mask
+      // so we don't end up in a recursive loop)
+      expansion = replaceVariablesInString(
+          expansion,
+          variablesToExpand,
+          new ImmutableList.Builder<String>().addAll(maskedVariables).add(variableName).build());
 
       // TODO(user): Add support for "rfc1034identifier" modifier and sanitize
       // expansion so it's a legal hostname (a-zA-Z0-9, dash, period).

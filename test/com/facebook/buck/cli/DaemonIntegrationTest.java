@@ -31,10 +31,10 @@ import static org.junit.Assume.assumeTrue;
 
 import com.facebook.buck.android.AssumeAndroidPlatform;
 import com.facebook.buck.android.FakeAndroidDirectoryResolver;
+import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckEventListener;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildId;
-import com.facebook.buck.rules.FakeRepositoryFactory;
 import com.facebook.buck.rules.TestRepositoryBuilder;
 import com.facebook.buck.rules.TestRunEvent;
 import com.facebook.buck.testutil.TestConsole;
@@ -45,8 +45,8 @@ import com.facebook.buck.testutil.integration.TestContext;
 import com.facebook.buck.testutil.integration.TestDataHelper;
 import com.facebook.buck.timing.FakeClock;
 import com.facebook.buck.util.CapturingPrintStream;
-import com.facebook.buck.util.ImmutableProcessExecutorParams;
 import com.facebook.buck.util.ProcessExecutor;
+import com.facebook.buck.util.ProcessExecutorParams;
 import com.facebook.buck.util.environment.Platform;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Charsets;
@@ -95,7 +95,7 @@ public class DaemonIntegrationTest {
     // up the watch is successful.
     try {
       ProcessExecutor.Result result = new ProcessExecutor(new TestConsole()).launchAndExecute(
-          ImmutableProcessExecutorParams.builder()
+          ProcessExecutorParams.builder()
               .setCommand(ImmutableList.of("watchman", "watchzzz", tmp.getRootPath().toString()))
               .build());
       assumeTrue(result.getStdout().isPresent());
@@ -488,42 +488,35 @@ public class DaemonIntegrationTest {
     ObjectMapper objectMapper = new ObjectMapper();
 
     Object daemon = Main.getDaemon(
-        new FakeRepositoryFactory().setRootRepoForTesting(
-            new TestRepositoryBuilder().setBuckConfig(
-                new FakeBuckConfig(
-                    ImmutableMap.<String, Map<String, String>>builder()
-                        .put("somesection", ImmutableMap.of("somename", "somevalue"))
-                        .build()))
-                .setFilesystem(filesystem)
-                .build()),
+        new TestRepositoryBuilder().setBuckConfig(
+            new FakeBuckConfig(
+                ImmutableMap.of("somesection", ImmutableMap.of("somename", "somevalue"))))
+            .setFilesystem(filesystem)
+            .build(),
         new FakeClock(0),
         objectMapper);
 
     assertEquals(
         "Daemon should not be replaced when config equal.", daemon,
         Main.getDaemon(
-            new FakeRepositoryFactory().setRootRepoForTesting(
-                new TestRepositoryBuilder().setBuckConfig(
-                    new FakeBuckConfig(
-                        ImmutableMap.<String, Map<String, String>>builder()
-                            .put("somesection", ImmutableMap.of("somename", "somevalue"))
-                            .build()))
-                    .setFilesystem(filesystem)
-                    .build()),
+            new TestRepositoryBuilder().setBuckConfig(
+                new FakeBuckConfig(
+                    ImmutableMap.of("somesection", ImmutableMap.of("somename", "somevalue"))))
+                .setFilesystem(filesystem)
+                .build(),
             new FakeClock(0),
             objectMapper));
 
     assertNotEquals(
         "Daemon should be replaced when config not equal.", daemon,
         Main.getDaemon(
-            new FakeRepositoryFactory().setRootRepoForTesting(
-                new TestRepositoryBuilder().setBuckConfig(
-                    new FakeBuckConfig(
-                        ImmutableMap.<String, Map<String, String>>builder()
-                            .put("somesection", ImmutableMap.of("somename", "someothervalue"))
-                            .build()))
-                    .setFilesystem(filesystem)
-                    .build()),
+            new TestRepositoryBuilder().setBuckConfig(
+                new FakeBuckConfig(
+                    ImmutableMap.of(
+                        "somesection",
+                        ImmutableMap.of("somename", "someothervalue"))))
+                .setFilesystem(filesystem)
+                .build(),
             new FakeClock(0),
             objectMapper));
   }
@@ -558,30 +551,28 @@ public class DaemonIntegrationTest {
     ObjectMapper objectMapper = new ObjectMapper();
 
     Object daemon = Main.getDaemon(
-        new FakeRepositoryFactory().setRootRepoForTesting(
-            new TestRepositoryBuilder()
-                .setAndroidDirectoryResolver(
-                    new FakeAndroidDirectoryResolver(
-                        Optional.<Path>absent(),
-                        Optional.<Path>absent(),
-                        Optional.of("something")))
-                .setFilesystem(filesystem)
-                .build()),
+        new TestRepositoryBuilder()
+            .setAndroidDirectoryResolver(
+                new FakeAndroidDirectoryResolver(
+                    Optional.<Path>absent(),
+                    Optional.<Path>absent(),
+                    Optional.of("something")))
+            .setFilesystem(filesystem)
+            .build(),
         new FakeClock(0),
         objectMapper);
 
     assertNotEquals(
         "Daemon should be replaced when not equal.", daemon,
         Main.getDaemon(
-            new FakeRepositoryFactory().setRootRepoForTesting(
-                new TestRepositoryBuilder()
-                    .setAndroidDirectoryResolver(
-                        new FakeAndroidDirectoryResolver(
-                            Optional.<Path>absent(),
-                            Optional.<Path>absent(),
-                            Optional.of("different")))
-                    .setFilesystem(filesystem)
-                    .build()),
+            new TestRepositoryBuilder()
+                .setAndroidDirectoryResolver(
+                    new FakeAndroidDirectoryResolver(
+                        Optional.<Path>absent(),
+                        Optional.<Path>absent(),
+                        Optional.of("different")))
+                .setFilesystem(filesystem)
+                .build(),
             new FakeClock(0),
             objectMapper));
   }
@@ -613,7 +604,7 @@ public class DaemonIntegrationTest {
     Watcher watcher = new Watcher(path);
     Main.registerFileWatcher(watcher);
     while (!watcher.watchedChange()) {
-      Main.watchFilesystem();
+      Main.watchFilesystem(new BuckEventBus(new FakeClock(0), new BuildId()));
     }
   }
 }

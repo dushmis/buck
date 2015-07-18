@@ -26,9 +26,11 @@ import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.ImplicitDepsInferringDescription;
 import com.facebook.buck.rules.Label;
+import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
@@ -37,6 +39,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Sets;
 
 public class CxxTestDescription implements
     Description<CxxTestDescription.Arg>,
@@ -92,7 +95,8 @@ public class CxxTestDescription implements
         resolver,
         cxxPlatform,
         args,
-        CxxSourceRuleFactory.Strategy.SEPARATE_PREPROCESS_AND_COMPILE);
+        cxxBuckConfig.getPreprocessMode())
+        .cxxLink;
 
     // Construct the actual build params we'll use, notably with an added dependency on the
     // CxxLink rule above which builds the test binary.
@@ -109,12 +113,19 @@ public class CxxTestDescription implements
 
     CxxTestType type = args.framework.or(getDefaultTestType());
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
+    SourcePath binary =
+        new BuildTargetSourcePath(cxxLink.getBuildTarget());
+    // It's not uncommon for users to add dependencies onto other binaries that they run during
+    // the test, so make sure to add them as runtime deps.
+    ImmutableSortedSet<BuildRule> additionalDeps =
+        ImmutableSortedSet.copyOf(Sets.difference(params.getDeps(), cxxLink.getDeps()));
     switch (type) {
       case GTEST: {
         test = new CxxGtestTest(
             testParams,
             pathResolver,
-            cxxLink.getOutput(),
+            binary,
+            additionalDeps,
             args.labels.get(),
             args.contacts.get(),
             resolver.getAllRules(args.sourceUnderTest.get()));
@@ -124,7 +135,8 @@ public class CxxTestDescription implements
         test = new CxxBoostTest(
             testParams,
             pathResolver,
-            cxxLink.getOutput(),
+            binary,
+            additionalDeps,
             args.labels.get(),
             args.contacts.get(),
             resolver.getAllRules(args.sourceUnderTest.get()));

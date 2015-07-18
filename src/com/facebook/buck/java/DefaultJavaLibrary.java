@@ -21,26 +21,27 @@ import static com.facebook.buck.rules.BuildableProperties.Kind.LIBRARY;
 
 import com.facebook.buck.android.AndroidPackageable;
 import com.facebook.buck.android.AndroidPackageableCollector;
+import com.facebook.buck.graph.DirectedAcyclicGraph;
 import com.facebook.buck.graph.TopologicalSort;
-import com.facebook.buck.graph.TraversableGraph;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.model.HasBuildTarget;
 import com.facebook.buck.rules.AbiRule;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildDependencies;
 import com.facebook.buck.rules.BuildOutputInitializer;
 import com.facebook.buck.rules.BuildRule;
+import com.facebook.buck.rules.BuildRuleDependencyVisitors;
 import com.facebook.buck.rules.BuildRuleParams;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.BuildableProperties;
 import com.facebook.buck.rules.ExportDependencies;
-import com.facebook.buck.rules.ImmutableSha1HashCode;
 import com.facebook.buck.rules.InitializableFromDisk;
 import com.facebook.buck.rules.OnDiskBuildInfo;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -50,7 +51,6 @@ import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.facebook.buck.step.fs.MkdirStep;
 import com.facebook.buck.step.fs.TouchStep;
 import com.facebook.buck.util.HumanReadableException;
-import com.facebook.buck.util.Optionals;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
@@ -58,7 +58,6 @@ import com.google.common.base.Predicates;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
@@ -107,12 +106,20 @@ public class DefaultJavaLibrary extends AbstractBuildRule
 
   private static final BuildableProperties OUTPUT_TYPE = new BuildableProperties(LIBRARY);
 
+  @AddToRuleKey
   private final ImmutableSortedSet<SourcePath> srcs;
+  @AddToRuleKey
   private final ImmutableSortedSet<SourcePath> resources;
+  @AddToRuleKey(stringify = true)
+  private final Optional<Path> resourcesRoot;
   private final Optional<Path> outputJar;
-  private final Optional<Path> proguardConfig;
+  @AddToRuleKey
+  private final Optional<SourcePath> proguardConfig;
+  @AddToRuleKey
   private final ImmutableList<String> postprocessClassesCommands;
+  @AddToRuleKey
   private final ImmutableSortedSet<BuildRule> exportedDeps;
+  @AddToRuleKey
   private final ImmutableSortedSet<BuildRule> providedDeps;
   // Some classes need to override this when enhancing deps (see AndroidLibrary).
   private final ImmutableSet<Path> additionalClasspathEntries;
@@ -123,10 +130,11 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   private final Supplier<ImmutableSetMultimap<JavaLibrary, Path>>
       declaredClasspathEntriesSupplier;
   private final BuildOutputInitializer<Data> buildOutputInitializer;
-  private final Optional<Path> resourcesRoot;
+
 
   // TODO(jacko): This really should be final, but we need to refactor how we get the
   // AndroidPlatformTarget first before it can be.
+  @AddToRuleKey
   private JavacOptions javacOptions;
 
   /**
@@ -134,8 +142,8 @@ public class DefaultJavaLibrary extends AbstractBuildRule
    * jar.
    */
   @VisibleForTesting
-  static interface JarResolver {
-    public ImmutableSet<String> resolve(ProjectFilesystem filesystem, Path relativeClassPath);
+  interface JarResolver {
+    ImmutableSet<String> resolve(ProjectFilesystem filesystem, Path relativeClassPath);
   }
 
   private static final JarResolver JAR_RESOLVER =
@@ -170,7 +178,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       SourcePathResolver resolver,
       Set<? extends SourcePath> srcs,
       Set<? extends SourcePath> resources,
-      Optional<Path> proguardConfig,
+      Optional<SourcePath> proguardConfig,
       ImmutableList<String> postprocessClassesCommands,
       ImmutableSortedSet<BuildRule> exportedDeps,
       ImmutableSortedSet<BuildRule> providedDeps,
@@ -266,7 +274,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       commands.add(new MkdirStep(pathToSrcsList.getParent()));
 
       Optional<Path> workingDirectory;
-      if (getJavac().isUsingWorkspace()) {
+      if (getJavacOptions().getJavac().isUsingWorkspace()) {
         Path scratchDir = BuildTargets.getGenPath(target, "lib__%s____working_directory");
         commands.add(new MakeCleanDirectoryStep(scratchDir));
         workingDirectory = Optional.of(scratchDir);
@@ -284,7 +292,8 @@ public class DefaultJavaLibrary extends AbstractBuildRule
           javacOptions,
           target,
           buildDependencies,
-          suggestBuildRules);
+          suggestBuildRules,
+          getResolver());
 
       commands.add(javacStep);
     }
@@ -307,7 +316,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
     // Hash the ABI keys of all dependencies together with ABI key for the current rule.
     Hasher hasher = createHasherWithAbiKeyForDeps(depsForAbiKey);
     hasher.putUnencodedChars(abiKey.getHash());
-    return ImmutableSha1HashCode.of(hasher.hash().toString());
+    return Sha1HashCode.of(hasher.hash().toString());
   }
 
   private Path getPathToAbiOutputDir() {
@@ -339,7 +348,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
    */
   @Override
   public Sha1HashCode getAbiKeyForDeps() {
-    return ImmutableSha1HashCode.of(
+    return Sha1HashCode.of(
         createHasherWithAbiKeyForDeps(getDepsForAbiKey()).hash().toString());
   }
 
@@ -397,19 +406,6 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   }
 
   @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    builder
-        .setReflectively("postprocessClassesCommands", postprocessClassesCommands)
-        .setReflectively("resources", resources)
-        .setReflectively("resources_root", resourcesRoot.toString())
-        // provided_deps are already included in the rule key, but we need to explicitly call them
-        // out as "provided" because changing a dep from provided to transtitive should result in a
-        // re-build (otherwise, we'd get a rule key match).
-        .setReflectively("provided_deps", providedDeps);
-    return javacOptions.appendToRuleKey(builder, "javacOptions");
-  }
-
-  @Override
   public BuildableProperties getProperties() {
     return OUTPUT_TYPE;
   }
@@ -442,15 +438,6 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   @Override
   public AnnotationProcessingParams getAnnotationProcessingParams() {
     return javacOptions.getAnnotationProcessingParams();
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    ImmutableList.Builder<Path> builder = ImmutableList.builder();
-    builder.addAll(getResolver().filterInputsToCompareToOutput(this.srcs));
-    builder.addAll(getResolver().filterInputsToCompareToOutput(this.resources));
-    Optionals.addIfPresent(this.proguardConfig, builder);
-    return builder.build();
   }
 
   @Override
@@ -499,7 +486,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       MakeCleanDirectoryStep mkdirGeneratedSources =
           new MakeCleanDirectoryStep(annotationGenFolder);
       steps.add(mkdirGeneratedSources);
-      buildableContext.recordArtifactsInDirectory(annotationGenFolder);
+      buildableContext.recordArtifact(annotationGenFolder);
     }
 
     // Always create the output directory, even if there are no .java files to compile because there
@@ -643,24 +630,36 @@ public class DefaultJavaLibrary extends AbstractBuildRule
    */
   @VisibleForTesting
   Optional<JavacStep.SuggestBuildRules> createSuggestBuildFunction(
-      BuildContext context,
-      ImmutableSetMultimap<JavaLibrary, Path> transitiveClasspathEntries,
-      ImmutableSetMultimap<JavaLibrary, Path> declaredClasspathEntries,
+      final BuildContext context,
+      final ImmutableSetMultimap<JavaLibrary, Path> transitiveClasspathEntries,
+      final ImmutableSetMultimap<JavaLibrary, Path> declaredClasspathEntries,
       final JarResolver jarResolver) {
+
     if (context.getBuildDependencies() != BuildDependencies.WARN_ON_TRANSITIVE) {
       return Optional.absent();
     }
-    final Set<JavaLibrary> transitiveNotDeclaredDeps = Sets.difference(
-        transitiveClasspathEntries.keySet(),
-        Sets.union(ImmutableSet.of(this), declaredClasspathEntries.keySet()));
 
-    TraversableGraph<BuildRule> graph = context.getActionGraph();
-    final ImmutableList<JavaLibrary> sortedTransitiveNotDeclaredDeps = FluentIterable
-        .from(TopologicalSort.sort(graph, Predicates.<BuildRule>alwaysTrue()))
-        .filter(JavaLibrary.class)
-        .filter(Predicates.in(transitiveNotDeclaredDeps))
-        .toList()
-        .reverse();
+    final Supplier<ImmutableList<JavaLibrary>> sortedTransitiveNotDeclaredDeps =
+        Suppliers.memoize(
+            new Supplier<ImmutableList<JavaLibrary>>() {
+              @Override
+              public ImmutableList<JavaLibrary> get() {
+                Set<JavaLibrary> transitiveNotDeclaredDeps = Sets.difference(
+                    transitiveClasspathEntries.keySet(),
+                    Sets.union(ImmutableSet.of(this), declaredClasspathEntries.keySet()));
+                DirectedAcyclicGraph<BuildRule> graph =
+                    BuildRuleDependencyVisitors.getBuildRuleDirectedGraphFilteredBy(
+                        context.getActionGraph().getNodes(),
+                        Predicates.instanceOf(JavaLibrary.class),
+                        Predicates.instanceOf(JavaLibrary.class));
+                return FluentIterable
+                    .from(TopologicalSort.sort(graph, Predicates.<BuildRule>alwaysTrue()))
+                    .filter(JavaLibrary.class)
+                    .filter(Predicates.in(transitiveNotDeclaredDeps))
+                    .toList()
+                    .reverse();
+              }
+            });
 
     JavacStep.SuggestBuildRules suggestBuildRuleFn =
         new JavacStep.SuggestBuildRules() {
@@ -671,7 +670,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
 
         Set<String> remainingImports = Sets.newHashSet(failedImports);
 
-        for (JavaLibrary transitiveNotDeclaredDep : sortedTransitiveNotDeclaredDeps) {
+        for (JavaLibrary transitiveNotDeclaredDep : sortedTransitiveNotDeclaredDeps.get()) {
           if (isMissingBuildRule(filesystem,
                   transitiveNotDeclaredDep,
                   remainingImports,
@@ -693,7 +692,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
    * Instructs this rule to report the ABI it has on disk as its current ABI.
    */
   @Override
-  public JavaLibrary.Data initializeFromDisk(OnDiskBuildInfo onDiskBuildInfo) {
+  public JavaLibrary.Data initializeFromDisk(OnDiskBuildInfo onDiskBuildInfo) throws IOException {
     return JavaLibraryRules.initializeFromDisk(getBuildTarget(), onDiskBuildInfo);
   }
 
@@ -738,14 +737,9 @@ public class DefaultJavaLibrary extends AbstractBuildRule
     }
   }
 
-  @VisibleForTesting
-  public Javac getJavac() {
-    return javacOptions.getJavac();
-  }
-
   @Override
   @Nullable
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return outputJar.orNull();
   }
 
@@ -760,7 +754,9 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   @Override
   public void addToCollector(AndroidPackageableCollector collector) {
     if (outputJar.isPresent()) {
-      collector.addClasspathEntry(this, outputJar.get());
+      collector.addClasspathEntry(
+          this,
+          new BuildTargetSourcePath(getBuildTarget(), outputJar.get()));
     }
     if (proguardConfig.isPresent()) {
       collector.addProguardConfig(getBuildTarget(), proguardConfig.get());

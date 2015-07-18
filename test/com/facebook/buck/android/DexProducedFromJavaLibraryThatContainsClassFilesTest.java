@@ -19,33 +19,39 @@ package com.facebook.buck.android;
 import static org.easymock.EasyMock.expect;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
 
 import com.facebook.buck.dalvik.EstimateLinearAllocStep;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.FakeJavaLibrary;
 import com.facebook.buck.java.JavaLibrary;
+import com.facebook.buck.java.JavaLibraryBuilder;
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.model.ImmutableFlavor;
 import com.facebook.buck.rules.BuildContext;
+import com.facebook.buck.rules.BuildOutputInitializer;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.FakeBuildableContext;
-import com.facebook.buck.rules.ImmutableSha1HashCode;
+import com.facebook.buck.rules.FakeOnDiskBuildInfo;
+import com.facebook.buck.rules.InitializableFromDisk;
+import com.facebook.buck.rules.OnDiskBuildInfo;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.TestExecutionContext;
 import com.facebook.buck.testutil.MoreAsserts;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedMap;
-import com.google.common.collect.Iterables;
 import com.google.common.hash.HashCode;
 import com.google.common.hash.Hashing;
 
@@ -70,7 +76,7 @@ public class DexProducedFromJavaLibraryThatContainsClassFilesTest extends EasyMo
 
       @Override
       public Sha1HashCode getAbiKey() {
-        return ImmutableSha1HashCode.of("f7f34ed13b881c6c6f663533cde4a436ea84435e");
+        return Sha1HashCode.of("f7f34ed13b881c6c6f663533cde4a436ea84435e");
       }
     };
     javaLibraryRule.setOutputFile("buck-out/gen/foo/bar.jar");
@@ -96,6 +102,7 @@ public class DexProducedFromJavaLibraryThatContainsClassFilesTest extends EasyMo
     expect(androidPlatformTarget.getDxExecutable()).andReturn(Paths.get("/usr/bin/dx"));
 
     ProjectFilesystem projectFilesystem = createMock(ProjectFilesystem.class);
+    expect(projectFilesystem.getRootPath()).andReturn(Paths.get("/"));
     expect(projectFilesystem.resolve(Paths.get("buck-out/gen/foo")))
         .andStubReturn(Paths.get("/home/user/buck-out/gen/foo"));
     expect(projectFilesystem.resolve(Paths.get("buck-out/gen/foo/bar#dex.dex.jar")))
@@ -110,16 +117,19 @@ public class DexProducedFromJavaLibraryThatContainsClassFilesTest extends EasyMo
         .setProjectFilesystem(projectFilesystem)
         .build();
 
-    String expectedDxCommand = "/usr/bin/dx" +
-        " --dex --no-optimize --force-jumbo --output /home/user/buck-out/gen/foo/bar#dex.dex.jar " +
-        "/home/user/buck-out/gen/foo/bar.jar";
+    String expectedDxCommand = String.format(
+        "%s --dex --no-optimize --force-jumbo --output %s %s",
+        Paths.get("/usr/bin/dx"),
+        Paths.get("/home/user/buck-out/gen/foo/bar#dex.dex.jar"),
+        Paths.get("/home/user/buck-out/gen/foo/bar.jar"));
     MoreAsserts.assertSteps("Generate bar.dex.jar.",
         ImmutableList.of(
-          "rm -f /home/user/buck-out/gen/foo/bar#dex.dex.jar",
-          "mkdir -p /home/user/buck-out/gen/foo",
-          "estimate_linear_alloc",
-          expectedDxCommand,
-          "record_dx_success"),
+            String.format("rm -f %s", Paths.get("/home/user/buck-out/gen/foo/bar#dex.dex.jar")),
+            String.format("mkdir -p %s", Paths.get("/home/user/buck-out/gen/foo")),
+            "estimate_linear_alloc",
+            "(cd / && " + expectedDxCommand + ")",
+            "zip-scrub buck-out/gen/foo/bar#dex.dex.jar",
+            "record_dx_success"),
         steps,
         executionContext);
 
@@ -129,7 +139,7 @@ public class DexProducedFromJavaLibraryThatContainsClassFilesTest extends EasyMo
     replayAll();
 
     ((EstimateLinearAllocStep) steps.get(2)).setLinearAllocEstimateForTesting(250);
-    Step recordArtifactAndMetadataStep = steps.get(4);
+    Step recordArtifactAndMetadataStep = steps.get(5);
     int exitCode = recordArtifactAndMetadataStep.execute(executionContext);
     assertEquals(0, exitCode);
     assertEquals("The generated .dex.jar file should be in the set of recorded artifacts.",
@@ -180,8 +190,8 @@ public class DexProducedFromJavaLibraryThatContainsClassFilesTest extends EasyMo
 
     MoreAsserts.assertSteps("Do not generate a .dex.jar file.",
         ImmutableList.of(
-          "rm -f /home/user/buck-out/gen/foo/bar.dex.jar",
-          "mkdir -p /home/user/buck-out/gen/foo",
+          String.format("rm -f %s", Paths.get("/home/user/buck-out/gen/foo/bar.dex.jar")),
+          String.format("mkdir -p %s", Paths.get("/home/user/buck-out/gen/foo")),
           "record_empty_dx"),
         steps,
         executionContext);
@@ -215,12 +225,48 @@ public class DexProducedFromJavaLibraryThatContainsClassFilesTest extends EasyMo
             params,
             new SourcePathResolver(new BuildRuleResolver()),
             accumulateClassNames);
-    assertNull(preDexWithClasses.getPathToOutputFile());
-    assertTrue(Iterables.isEmpty(preDexWithClasses.getInputsToCompareToOutput()));
+    assertNull(preDexWithClasses.getPathToOutput());
     assertEquals(Paths.get("buck-out/gen/foo/bar.dex.jar"), preDexWithClasses.getPathToDex());
-    assertTrue(preDexWithClasses.hasOutput());
 
     verifyAll();
+  }
+
+  private static <T> void initialize(
+      InitializableFromDisk<T> initializableFromDisk,
+      OnDiskBuildInfo onDiskBuildInfo) throws IOException {
+    BuildOutputInitializer<T> buildOutputInitializer =
+        initializableFromDisk.getBuildOutputInitializer();
+    buildOutputInitializer.setBuildOutput(
+        initializableFromDisk.initializeFromDisk(onDiskBuildInfo));
+  }
+
+  @Test
+  public void getOutputDoesNotAccessWrappedJavaLibrary() throws IOException {
+    BuildRuleResolver ruleResolver = new BuildRuleResolver();
+    SourcePathResolver pathResolver = new SourcePathResolver(ruleResolver);
+
+    JavaLibrary javaLibrary =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .build(ruleResolver);
+
+    BuildRuleParams params =
+        new FakeBuildRuleParamsBuilder(BuildTargetFactory.newInstance("//:target"))
+            .build();
+    DexProducedFromJavaLibrary dexProducedFromJavaLibrary =
+        new DexProducedFromJavaLibrary(params, pathResolver, javaLibrary);
+
+    ObjectMapper mapper = new ObjectMapper();
+    FakeOnDiskBuildInfo onDiskBuildInfo =
+        new FakeOnDiskBuildInfo()
+            .putMetadata(
+                DexProducedFromJavaLibrary.LINEAR_ALLOC_KEY_ON_DISK_METADATA,
+                "0")
+            .putMetadata(
+                DexProducedFromJavaLibrary.CLASSNAMES_TO_HASHES,
+                mapper.writeValueAsString(ImmutableMap.<String, String>of()));
+    initialize(dexProducedFromJavaLibrary, onDiskBuildInfo);
+
+    assertFalse(dexProducedFromJavaLibrary.hasOutput());
   }
 
   @Test

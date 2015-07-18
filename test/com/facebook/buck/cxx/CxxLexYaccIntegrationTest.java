@@ -17,23 +17,27 @@
 package com.facebook.buck.cxx;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assume.assumeTrue;
 
 import com.facebook.buck.cli.FakeBuckConfig;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.BuildRuleSuccessType;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.Tool;
 import com.facebook.buck.testutil.TestConsole;
 import com.facebook.buck.testutil.integration.BuckBuildLog;
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.facebook.buck.testutil.integration.ProjectWorkspace;
 import com.facebook.buck.testutil.integration.TestDataHelper;
-import com.facebook.buck.util.ImmutableProcessExecutorParams;
 import com.facebook.buck.util.ProcessExecutor;
+import com.facebook.buck.util.ProcessExecutorParams;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
+import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -53,7 +57,7 @@ public class CxxLexYaccIntegrationTest {
         .build();
     ProcessExecutor.Result result = new ProcessExecutor(new TestConsole())
         .launchAndExecute(
-            ImmutableProcessExecutorParams
+            ProcessExecutorParams
                 .builder()
                 .setCommand(command)
                 .build());
@@ -107,7 +111,7 @@ public class CxxLexYaccIntegrationTest {
         CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
             target,
             cxxPlatform.getFlavor(),
-            CxxDescriptionEnhancer.HeaderVisibility.PRIVATE);
+            HeaderVisibility.PRIVATE);
 
     // Do a clean build, verify that it succeeds, and check that all expected targets built
     // successfully.
@@ -139,20 +143,8 @@ public class CxxLexYaccIntegrationTest {
     workspace.runBuckCommand("build", target.toString()).assertSuccess();
     buildLog = workspace.getBuildLog();
     assertEquals(
-        ImmutableSet.of(
-            yaccTarget,
-            headerSymlinkTreeTarget,
-            yaccPreprocessTarget,
-            yaccCompileTarget,
-            preprocessTarget,
-            compileTarget,
-            binaryTarget,
-            target),
+        ImmutableSet.of(target, binaryTarget),
         buildLog.getAllTargets());
-    buildLog.assertTargetHadMatchingRuleKey(yaccTarget.toString());
-    buildLog.assertTargetHadMatchingRuleKey(headerSymlinkTreeTarget.toString());
-    buildLog.assertTargetHadMatchingRuleKey(compileTarget.toString());
-    buildLog.assertTargetHadMatchingRuleKey(yaccCompileTarget.toString());
     buildLog.assertTargetHadMatchingRuleKey(binaryTarget.toString());
     buildLog.assertTargetHadMatchingRuleKey(target.toString());
 
@@ -160,7 +152,7 @@ public class CxxLexYaccIntegrationTest {
     workspace.resetBuildLogFile();
 
     // Update the source file.
-    workspace.replaceFileContents(yaccSourceFull, "expression", "somethingElse");
+    workspace.replaceFileContents(yaccSourceFull, "NUMBER", "SOMETHING_ELSE");
 
     // Check that running a build again makes the source get recompiled and the binary
     // re-linked, but does not cause the header rules to re-run.
@@ -181,7 +173,9 @@ public class CxxLexYaccIntegrationTest {
     buildLog.assertTargetHadMatchingRuleKey(headerSymlinkTreeTarget.toString());
     buildLog.assertTargetBuiltLocally(compileTarget.toString());
     buildLog.assertTargetBuiltLocally(yaccCompileTarget.toString());
-    buildLog.assertTargetBuiltLocally(binaryTarget.toString());
+    assertThat(
+        buildLog.getLogEntry(binaryTarget).getSuccessType().get(),
+        Matchers.not(Matchers.equalTo(BuildRuleSuccessType.MATCHING_RULE_KEY)));
     buildLog.assertTargetBuiltLocally(target.toString());
   }
 

@@ -18,13 +18,12 @@ package com.facebook.buck.cxx;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertThat;
 
 import com.facebook.buck.cli.FakeBuckConfig;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
-import com.facebook.buck.python.ImmutablePythonPackageComponents;
 import com.facebook.buck.python.PythonPackageComponents;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
@@ -37,14 +36,21 @@ import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
+import com.google.common.base.Functions;
+import com.google.common.base.Optional;
+import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 
+import org.hamcrest.Matchers;
 import org.junit.Test;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.regex.Pattern;
 
 public class CxxLibraryTest {
 
@@ -101,7 +107,7 @@ public class CxxLibraryTest {
         expectedPublicCxxPreprocessorInput,
         cxxLibrary.getCxxPreprocessorInput(
             cxxPlatform,
-            CxxDescriptionEnhancer.HeaderVisibility.PUBLIC));
+            HeaderVisibility.PUBLIC));
 
     CxxPreprocessorInput expectedPrivateCxxPreprocessorInput = CxxPreprocessorInput.builder()
         .addRules(privateHeaderTarget, privateHeaderSymlinkTreeTarget)
@@ -111,26 +117,28 @@ public class CxxLibraryTest {
         expectedPrivateCxxPreprocessorInput,
         cxxLibrary.getCxxPreprocessorInput(
             cxxPlatform,
-            CxxDescriptionEnhancer.HeaderVisibility.PRIVATE));
+            HeaderVisibility.PRIVATE));
 
-    // Verify that we get the static archive and it's build target via the NativeLinkable
+    // Verify that we get the static archive and its build target via the NativeLinkable
     // interface.
-    NativeLinkableInput expectedStaticNativeLinkableInput = ImmutableNativeLinkableInput.of(
+    NativeLinkableInput expectedStaticNativeLinkableInput = NativeLinkableInput.of(
         ImmutableList.<SourcePath>of(
-            new BuildTargetSourcePath(projectFilesystem, archive.getBuildTarget())),
-        ImmutableList.of(archiveOutput.toString()));
+            new BuildTargetSourcePath(archive.getBuildTarget())),
+        ImmutableList.of(archiveOutput.toString()),
+        ImmutableSet.<Path>of());
     assertEquals(
         expectedStaticNativeLinkableInput,
         cxxLibrary.getNativeLinkableInput(
             cxxPlatform,
             Linker.LinkableDepType.STATIC));
 
-    // Verify that we get the static archive and it's build target via the NativeLinkable
+    // Verify that we get the static archive and its build target via the NativeLinkable
     // interface.
-    NativeLinkableInput expectedSharedNativeLinkableInput = ImmutableNativeLinkableInput.of(
+    NativeLinkableInput expectedSharedNativeLinkableInput = NativeLinkableInput.of(
         ImmutableList.<SourcePath>of(
-            new BuildTargetSourcePath(projectFilesystem, sharedLibrary.getBuildTarget())),
-        ImmutableList.of(sharedLibraryOutput.toString()));
+            new BuildTargetSourcePath(sharedLibrary.getBuildTarget())),
+        ImmutableList.of(sharedLibraryOutput.toString()),
+        ImmutableSet.<Path>of());
     assertEquals(
         expectedSharedNativeLinkableInput,
         cxxLibrary.getNativeLinkableInput(
@@ -138,19 +146,80 @@ public class CxxLibraryTest {
             Linker.LinkableDepType.SHARED));
 
     // Verify that we return the expected output for python packages.
-    PythonPackageComponents expectedPythonPackageComponents = ImmutablePythonPackageComponents.of(
+    PythonPackageComponents expectedPythonPackageComponents = PythonPackageComponents.of(
         ImmutableMap.<Path, SourcePath>of(),
         ImmutableMap.<Path, SourcePath>of(),
         ImmutableMap.<Path, SourcePath>of(
             Paths.get(sharedLibrarySoname),
-            new PathSourcePath(projectFilesystem, sharedLibraryOutput)));
+            new PathSourcePath(projectFilesystem, sharedLibraryOutput)),
+        ImmutableSet.<SourcePath>of(),
+        Optional.<Boolean>absent());
     assertEquals(
         expectedPythonPackageComponents,
         cxxLibrary.getPythonPackageComponents(cxxPlatform));
 
     // Verify that the implemented BuildRule methods are effectively unused.
     assertEquals(ImmutableList.<Step>of(), cxxLibrary.getBuildSteps(null, null));
-    assertNull(cxxLibrary.getPathToOutputFile());
-    assertTrue(ImmutableList.copyOf(cxxLibrary.getInputs()).isEmpty());
+    assertNull(cxxLibrary.getPathToOutput());
   }
+
+  @Test
+  public void staticLinkage() {
+    BuildRuleResolver ruleResolver = new BuildRuleResolver();
+    SourcePathResolver pathResolver = new SourcePathResolver(ruleResolver);
+    BuildTarget target = BuildTargetFactory.newInstance("//foo:bar");
+    BuildRuleParams params = BuildRuleParamsFactory.createTrivialBuildRuleParams(target);
+    CxxPlatform cxxPlatform = DefaultCxxPlatforms.build(new CxxBuckConfig(new FakeBuckConfig()));
+
+    BuildTarget staticPicLibraryTarget =
+        BuildTarget.builder(params.getBuildTarget())
+            .addFlavors(
+                cxxPlatform.getFlavor(),
+                CxxDescriptionEnhancer.STATIC_PIC_FLAVOR)
+            .build();
+    ruleResolver.addToIndex(
+        new FakeBuildRule(
+            BuildRuleParamsFactory.createTrivialBuildRuleParams(staticPicLibraryTarget),
+            pathResolver));
+
+    // Construct a CxxLibrary object to test.
+    CxxLibrary cxxLibrary = new CxxLibrary(
+        params,
+        ruleResolver,
+        pathResolver,
+        /* headerOnly */ Predicates.<CxxPlatform>alwaysFalse(),
+        Functions.constant(ImmutableMultimap.<CxxSource.Type, String>of()),
+        Functions.constant(ImmutableList.<String>of()),
+        /* supportedPlatformsRegex */ Optional.<Pattern>absent(),
+        Functions.constant(ImmutableSet.<Path>of()),
+        CxxLibrary.Linkage.STATIC,
+        /* linkWhole */ false,
+        Optional.<String>absent(),
+        ImmutableSortedSet.<BuildTarget>of());
+
+    assertThat(
+        cxxLibrary.getSharedLibraries(cxxPlatform).entrySet(),
+        Matchers.empty());
+    assertThat(
+        cxxLibrary.getPythonPackageComponents(cxxPlatform).getNativeLibraries().entrySet(),
+        Matchers.empty());
+
+    // Verify that
+    NativeLinkableInput expectedSharedNativeLinkableInput =
+        NativeLinkableInput.of(
+            ImmutableList.<SourcePath>of(
+                new BuildTargetSourcePath(staticPicLibraryTarget)),
+            ImmutableList.of(
+                CxxDescriptionEnhancer.getStaticLibraryPath(
+                    target,
+                    cxxPlatform.getFlavor(),
+                    CxxSourceRuleFactory.PicType.PIC).toString()),
+            ImmutableSet.<Path>of());
+    assertEquals(
+        expectedSharedNativeLinkableInput,
+        cxxLibrary.getNativeLinkableInput(
+            cxxPlatform,
+            Linker.LinkableDepType.SHARED));
+  }
+
 }

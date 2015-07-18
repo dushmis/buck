@@ -28,9 +28,9 @@ import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.FakeBuildableContext;
 import com.facebook.buck.rules.FakeOnDiskBuildInfo;
-import com.facebook.buck.rules.ImmutableSha1HashCode;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.TestExecutionContext;
 import com.facebook.buck.testutil.MoreAsserts;
@@ -65,7 +65,7 @@ public class DummyRDotJavaTest {
             .setResolver(pathResolver)
             .setBuildTarget(BuildTargetFactory.newInstance("//android_res/com/example:res1"))
             .setRDotJavaPackage("com.facebook")
-            .setRes(Paths.get("android_res/com/example/res1"))
+            .setRes(new TestSourcePath("android_res/com/example/res1"))
             .build());
     setAndroidResourceBuildOutput(resourceRule1, RESOURCE_RULE1_KEY);
     BuildRule resourceRule2 = ruleResolver.addToIndex(
@@ -73,7 +73,7 @@ public class DummyRDotJavaTest {
             .setResolver(pathResolver)
             .setBuildTarget(BuildTargetFactory.newInstance("//android_res/com/example:res2"))
             .setRDotJavaPackage("com.facebook")
-            .setRes(Paths.get("android_res/com/example/res2"))
+            .setRes(new TestSourcePath("android_res/com/example/res2"))
             .build());
     setAndroidResourceBuildOutput(resourceRule2, RESOURCE_RULE2_KEY);
 
@@ -90,9 +90,10 @@ public class DummyRDotJavaTest {
         buildableContext);
     assertEquals("DummyRDotJava returns an incorrect number of Steps.", 6, steps.size());
 
-    String rDotJavaSrcFolder = "buck-out/bin/java/base/__rule_rdotjava_src__";
-    String rDotJavaBinFolder = "buck-out/bin/java/base/__rule_rdotjava_bin__";
-    String rDotJavaAbiFolder = "buck-out/gen/java/base/__rule_dummyrdotjava_abi__";
+    String rDotJavaSrcFolder = Paths.get("buck-out/bin/java/base/__rule_rdotjava_src__").toString();
+    String rDotJavaBinFolder = Paths.get("buck-out/bin/java/base/__rule_rdotjava_bin__").toString();
+    String rDotJavaAbiFolder = Paths.get(
+        "buck-out/gen/java/base/__rule_dummyrdotjava_abi__").toString();
 
     List<String> expectedStepDescriptions = Lists.newArrayList(
         makeCleanDirDescription(rDotJavaSrcFolder),
@@ -102,8 +103,8 @@ public class DummyRDotJavaTest {
                 (AndroidResource) resourceRule2)),
         makeCleanDirDescription(rDotJavaBinFolder),
         makeCleanDirDescription(rDotJavaAbiFolder),
-        javacInMemoryDescription(rDotJavaBinFolder),
-        "calculate_abi buck-out/bin/java/base/__rule_rdotjava_bin__");
+        javacInMemoryDescription(rDotJavaBinFolder, pathResolver),
+        String.format("calculate_abi %s", rDotJavaBinFolder));
 
     MoreAsserts.assertSteps(
         "DummyRDotJava.getBuildSteps() must return these exact steps.",
@@ -112,7 +113,7 @@ public class DummyRDotJavaTest {
         TestExecutionContext.newInstance());
 
     assertEquals(ImmutableSet.of(Paths.get(rDotJavaBinFolder)),
-        buildableContext.getRecordedArtifactDirectories());
+        buildableContext.getRecordedArtifacts());
 
     Sha1HashCode expectedSha1 = AndroidResource.ABI_HASHER.apply(
         ImmutableList.of(
@@ -154,14 +155,17 @@ public class DummyRDotJavaTest {
     return String.format("rm -r -f %s && mkdir -p %s", dirname, dirname);
   }
 
-  private static String javacInMemoryDescription(String rDotJavaClassesFolder) {
+  private static String javacInMemoryDescription(
+      String rDotJavaClassesFolder,
+      SourcePathResolver resolver) {
     Set<Path> javaSourceFiles = ImmutableSet.of(
         Paths.get("buck-out/bin/java/base/__rule_rdotjava_src__/com/facebook/R.java"));
     return RDotJava.createJavacStepForDummyRDotJavaFiles(
         javaSourceFiles,
         Paths.get(rDotJavaClassesFolder),
         ANDROID_JAVAC_OPTIONS,
-        /* buildTarget */ null)
+        /* buildTarget */ null,
+        resolver)
         .getDescription(TestExecutionContext.newInstance());
   }
 
@@ -176,7 +180,7 @@ public class DummyRDotJavaTest {
     if (resourceRule instanceof AndroidResource) {
       ((AndroidResource) resourceRule)
           .getBuildOutputInitializer()
-          .setBuildOutput(new BuildOutput(ImmutableSha1HashCode.of(sha1HashCode)));
+          .setBuildOutput(new BuildOutput(Sha1HashCode.of(sha1HashCode)));
     }
   }
 }

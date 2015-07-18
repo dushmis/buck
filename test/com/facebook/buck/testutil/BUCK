@@ -20,10 +20,10 @@ java_library(
     '//src/com/facebook/buck/util:util',
     '//test/com/facebook/buck/timing:testutil',
     '//third-party/java/guava:guava',
-    '//third-party/java/hamcrest:hamcrest-core',
-    '//third-party/java/hamcrest:hamcrest-library',
+    '//third-party/java/hamcrest:hamcrest',
     '//third-party/java/jsr:jsr305',
     '//third-party/java/junit:junit',
+    '//third-party/java/okio:okio',
   ],
   visibility = [
     '//test/...',
@@ -47,8 +47,7 @@ java_test(
     '//test/com/facebook/buck/testutil/integration:integration',
     '//test/com/facebook/buck/timing:testutil',
     '//third-party/java/guava:guava',
-    '//third-party/java/hamcrest:hamcrest-core',
-    '//third-party/java/hamcrest:hamcrest-library',
+    '//third-party/java/hamcrest:hamcrest',
     '//third-party/java/junit:junit',
   ],
 )

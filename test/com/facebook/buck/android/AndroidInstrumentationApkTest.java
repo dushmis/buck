@@ -31,23 +31,24 @@ import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TestSourcePath;
 import com.google.common.base.Optional;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.ImmutableSortedSet;
-import com.google.common.collect.Maps;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import org.junit.Test;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Map;
 
 public class AndroidInstrumentationApkTest {
 
   @Test
   public void testAndroidInstrumentationApkExcludesClassesFromInstrumentedApk() {
-    SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
+    BuildRuleResolver ruleResolver = new BuildRuleResolver();
+    SourcePathResolver pathResolver = new SourcePathResolver(ruleResolver);
     final FakeJavaLibrary javaLibrary1 = new FakeJavaLibrary(
         BuildTarget.builder("//java/com/example", "lib1").build(), pathResolver);
 
@@ -59,8 +60,8 @@ public class AndroidInstrumentationApkTest {
       public ImmutableSetMultimap<JavaLibrary, Path> getTransitiveClasspathEntries() {
         ImmutableSetMultimap.Builder<JavaLibrary, Path> builder =
             ImmutableSetMultimap.builder();
-        builder.put(javaLibrary1, javaLibrary1.getPathToOutputFile());
-        builder.put(this, this.getPathToOutputFile());
+        builder.put(javaLibrary1, javaLibrary1.getPathToOutput());
+        builder.put(this, this.getPathToOutput());
         return builder.build();
       }
     };
@@ -76,18 +77,16 @@ public class AndroidInstrumentationApkTest {
       public ImmutableSetMultimap<JavaLibrary, Path> getTransitiveClasspathEntries() {
         ImmutableSetMultimap.Builder<JavaLibrary, Path> builder =
             ImmutableSetMultimap.builder();
-        builder.put(javaLibrary3, javaLibrary3.getPathToOutputFile());
-        builder.put(this, this.getPathToOutputFile());
+        builder.put(javaLibrary3, javaLibrary3.getPathToOutput());
+        builder.put(this, this.getPathToOutput());
         return builder.build();
       }
     };
 
-    Map<BuildTarget, BuildRule> buildRuleIndex = Maps.newHashMap();
-    buildRuleIndex.put(javaLibrary1.getBuildTarget(), javaLibrary1);
-    buildRuleIndex.put(javaLibrary2.getBuildTarget(), javaLibrary2);
-    buildRuleIndex.put(javaLibrary3.getBuildTarget(), javaLibrary3);
-    buildRuleIndex.put(javaLibrary4.getBuildTarget(), javaLibrary4);
-    BuildRuleResolver ruleResolver = new BuildRuleResolver(buildRuleIndex);
+    ruleResolver.addToIndex(javaLibrary1);
+    ruleResolver.addToIndex(javaLibrary2);
+    ruleResolver.addToIndex(javaLibrary3);
+    ruleResolver.addToIndex(javaLibrary4);
 
     BuildRule keystore = KeystoreBuilder.createBuilder(
         BuildTarget.builder("//keystores", "debug").build())
@@ -103,7 +102,6 @@ public class AndroidInstrumentationApkTest {
         javaLibrary3.getBuildTarget());
     androidBinaryBuilder
         .setManifest(new TestSourcePath("apps/AndroidManifest.xml"))
-        .setTarget("Google Inc.:Google APIs:18")
         .setKeystore(keystore.getBuildTarget())
         .setOriginalDeps(originalDepsTargets);
     AndroidBinary androidBinary = (AndroidBinary) androidBinaryBuilder.build(ruleResolver);
@@ -126,7 +124,8 @@ public class AndroidInstrumentationApkTest {
         new AndroidInstrumentationApkDescription(
             new ProGuardConfig(new FakeBuckConfig()),
             DEFAULT_JAVAC_OPTIONS,
-            ImmutableMap.<AndroidBinary.TargetCpuType, NdkCxxPlatform>of())
+            ImmutableMap.<NdkCxxPlatforms.TargetCpuType, NdkCxxPlatform>of(),
+            MoreExecutors.newDirectExecutorService())
                 .createBuildRule(params, ruleResolver, arg);
 
     assertEquals(
@@ -135,10 +134,19 @@ public class AndroidInstrumentationApkTest {
             Paths.get("buck-out/gen/java/com/example/lib1.jar"),
             Paths.get("buck-out/gen/java/com/example/lib2.jar"),
             Paths.get("buck-out/gen/java/com/example/lib3.jar")),
-        androidBinary.getAndroidPackageableCollection().getClasspathEntriesToDex());
+        FluentIterable
+            .from(androidBinary.getAndroidPackageableCollection().getClasspathEntriesToDex())
+            .transform(pathResolver.getPathFunction())
+            .toSet());
     assertEquals(
         "//apps:instrumentation should have one JAR file to dex.",
         ImmutableSet.of(Paths.get("buck-out/gen/java/com/example/lib4.jar")),
-        androidInstrumentationApk.getAndroidPackageableCollection().getClasspathEntriesToDex());
+        FluentIterable
+            .from(
+                androidInstrumentationApk
+                    .getAndroidPackageableCollection()
+                    .getClasspathEntriesToDex())
+            .transform(pathResolver.getPathFunction())
+            .toSet());
   }
 }

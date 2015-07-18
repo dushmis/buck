@@ -29,6 +29,7 @@ import com.facebook.buck.timing.DefaultClock;
 import com.google.common.base.Optional;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 
 import org.junit.Test;
 
@@ -40,7 +41,6 @@ import java.util.Collection;
 
 public class BuildInfoRecorderIntegrationTest {
   private static final String RULE_KEY = Strings.repeat("a", 40);
-  private static final String RULE_KEY_WITHOUT_DEPS = Strings.repeat("b", 40);
 
   private static final BuildTarget BUILD_TARGET = BuildTargetFactory.newInstance("//foo:bar");
 
@@ -60,10 +60,13 @@ public class BuildInfoRecorderIntegrationTest {
     DebuggableTemporaryFolder cacheDir = new DebuggableTemporaryFolder();
     cacheDir.create();
     ArtifactCache artifactCache = new DirArtifactCache(
-        cacheDir.getRoot(),
+        "dir",
+        new ProjectFilesystem(cacheDir.getRootPath()),
+        Paths.get("."),
         true,
         Optional.<Long>absent());
     buildInfoRecorder.performUploadToArtifactCache(
+        ImmutableSet.of(new RuleKey(RULE_KEY)),
         artifactCache,
         new BuckEventBus(new DefaultClock(), new BuildId()));
     assertTrue(cacheDir.getRootPath().resolve(Paths.get(RULE_KEY)).toFile().exists());
@@ -75,8 +78,6 @@ public class BuildInfoRecorderIntegrationTest {
         filesystem,
         new DefaultClock(),
         new BuildId(),
-        ImmutableMap.<String, String>of(),
-        new RuleKey(RULE_KEY),
-        new RuleKey(RULE_KEY_WITHOUT_DEPS));
+        ImmutableMap.<String, String>of());
   }
 }

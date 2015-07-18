@@ -17,24 +17,33 @@
 package com.facebook.buck.json;
 
 import com.facebook.buck.event.BuckEventBus;
-import com.facebook.buck.io.ProjectFilesystem;
-import com.facebook.buck.parser.ParserConfig;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.util.Console;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
+import java.nio.file.Path;
+
 public class DefaultProjectBuildFileParserFactory implements ProjectBuildFileParserFactory {
-  private final ProjectFilesystem projectFilesystem;
-  private final ParserConfig parserConfig;
+  private final Path projectRoot;
+  private final String pythonInterpreter;
+  private final boolean allowEmptyGlobs;
+  private final String buildFileName;
+  private final Iterable<String> defaultIncludes;
   private final ImmutableSet<Description<?>> descriptions;
 
   public DefaultProjectBuildFileParserFactory(
-      ProjectFilesystem projectFilesystem,
-      ParserConfig parserConfig,
+      Path projectRoot,
+      String pythonInterpreter,
+      boolean allowEmptyGlobs,
+      String buildFileName,
+      Iterable<String> defaultIncludes,
       ImmutableSet<Description<?>> descriptions) {
-    this.projectFilesystem = projectFilesystem;
-    this.parserConfig = parserConfig;
+    this.projectRoot = projectRoot;
+    this.pythonInterpreter = pythonInterpreter;
+    this.allowEmptyGlobs = allowEmptyGlobs;
+    this.buildFileName = buildFileName;
+    this.defaultIncludes = defaultIncludes;
     this.descriptions = descriptions;
   }
 
@@ -44,8 +53,11 @@ public class DefaultProjectBuildFileParserFactory implements ProjectBuildFilePar
       ImmutableMap<String, String> environment,
       BuckEventBus buckEventBus) {
     return new ProjectBuildFileParser(
-        projectFilesystem,
-        parserConfig,
+        projectRoot,
+        pythonInterpreter,
+        allowEmptyGlobs,
+        buildFileName,
+        defaultIncludes,
         descriptions,
         console,
         environment,

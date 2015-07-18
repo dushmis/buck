@@ -17,8 +17,8 @@
 package com.facebook.buck.rules.macros;
 
 import com.facebook.buck.io.ProjectFilesystem;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.rules.BuildRule;
+import com.facebook.buck.rules.SourcePathResolver;
 
 import java.nio.file.Path;
 
@@ -27,13 +27,10 @@ import java.nio.file.Path;
  */
 public class LocationMacroExpander extends BuildTargetMacroExpander {
 
-  public LocationMacroExpander(BuildTargetParser parser) {
-    super(parser);
-  }
-
   @Override
-  public String expand(ProjectFilesystem filesystem, BuildRule rule) throws MacroException {
-    Path output = rule.getPathToOutputFile();
+  public String expand(SourcePathResolver resolver, ProjectFilesystem filesystem, BuildRule rule)
+      throws MacroException {
+    Path output = rule.getPathToOutput();
     if (output == null) {
       throw new MacroException(
           String.format(

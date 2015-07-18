@@ -18,14 +18,19 @@ package com.facebook.buck.util;
 
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.util.environment.Platform;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Charsets;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStreamWriter;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.Set;
 
@@ -37,7 +42,7 @@ public class ProcessExecutor {
   private static final Logger LOG = Logger.get(ProcessExecutor.class);
 
   /**
-   * Options for {@link ProcessExecutor#execute(Process, Set, Optional, Optional)}.
+   * Options for {@link ProcessExecutor#execute(Process, Set, Optional, Optional, Optional)}.
    */
   public static enum Option {
     PRINT_STD_OUT,
@@ -57,6 +62,42 @@ public class ProcessExecutor {
     IS_SILENT,
   }
 
+  /**
+   * Represents a running process returned by {@link #launchProcess(ProcessExecutorParams)}.
+   */
+  public interface LaunchedProcess {
+    OutputStream getOutputStream();
+    InputStream getInputStream();
+    InputStream getErrorStream();
+  }
+
+  /**
+   * Wraps a {@link Process} and exposes only its I/O streams, so callers have to pass it back
+   * to this class.
+   */
+  private static class LaunchedProcessImpl implements LaunchedProcess {
+    public final Process process;
+
+    public LaunchedProcessImpl(Process process) {
+      this.process = process;
+    }
+
+    @Override
+    public OutputStream getOutputStream() {
+      return process.getOutputStream();
+    }
+
+    @Override
+    public InputStream getInputStream() {
+      return process.getInputStream();
+    }
+
+    @Override
+    public InputStream getErrorStream() {
+      return process.getErrorStream();
+    }
+  }
+
   private final PrintStream stdOutStream;
   private final PrintStream stdErrStream;
   private final Ansi ansi;
@@ -72,8 +113,9 @@ public class ProcessExecutor {
   }
 
   /**
-   * Convenience method for {@link #launchAndExecute(ProcessExecutorParams, Set, Optional, Optional)}
-   * with boolean values set to {@code false} and optional values set to absent.
+   * Convenience method for
+   * {@link #launchAndExecute(ProcessExecutorParams, Set, Optional, Optional, Optional)} with
+   * boolean values set to {@code false} and optional values set to absent.
    */
   public Result launchAndExecute(ProcessExecutorParams params)
       throws InterruptedException, IOException {
@@ -81,7 +123,8 @@ public class ProcessExecutor {
         params,
         ImmutableSet.<Option>of(),
         /* stdin */ Optional.<String>absent(),
-        /* timeOutMs */ Optional.<Long>absent());
+        /* timeOutMs */ Optional.<Long>absent(),
+        /* timeOutHandler */ Optional.<Function<Process, Void>>absent());
   }
 
   /**
@@ -99,15 +142,22 @@ public class ProcessExecutor {
       ProcessExecutorParams params,
       Set<Option> options,
       Optional<String> stdin,
-      Optional<Long> timeOutMs) throws InterruptedException, IOException {
-    return execute(launchProcess(params), options, stdin, timeOutMs);
+      Optional<Long> timeOutMs,
+      Optional<Function<Process, Void>> timeOutHandler)
+      throws InterruptedException, IOException {
+    return execute(launchProcessInternal(params), options, stdin, timeOutMs, timeOutHandler);
   }
 
   /**
    * Launches a {@link java.lang.Process} given {@link ProcessExecutorParams}.
    */
-  Process launchProcess(ProcessExecutorParams params) throws IOException {
+  public LaunchedProcess launchProcess(ProcessExecutorParams params) throws IOException {
+    Process process = launchProcessInternal(params);
+    return new LaunchedProcessImpl(process);
+  }
 
+  @VisibleForTesting
+  Process launchProcessInternal(ProcessExecutorParams params) throws IOException {
     ImmutableList<String> command = params.getCommand();
     /* On Windows, we need to escape the arguments we hand off to `CreateProcess`.  See
      * http://blogs.msdn.com/b/twistylittlepassagesallalike/archive/2011/04/23/everyone-quotes-arguments-the-wrong-way.aspx
@@ -137,7 +187,28 @@ public class ProcessExecutor {
   }
 
   /**
-   * Convenience method for {@link #execute(Process, Set, Optional, Optional)}
+   * Terminates a process previously returned by {@link #launchProcess(ProcessExecutorParams)}.
+   */
+  public void destroyLaunchedProcess(LaunchedProcess launchedProcess) {
+    Preconditions.checkState(launchedProcess instanceof LaunchedProcessImpl);
+    ((LaunchedProcessImpl) launchedProcess).process.destroy();
+  }
+
+  /**
+   * Blocks while waiting for a process previously returned by
+   * {@link #launchProcess(ProcessExecutorParams)} to exit, then returns the
+   * exit code of the process.
+   *
+   * After this method returns, the {@code launchedProcess} can no longer be passed
+   * to any methods of this object.
+   */
+  public int waitForLaunchedProcess(LaunchedProcess launchedProcess) throws InterruptedException {
+    Preconditions.checkState(launchedProcess instanceof LaunchedProcessImpl);
+    return ((LaunchedProcessImpl) launchedProcess).process.waitFor();
+  }
+
+  /**
+   * Convenience method for {@link #execute(Process, Set, Optional, Optional, Optional)}
    * with boolean values set to {@code false} and optional values set to absent.
    */
   public Result execute(Process process) throws InterruptedException {
@@ -145,7 +216,8 @@ public class ProcessExecutor {
         process,
         ImmutableSet.<Option>of(),
         /* stdin */ Optional.<String>absent(),
-        /* timeOutMs */ Optional.<Long>absent());
+        /* timeOutMs */ Optional.<Long>absent(),
+        /* timeOutHandler */ Optional.<Function<Process, Void>>absent());
   }
 
   /**
@@ -163,7 +235,10 @@ public class ProcessExecutor {
   /**
    * Waits up to {@code millis} milliseconds for the given process to finish.
    */
-  private void waitForTimeout(final Process process, long millis) throws InterruptedException {
+  private void waitForTimeout(
+      final Process process,
+      long millis,
+      final Optional<Function<Process, Void>> timeOutHandler) throws InterruptedException {
     Thread waiter =
         new Thread(
             new Runnable() {
@@ -171,7 +246,15 @@ public class ProcessExecutor {
               public void run() {
                 try {
                   process.waitFor();
-                } catch (InterruptedException e) {}
+                } catch (InterruptedException e) {
+                  if (timeOutHandler.isPresent()) {
+                    try {
+                      timeOutHandler.get().apply(process);
+                    } catch (RuntimeException e2) {
+                      LOG.error(e2, "timeOutHandler threw an Exception!");
+                    }
+                  }
+                }
               }
             });
     waiter.start();
@@ -190,12 +273,14 @@ public class ProcessExecutor {
    * If {@code options} contains {@link Option#PRINT_STD_ERR}, then the stderr of the process will
    * be written directly to the stderr passed to the constructor of this executor. Otherwise,
    * the stderr of the process will be made available via {@link Result#getStderr()}.
+   * @param timeOutHandler If present, this method will be called before the process is killed.
    */
   public Result execute(
       Process process,
       Set<Option> options,
       Optional<String> stdin,
-      Optional<Long> timeOutMs) throws InterruptedException {
+      Optional<Long> timeOutMs,
+      Optional<Function<Process, Void>> timeOutHandler) throws InterruptedException {
 
     // Read stdout/stderr asynchronously while running a Process.
     // See http://stackoverflow.com/questions/882772/capturing-stdout-when-calling-runtime-exec
@@ -244,7 +329,7 @@ public class ProcessExecutor {
       // for it to finish then force kill it.  If no timeout was given, just wait for it using
       // the regular `waitFor` method.
       if (timeOutMs.isPresent()) {
-        waitForTimeout(process, timeOutMs.get());
+        waitForTimeout(process, timeOutMs.get(), timeOutHandler);
         if (!finished(process)) {
           timedOut = true;
           process.destroy();
@@ -302,7 +387,7 @@ public class ProcessExecutor {
 
   /**
    * Values from the result of
-   * {@link ProcessExecutor#execute(Process, Set, Optional, Optional)}.
+   * {@link ProcessExecutor#execute(Process, Set, Optional, Optional, Optional)}.
    */
   public static class Result {
 

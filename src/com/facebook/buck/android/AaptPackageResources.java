@@ -18,7 +18,6 @@ package com.facebook.buck.android;
 
 import com.facebook.buck.android.AaptPackageResources.BuildOutput;
 import com.facebook.buck.android.AndroidBinary.PackageType;
-import com.facebook.buck.android.AndroidBinary.TargetCpuType;
 import com.facebook.buck.dalvik.EstimateLinearAllocStep;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.AccumulateClassNamesStep;
@@ -28,6 +27,7 @@ import com.facebook.buck.java.JavacStep;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildOutputInitializer;
 import com.facebook.buck.rules.BuildRuleParams;
@@ -35,7 +35,6 @@ import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.InitializableFromDisk;
 import com.facebook.buck.rules.OnDiskBuildInfo;
 import com.facebook.buck.rules.RecordFileSha1Step;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -46,15 +45,17 @@ import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.facebook.buck.step.fs.MkdirAndSymlinkFileStep;
 import com.facebook.buck.step.fs.MkdirStep;
 import com.facebook.buck.util.HumanReadableException;
+import com.facebook.buck.zip.ZipScrubberStep;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Functions;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableCollection;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedMap;
-import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Ordering;
 import com.google.common.hash.HashCode;
 import com.google.common.hash.Hashing;
 
@@ -77,6 +78,7 @@ public class AaptPackageResources extends AbstractBuildRule
 
   public static final String RESOURCE_PACKAGE_HASH_KEY = "resource_package_hash";
   public static final String R_DOT_JAVA_LINEAR_ALLOC_SIZE = "r_dot_java_linear_alloc_size";
+  public static final String FILTERED_RESOURCE_DIRS_KEY = "filtered_resource_dirs";
 
   /** Options to use with {@link com.facebook.buck.android.DxStep} when dexing R.java. */
   public static final EnumSet<DxStep.Option> DX_OPTIONS = EnumSet.of(
@@ -84,16 +86,20 @@ public class AaptPackageResources extends AbstractBuildRule
       DxStep.Option.RUN_IN_PROCESS,
       DxStep.Option.NO_OPTIMIZE);
 
+  @AddToRuleKey
   private final SourcePath manifest;
   private final FilteredResourcesProvider filteredResourcesProvider;
-  private final ImmutableSet<Path> assetsDirectories;
+  private final ImmutableSet<SourcePath> assetsDirectories;
+  @AddToRuleKey
   private final PackageType packageType;
-  private final ImmutableSet<TargetCpuType> cpuFilters;
   private final ImmutableList<HasAndroidResourceDeps> resourceDeps;
   private final JavacOptions javacOptions;
+  @AddToRuleKey
   private final boolean rDotJavaNeedsDexing;
+  @AddToRuleKey
   private final boolean shouldBuildStringSourceMap;
   private final boolean shouldWarnIfMissingResource;
+  @AddToRuleKey
   private final boolean skipCrunchPngs;
   private final BuildOutputInitializer<BuildOutput> buildOutputInitializer;
 
@@ -103,9 +109,8 @@ public class AaptPackageResources extends AbstractBuildRule
       SourcePath manifest,
       FilteredResourcesProvider filteredResourcesProvider,
       ImmutableList<HasAndroidResourceDeps> resourceDeps,
-      ImmutableSet<Path> assetsDirectories,
+      ImmutableSet<SourcePath> assetsDirectories,
       PackageType packageType,
-      ImmutableSet<TargetCpuType> cpuFilters,
       JavacOptions javacOptions,
       boolean rDotJavaNeedsDexing,
       boolean shouldBuildStringSourceMap,
@@ -117,7 +122,6 @@ public class AaptPackageResources extends AbstractBuildRule
     this.resourceDeps = resourceDeps;
     this.assetsDirectories = assetsDirectories;
     this.packageType = packageType;
-    this.cpuFilters = cpuFilters;
     this.javacOptions = javacOptions;
     this.rDotJavaNeedsDexing = rDotJavaNeedsDexing;
     this.shouldBuildStringSourceMap = shouldBuildStringSourceMap;
@@ -127,22 +131,7 @@ public class AaptPackageResources extends AbstractBuildRule
   }
 
   @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return getResolver().filterInputsToCompareToOutput(Collections.singleton(manifest));
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder
-        .setReflectively("packageType", packageType.toString())
-        .setReflectively("cpuFilters", ImmutableSortedSet.copyOf(cpuFilters).toString())
-        .setReflectively("rDotJavaNeedsDexing", rDotJavaNeedsDexing)
-        .setReflectively("shouldBuildStringSourceMap", shouldBuildStringSourceMap)
-        .setReflectively("skipCrunchPngs", skipCrunchPngs);
-  }
-
-  @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return getResourceApkPath();
   }
 
@@ -224,7 +213,7 @@ public class AaptPackageResources extends AbstractBuildRule
         ImmutableList.Builder<Step> commands = ImmutableList.builder();
         try {
           createAllAssetsDirectory(
-              assetsDirectories,
+              ImmutableSet.copyOf(getResolver().getAllPaths(assetsDirectories)),
               commands,
               context.getProjectFilesystem());
         } catch (IOException e) {
@@ -271,7 +260,7 @@ public class AaptPackageResources extends AbstractBuildRule
       Path proguardConfigDir = getPathToGeneratedProguardConfigDir();
       steps.add(new MakeCleanDirectoryStep(proguardConfigDir));
       pathToGeneratedProguardConfig = Optional.of(proguardConfigDir.resolve("proguard.txt"));
-      buildableContext.recordArtifactsInDirectory(proguardConfigDir);
+      buildableContext.recordArtifact(proguardConfigDir);
     }
 
     steps.add(
@@ -303,6 +292,10 @@ public class AaptPackageResources extends AbstractBuildRule
                 Collections.singleton(getPathToCompiledRDotJavaFiles()),
                 DX_OPTIONS));
 
+        // The `DxStep` delegates to android tools to build a ZIP with timestamps in it, making
+        // the output non-deterministic.  So use an additional scrubbing step to zero these out.
+        steps.add(new ZipScrubberStep(getPathToRDotJavaDex()));
+
         final EstimateLinearAllocStep estimateLinearAllocStep = new EstimateLinearAllocStep(
             getPathToCompiledRDotJavaFiles());
         steps.add(estimateLinearAllocStep);
@@ -321,6 +314,14 @@ public class AaptPackageResources extends AbstractBuildRule
       }
     }
 
+    // Record the filtered resources dirs, since when we initialize ourselves from disk, we'll
+    // need to test whether this is empty or not without requiring the `ResourcesFilter` rule to
+    // be available.
+    buildableContext.addMetadata(
+        FILTERED_RESOURCE_DIRS_KEY,
+        FluentIterable.from(filteredResourcesProvider.getResDirectories())
+            .transform(Functions.toStringFunction())
+            .toSortedList(Ordering.natural()));
 
     buildableContext.recordArtifact(getAndroidManifestXml());
     buildableContext.recordArtifact(getResourceApkPath());
@@ -362,7 +363,7 @@ public class AaptPackageResources extends AbstractBuildRule
       steps.add(genNativeStringInfo);
 
       // Cache the generated strings.json file, it will be stored inside outputDirPath
-      buildableContext.recordArtifactsInDirectory(outputDirPath);
+      buildableContext.recordArtifact(outputDirPath);
     }
 
     // Create the path where the R.java files will be compiled.
@@ -373,7 +374,8 @@ public class AaptPackageResources extends AbstractBuildRule
         ImmutableSet.copyOf(mergeStep.getRDotJavaFiles()),
         rDotJavaBin,
         javacOptions,
-        getBuildTarget());
+        getBuildTarget(),
+        getResolver());
     steps.add(javacStep);
 
     Path rDotJavaClassesTxt = getPathToRDotJavaClassesTxt();
@@ -381,9 +383,9 @@ public class AaptPackageResources extends AbstractBuildRule
     steps.add(new AccumulateClassNamesStep(Optional.of(rDotJavaBin), rDotJavaClassesTxt));
 
     // Ensure the generated R.txt, R.java, and R.class files are also recorded.
-    buildableContext.recordArtifactsInDirectory(rDotTxtDir);
-    buildableContext.recordArtifactsInDirectory(rDotJavaSrc);
-    buildableContext.recordArtifactsInDirectory(rDotJavaBin);
+    buildableContext.recordArtifact(rDotTxtDir);
+    buildableContext.recordArtifact(rDotJavaSrc);
+    buildableContext.recordArtifact(rDotJavaBin);
     buildableContext.recordArtifact(rDotJavaClassesTxt);
   }
 
@@ -480,21 +482,24 @@ public class AaptPackageResources extends AbstractBuildRule
   }
 
   @Override
-  public BuildOutput initializeFromDisk(OnDiskBuildInfo onDiskBuildInfo) {
+  public BuildOutput initializeFromDisk(OnDiskBuildInfo onDiskBuildInfo) throws IOException {
     Optional<Sha1HashCode> resourcePackageHash = onDiskBuildInfo.getHash(RESOURCE_PACKAGE_HASH_KEY);
     Preconditions.checkState(
         resourcePackageHash.isPresent(),
         "Should not be initializing %s from disk if the resource hash is not written.",
         getBuildTarget());
 
+    Optional<ImmutableList<String>> filteredResourceDirs =
+        onDiskBuildInfo.getValues(FILTERED_RESOURCE_DIRS_KEY);
+    Preconditions.checkState(
+        filteredResourceDirs.isPresent(),
+        "Should not be initializing %s from disk if the filtered resources dirs are not written.",
+        getBuildTarget());
+
     ImmutableSortedMap<String, HashCode> classesHash = ImmutableSortedMap.of();
-    if (!filteredResourcesProvider.getResDirectories().isEmpty()) {
-      List<String> lines;
-      try {
-        lines = onDiskBuildInfo.getOutputFileContentsByLine(getPathToRDotJavaClassesTxt());
-      } catch (IOException e) {
-        throw new RuntimeException(e);
-      }
+    if (!filteredResourceDirs.get().isEmpty()) {
+      List<String> lines =
+          onDiskBuildInfo.getOutputFileContentsByLine(getPathToRDotJavaClassesTxt());
       classesHash = AccumulateClassNamesStep.parseClassHashes(lines);
     }
 

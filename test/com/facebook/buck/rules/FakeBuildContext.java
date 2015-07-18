@@ -17,7 +17,6 @@
 package com.facebook.buck.rules;
 
 import com.facebook.buck.event.BuckEventBusFactory;
-import com.facebook.buck.graph.MutableDirectedGraph;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.FakeJavaPackageFinder;
 import com.facebook.buck.model.BuildId;
@@ -26,7 +25,7 @@ import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.TestExecutionContext;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.timing.DefaultClock;
-import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.collect.ImmutableList;
 
 /**
  * Facilitates creating a fake {@link BuildContext} for unit tests.
@@ -38,7 +37,7 @@ public class FakeBuildContext {
 
   /** A BuildContext which doesn't touch the host filesystem or actually execute steps. */
   public static final BuildContext NOOP_CONTEXT = newBuilder(new FakeProjectFilesystem())
-      .setActionGraph(new ActionGraph(new MutableDirectedGraph<BuildRule>()))
+      .setActionGraph(new ActionGraph(ImmutableList.<BuildRule>of()))
       .setJavaPackageFinder(new FakeJavaPackageFinder())
       .setArtifactCache(new NoopArtifactCache())
       .build();
@@ -58,8 +57,7 @@ public class FakeBuildContext {
         .build();
 
     return ImmutableBuildContext.builder()
-        .setStepRunner(
-            new DefaultStepRunner(executionContext, MoreExecutors.newDirectExecutorService()))
+        .setStepRunner(new DefaultStepRunner(executionContext))
         .setProjectFilesystem(projectFilesystem)
         .setClock(new DefaultClock())
         .setBuildId(new BuildId())

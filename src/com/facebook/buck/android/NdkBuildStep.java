@@ -16,20 +16,22 @@
 
 package com.facebook.buck.android;
 
+import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.shell.ShellStep;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.Verbosity;
+import com.facebook.buck.util.concurrent.ConcurrencyLimit;
 import com.facebook.buck.util.environment.Platform;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 
 public class NdkBuildStep extends ShellStep {
 
@@ -38,7 +40,6 @@ public class NdkBuildStep extends ShellStep {
   private final Path buildArtifactsDirectory;
   private final Path binDirectory;
   private final ImmutableList<String> flags;
-  private final int maxJobCount;
   private final Function<String, String> macroExpander;
 
   public NdkBuildStep(
@@ -53,7 +54,6 @@ public class NdkBuildStep extends ShellStep {
     this.buildArtifactsDirectory = buildArtifactsDirectory;
     this.binDirectory = binDirectory;
     this.flags = ImmutableList.copyOf(flags);
-    this.maxJobCount = Runtime.getRuntime().availableProcessors();
     this.macroExpander = macroExpander;
   }
 
@@ -75,31 +75,48 @@ public class NdkBuildStep extends ShellStep {
           " with a property named 'ndk.dir' that points to the absolute path of" +
           " your Android NDK directory, or set ANDROID_NDK.");
     }
-    Optional<Path> ndkBuild = context.resolveExecutable(ndkRoot.get(), "ndk-build");
+    Optional<Path> ndkBuild = new ExecutableFinder().getOptionalExecutable(
+        Paths.get("ndk-build"),
+        ndkRoot.get());
     if (!ndkBuild.isPresent()) {
       throw new HumanReadableException("Unable to find ndk-build");
     }
+
+    ConcurrencyLimit concurrencyLimit = context.getConcurrencyLimit();
 
     ImmutableList.Builder<String> builder = ImmutableList.builder();
     builder.add(
         ndkBuild.get().toAbsolutePath().toString(),
         "-j",
-        Integer.toString(this.maxJobCount),
+        // TODO(user): using -j here is wrong.  It lets make run too many work when we do other
+        // work in parallel.  Instead, implement the GNU Make job server so make and Buck can
+        // coordinate job concurrency.
+        Integer.toString(concurrencyLimit.threadLimit),
         "-C",
         this.root.toString());
 
+    if (concurrencyLimit.loadLimit < Double.POSITIVE_INFINITY) {
+      builder.add("--load-average", Double.toString(concurrencyLimit.loadLimit));
+    }
 
     Iterable<String> flags = Iterables.transform(this.flags, macroExpander);
     builder.addAll(flags);
 
     ProjectFilesystem projectFilesystem = context.getProjectFilesystem();
     Function<Path, Path> absolutifier = projectFilesystem.getAbsolutifier();
+
+    // We want relative, not absolute, paths in the debug-info for binaries we build using
+    // ndk_library.  Absolute paths are machine-specific, but relative ones should be the
+    // same everywhere.
+
+    Path relativePathToProject = absolutifier.apply(this.root)
+        .relativize(projectFilesystem.getRootPath());
     builder.add(
         "APP_PROJECT_PATH=" + absolutifier.apply(buildArtifactsDirectory) + File.separatorChar,
         "APP_BUILD_SCRIPT=" + absolutifier.apply(makefile),
         "NDK_OUT=" + absolutifier.apply(buildArtifactsDirectory) + File.separatorChar,
         "NDK_LIBS_OUT=" + projectFilesystem.resolve(binDirectory),
-        "BUCK_PROJECT_DIR=" + projectFilesystem.getRootPath());
+        "BUCK_PROJECT_DIR=" + relativePathToProject);
 
     // Suppress the custom build step messages (e.g. "Compile++ ...").
     if (Platform.detect() == Platform.WINDOWS) {
@@ -116,17 +133,6 @@ public class NdkBuildStep extends ShellStep {
       builder.add("--silent");
     }
 
-    return builder.build();
-  }
-
-  @Override
-  public ImmutableMap<String, String> getEnvironmentVariables(ExecutionContext context) {
-    ImmutableMap<String, String> base = super.getEnvironmentVariables(context);
-    ImmutableMap.Builder<String, String> builder = ImmutableMap.builder();
-
-    // Ensure the external environment gets superceded by internal mappings.
-    builder.putAll(context.getEnvironment());
-    builder.putAll(base);
     return builder.build();
   }
 

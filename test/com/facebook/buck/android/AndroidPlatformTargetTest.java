@@ -16,13 +16,16 @@
 
 package com.facebook.buck.android;
 
+import static org.hamcrest.Matchers.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import com.facebook.buck.io.MorePathsForTests;
 import com.facebook.buck.util.HumanReadableException;
-
+import com.facebook.buck.util.environment.Platform;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -35,7 +38,6 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Set;
 import java.util.regex.Matcher;
 
@@ -46,7 +48,7 @@ public class AndroidPlatformTargetTest {
   @Test
   public void testCreateFromDefaultDirectoryStructure() {
     String name = "Example Inc.:Google APIs:16";
-    Path androidSdkDir = Paths.get("/home/android");
+    Path androidSdkDir = MorePathsForTests.rootRelativePath("home/android");
     String platformDirectoryPath = "platforms/android-16";
     Set<Path> additionalJarPaths = ImmutableSet.of();
     AndroidDirectoryResolver androidDirectoryResolver =
@@ -63,23 +65,33 @@ public class AndroidPlatformTargetTest {
             additionalJarPaths,
             /* aaptOverride */ Optional.<Path>absent());
     assertEquals(name, androidPlatformTarget.getName());
-    assertEquals(ImmutableList.of(Paths.get("/home/android/platforms/android-16/android.jar")),
+    assertEquals(
+        ImmutableList.of(
+            MorePathsForTests.rootRelativePath(
+                "home/android/platforms/android-16/android.jar")),
         androidPlatformTarget.getBootclasspathEntries());
-    assertEquals(Paths.get("/home/android/platforms/android-16/android.jar"),
+    assertEquals(MorePathsForTests.rootRelativePath(
+            "home/android/platforms/android-16/android.jar"),
         androidPlatformTarget.getAndroidJar());
-    assertEquals(Paths.get("/home/android/platforms/android-16/framework.aidl"),
+    assertEquals(MorePathsForTests.rootRelativePath(
+            "home/android/platforms/android-16/framework.aidl"),
         androidPlatformTarget.getAndroidFrameworkIdlFile());
-    assertEquals(Paths.get("/home/android/tools/proguard/lib/proguard.jar"),
+    assertEquals(MorePathsForTests.rootRelativePath(
+            "home/android/tools/proguard/lib/proguard.jar"),
         androidPlatformTarget.getProguardJar());
-    assertEquals(Paths.get("/home/android/tools/proguard/proguard-android.txt"),
+    assertEquals(MorePathsForTests.rootRelativePath(
+            "home/android/tools/proguard/proguard-android.txt"),
         androidPlatformTarget.getProguardConfig());
-    assertEquals(Paths.get("/home/android/tools/proguard/proguard-android-optimize.txt"),
+    assertEquals(MorePathsForTests.rootRelativePath(
+            "home/android/tools/proguard/proguard-android-optimize.txt"),
         androidPlatformTarget.getOptimizedProguardConfig());
     assertEquals(androidSdkDir.resolve("platform-tools/aapt").toAbsolutePath(),
         androidPlatformTarget.getAaptExecutable());
     assertEquals(androidSdkDir.resolve("platform-tools/aidl"),
         androidPlatformTarget.getAidlExecutable());
-    assertEquals(androidSdkDir.resolve("platform-tools/dx"),
+    assertEquals(
+        androidSdkDir.resolve(
+            Platform.detect() == Platform.WINDOWS ? "platform-tools/dx.bat" : "platform-tools/dx"),
         androidPlatformTarget.getDxExecutable());
   }
 
@@ -127,7 +139,8 @@ public class AndroidPlatformTargetTest {
         androidPlatformTarget.getAdbExecutable());
     assertEquals(pathToAndroidSdkDir.resolve("build-tools/17.0.0/aidl"),
         androidPlatformTarget.getAidlExecutable());
-    assertEquals(pathToAndroidSdkDir.resolve("build-tools/17.0.0/dx"),
+    assertEquals(pathToAndroidSdkDir.resolve(Platform.detect() == Platform.WINDOWS ?
+                "build-tools/17.0.0/dx.bat" : "build-tools/17.0.0/dx"),
         androidPlatformTarget.getDxExecutable());
   }
 
@@ -175,7 +188,8 @@ public class AndroidPlatformTargetTest {
         androidPlatformTarget.getAdbExecutable());
     assertEquals(pathToAndroidSdkDir.resolve("build-tools/android-4.2.2/aidl"),
         androidPlatformTarget.getAidlExecutable());
-    assertEquals(pathToAndroidSdkDir.resolve("build-tools/android-4.2.2/dx"),
+    assertEquals(pathToAndroidSdkDir.resolve(Platform.detect() == Platform.WINDOWS ?
+                "build-tools/android-4.2.2/dx.bat" : "build-tools/android-4.2.2/dx"),
         androidPlatformTarget.getDxExecutable());
   }
 
@@ -213,6 +227,52 @@ public class AndroidPlatformTargetTest {
         "17.0.0 should be used as the build directory",
         new File(androidSdkDir, "build-tools/17.0.0/aapt").toPath().toAbsolutePath(),
         androidPlatformTargetOption.get().getAaptExecutable());
+  }
+
+  @Test
+  public void testChoosesCorrectBuildToolsBinDirectory() throws IOException {
+    File androidSdkDir = tempDir.newFolder();
+    AndroidDirectoryResolver androidDirectoryResolver =
+        new FakeAndroidDirectoryResolver(
+            Optional.of(androidSdkDir.toPath()),
+            /* androidNdkDir */ Optional.<Path>absent(),
+            /* ndkVersion */ Optional.<String>absent());
+    File buildToolsDir = new File(androidSdkDir, "build-tools");
+    buildToolsDir.mkdir();
+
+    // Here is a number of subfolders in the build tools directory.
+    new File(buildToolsDir, "17.0.0").mkdir();
+    File buildToolsDir23 = new File(buildToolsDir, "23.0.0_rc1");
+    buildToolsDir23.mkdir();
+
+    // Create the bin directory that is found inside newer SDK build-tools folders.
+    new File(buildToolsDir23, "bin").mkdir();
+
+    Optional<AndroidPlatformTarget> androidPlatformTargetOption =
+        AndroidPlatformTarget.getTargetForId(
+            "android-17",
+            androidDirectoryResolver,
+            /* aaptOverride */ Optional.<Path>absent());
+    assertTrue(androidPlatformTargetOption.isPresent());
+
+    assertThat(
+        "aapt should be found in the bin directory",
+        androidPlatformTargetOption.get().getAaptExecutable(),
+        equalTo(new File(
+                androidSdkDir,
+                "build-tools/23.0.0_rc1/bin/aapt").toPath().toAbsolutePath()));
+    assertThat(
+        "aidl should be found in the bin directory",
+        androidPlatformTargetOption.get().getAidlExecutable(),
+        equalTo(new File(
+                androidSdkDir,
+                "build-tools/23.0.0_rc1/bin/aidl").toPath().toAbsolutePath()));
+    assertThat(
+        "zipalign should be found in the bin directory",
+        androidPlatformTargetOption.get().getZipalignExecutable(),
+        equalTo(new File(
+                androidSdkDir,
+                "build-tools/23.0.0_rc1/bin/zipalign").toPath().toAbsolutePath()));
   }
 
   @Test

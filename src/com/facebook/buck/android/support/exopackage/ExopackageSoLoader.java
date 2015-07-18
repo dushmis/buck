@@ -16,15 +16,15 @@
 
 package com.facebook.buck.android.support.exopackage;
 
-import java.io.BufferedReader;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
-import java.io.InputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.HashMap;
 import java.util.Map;
@@ -59,10 +59,9 @@ public class ExopackageSoLoader {
     nativeLibsDir = "/data/local/tmp/exopackage/" + context.getPackageName() + "/native-libs/";
     verifyMetadataFile();
 
-    if (isCopyToPrivateStorage()) {
-      preparePrivateDirectory(context);
-      parseMetadata();
-    }
+    preparePrivateDirectory(context);
+    parseMetadata();
+    initialized = true;
   }
 
   private static void verifyMetadataFile() {
@@ -122,21 +121,15 @@ public class ExopackageSoLoader {
   }
 
   public static void loadLibrary(String shortName) throws UnsatisfiedLinkError {
+    if (!initialized) {
+      Log.d(TAG, "ExopackageSoLoader not initialized, falling back to System.loadLibrary()");
+      System.loadLibrary(shortName);
+      return;
+    }
+
     String libname = shortName.startsWith("lib") ? shortName : "lib" + shortName;
 
-    File libraryFile;
-
-    if (isCopyToPrivateStorage()) {
-      libraryFile = copySoFileIfRequired(libname);
-    } else {
-      libraryFile = new File(nativeLibsDir + Build.CPU_ABI + "/" + libname + ".so");
-      if (!libraryFile.exists()) {
-        libraryFile = new File(nativeLibsDir + Build.CPU_ABI2 + "/" + libname + ".so");
-        if (!libraryFile.exists()) {
-          libraryFile = null;
-        }
-      }
-    }
+    File libraryFile = copySoFileIfRequired(libname);
 
     if (libraryFile == null) {
       throw new UnsatisfiedLinkError("Could not find library file for either ABIs.");
@@ -194,10 +187,6 @@ public class ExopackageSoLoader {
     }
 
     return libraryFile;
-  }
-
-  private static boolean isCopyToPrivateStorage() {
-    return Build.VERSION.SDK_INT >= 21;
   }
 
   private static File getAbi1Metadata() {

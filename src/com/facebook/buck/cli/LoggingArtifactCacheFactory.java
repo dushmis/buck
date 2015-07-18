@@ -21,7 +21,6 @@ import com.facebook.buck.rules.ArtifactCache;
 import com.facebook.buck.rules.ArtifactCacheConnectEvent;
 import com.facebook.buck.rules.LoggingArtifactCacheDecorator;
 import com.facebook.buck.rules.NoopArtifactCache;
-import com.facebook.buck.util.FileHashCache;
 import com.facebook.buck.util.concurrent.MoreExecutors;
 import com.facebook.buck.util.environment.ExecutionEnvironment;
 import com.google.common.collect.Lists;
@@ -41,30 +40,25 @@ public class LoggingArtifactCacheFactory implements ArtifactCacheFactory {
   private final BuckEventBus buckEventBus;
   private final List<ArtifactCache> createdArtifactCaches;
   private final ExecutionEnvironment executionEnvironment;
-  private final FileHashCache fileHashCache;
 
   public LoggingArtifactCacheFactory(
       ExecutionEnvironment executionEnvironment,
-      BuckEventBus buckEventBus,
-      FileHashCache fileHashCache) {
+      BuckEventBus buckEventBus) {
     this.executionEnvironment = executionEnvironment;
     this.buckEventBus = buckEventBus;
     this.createdArtifactCaches = Lists.newArrayList();
-    this.fileHashCache = fileHashCache;
   }
 
   @Override
-  public ArtifactCache newInstance(AbstractCommandOptions options)
+  public ArtifactCache newInstance(BuckConfig buckConfig, boolean noop)
       throws InterruptedException {
-    if (options.isNoCache()) {
+    if (noop) {
       return new NoopArtifactCache();
     } else {
       buckEventBus.post(ArtifactCacheConnectEvent.started());
       ArtifactCache artifactCache = new LoggingArtifactCacheDecorator(buckEventBus)
-          .decorate(options.getBuckConfig().createArtifactCache(
-                  executionEnvironment.getWifiSsid(),
-                  buckEventBus,
-                  fileHashCache));
+          .decorate(
+              buckConfig.createArtifactCache(executionEnvironment.getWifiSsid(), buckEventBus));
       buckEventBus.post(ArtifactCacheConnectEvent.finished());
       createdArtifactCaches.add(artifactCache);
       return artifactCache;

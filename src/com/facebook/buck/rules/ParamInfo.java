@@ -17,7 +17,6 @@
 package com.facebook.buck.rules;
 
 import com.facebook.buck.io.ProjectFilesystem;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.rules.coercer.CoerceFailedException;
 import com.facebook.buck.rules.coercer.TypeCoercer;
 import com.facebook.buck.rules.coercer.TypeCoercerFactory;
@@ -39,6 +38,7 @@ class ParamInfo<T> implements Comparable<ParamInfo<T>> {
   private final String name;
   private final String pythonName;
   private final boolean isDep;
+  private final boolean isInput;
   private final Field field;
 
   public ParamInfo(TypeCoercerFactory typeCoercerFactory, Field field) {
@@ -47,6 +47,7 @@ class ParamInfo<T> implements Comparable<ParamInfo<T>> {
     Hint hint = field.getAnnotation(Hint.class);
     this.pythonName = determinePythonName(this.name, hint);
     this.isDep = hint != null ? hint.isDep() : Hint.DEFAULT_IS_DEP;
+    this.isInput = hint != null ? hint.isInput() : Hint.DEFAULT_IS_INPUT;
 
     isOptional = Optional.class.isAssignableFrom(field.getType());
     this.typeCoercer = typeCoercerFactory.typeCoercerForType(Types.getFirstNonOptionalType(field));
@@ -66,6 +67,10 @@ class ParamInfo<T> implements Comparable<ParamInfo<T>> {
 
   public boolean isDep() {
     return isDep;
+  }
+
+  public boolean isInput() {
+    return isInput;
   }
 
   /**
@@ -110,7 +115,6 @@ class ParamInfo<T> implements Comparable<ParamInfo<T>> {
       Map<String, ?> instance
       ) throws ParamInfoException {
     set(
-        params.buildTargetParser,
         filesystem,
         params.target.getBasePath(),
         arg,
@@ -126,7 +130,6 @@ class ParamInfo<T> implements Comparable<ParamInfo<T>> {
    * @param value The value, which may be coerced depending on the type on {@code dto}.
    */
   public void set(
-      BuildTargetParser buildTargetParser,
       ProjectFilesystem filesystem,
       Path pathRelativeToProjectRoot,
       Object dto,
@@ -146,7 +149,6 @@ class ParamInfo<T> implements Comparable<ParamInfo<T>> {
     } else {
       try {
         result = typeCoercer.coerce(
-            buildTargetParser,
             filesystem,
             pathRelativeToProjectRoot,
             value);

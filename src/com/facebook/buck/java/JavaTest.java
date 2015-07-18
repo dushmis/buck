@@ -19,11 +19,12 @@ package com.facebook.buck.java;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTargets;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
+import com.facebook.buck.rules.HasRuntimeDeps;
 import com.facebook.buck.rules.Label;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TestRule;
@@ -43,6 +44,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Functions;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Predicates;
 import com.google.common.base.Throwables;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
@@ -66,8 +68,9 @@ import java.util.zip.ZipFile;
 import javax.annotation.Nullable;
 
 @SuppressWarnings("PMD.TestClassWithoutTestCases")
-public class JavaTest extends DefaultJavaLibrary implements TestRule {
+public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntimeDeps {
 
+  @AddToRuleKey
   private final ImmutableList<String> vmArgs;
 
   @Nullable
@@ -77,10 +80,12 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule {
 
   private final ImmutableSet<String> contacts;
 
+  @AddToRuleKey
   private ImmutableSet<BuildRule> sourceUnderTest;
 
   private final ImmutableSet<Path> additionalClasspathEntries;
 
+  @AddToRuleKey
   private final TestType testType;
 
   private final Optional<Long> testRuleTimeoutMs;
@@ -92,6 +97,9 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule {
   @Nullable
   private JUnitStep junit;
 
+  @AddToRuleKey
+  private final boolean runTestSeparately;
+
   protected JavaTest(
       BuildRuleParams params,
       SourcePathResolver resolver,
@@ -99,14 +107,15 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule {
       Set<SourcePath> resources,
       Set<Label> labels,
       Set<String> contacts,
-      Optional<Path> proguardConfig,
+      Optional<SourcePath> proguardConfig,
       ImmutableSet<Path> addtionalClasspathEntries,
       TestType testType,
       JavacOptions javacOptions,
       List<String> vmArgs,
       ImmutableSet<BuildRule> sourceUnderTest,
       Optional<Path> resourcesRoot,
-      Optional<Long> testRuleTimeoutMs) {
+      Optional<Long> testRuleTimeoutMs,
+      boolean runTestSeparately) {
     super(
         params,
         resolver,
@@ -126,6 +135,7 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule {
     this.additionalClasspathEntries = addtionalClasspathEntries;
     this.testType = testType;
     this.testRuleTimeoutMs = testRuleTimeoutMs;
+    this.runTestSeparately = runTestSeparately;
   }
 
   @Override
@@ -136,16 +146,6 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule {
   @Override
   public ImmutableSet<String> getContacts() {
     return contacts;
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    ImmutableSortedSet<? extends BuildRule> srcUnderTest = ImmutableSortedSet.copyOf(
-        sourceUnderTest);
-    super.appendDetailsToRuleKey(builder)
-        .setReflectively("vmArgs", vmArgs)
-        .setReflectively("sourceUnderTest", srcUnderTest);
-    return builder;
   }
 
   /**
@@ -173,7 +173,8 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule {
       ExecutionContext executionContext,
       boolean isDryRun,
       boolean isShufflingTests,
-      TestSelectorList testSelectorList) {
+      TestSelectorList testSelectorList,
+      TestRule.TestReportingCallback testReportingCallback) {
     // If no classes were generated, then this is probably a java_test() that declares a number of
     // other java_test() rules as deps, functioning as a test suite. In this case, simply return an
     // empty list of commands.
@@ -198,11 +199,16 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule {
         .addAll(getBootClasspathEntries(executionContext))
         .build();
 
+    ImmutableList<String> properVmArgs = amendVmArgs(
+        this.vmArgs,
+        executionContext.getTargetDeviceOptional());
+
     junit = new JUnitStep(
         classpathEntries,
         reorderedTestClasses,
-        amendVmArgs(vmArgs, executionContext.getTargetDeviceOptional()),
+        properVmArgs,
         pathToTestOutput,
+        getBuildTarget().getBasePath(),
         tmpDirectory,
         executionContext.isCodeCoverageEnabled(),
         executionContext.isDebugEnabled(),
@@ -410,7 +416,7 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule {
 
     CompiledClassFileFinder(JavaTest rule, ExecutionContext context) {
       Path outputPath;
-      Path relativeOutputPath = rule.getPathToOutputFile();
+      Path relativeOutputPath = rule.getPathToOutput();
       if (relativeOutputPath != null) {
         outputPath = context.getProjectFilesystem().getAbsolutifier().apply(relativeOutputPath);
       } else {
@@ -502,5 +508,31 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule {
 
       return testClassNames.build();
     }
+  }
+
+  @Override
+  public boolean runTestSeparately() {
+    return runTestSeparately;
+  }
+
+  @Override
+  public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
+    return ImmutableSortedSet.<BuildRule>naturalOrder()
+        // By the end of the build, all the transitive Java library dependencies *must* be available
+        // on disk, so signal this requirement via the {@link HasRuntimeDeps} interface.
+        .addAll(
+            FluentIterable.from(getTransitiveClasspathEntries().keySet())
+                .filter(BuildRule.class)
+                .filter(Predicates.not(Predicates.<BuildRule>equalTo(this))))
+        // It's possible that the user added some tool as a dependency, so make sure we promote
+        // this rules first-order deps to runtime deps, so that these potential tools are available
+        // when this test runs.
+        .addAll(getDeps())
+        .build();
+  }
+
+  @Override
+  public boolean supportsStreamingTests() {
+    return false;
   }
 }

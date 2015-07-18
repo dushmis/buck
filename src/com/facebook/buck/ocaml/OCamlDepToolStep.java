@@ -25,6 +25,9 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 
 import java.nio.file.Path;
+import java.util.List;
+
+import javax.annotation.Nullable;
 
 /**
  * This step runs ocamldep tool to compute dependencies among source files (*.mli and *.ml)
@@ -37,10 +40,11 @@ public class OCamlDepToolStep extends ShellStep {
 
   public OCamlDepToolStep(
       Path ocamlDepTool,
-      ImmutableList<Path> input, ImmutableList<String> flags) {
+      List<Path> input,
+      List<String> flags) {
     this.ocamlDepTool = ocamlDepTool;
-    this.flags = flags;
-    this.input = input;
+    this.flags = ImmutableList.copyOf(flags);
+    this.input = ImmutableList.copyOf(input);
   }
 
   @Override
@@ -58,7 +62,7 @@ public class OCamlDepToolStep extends ShellStep {
   }
 
   @Override
-  protected ImmutableList<String> getShellCommandInternal(ExecutionContext context) {
+  protected ImmutableList<String> getShellCommandInternal(@Nullable ExecutionContext context) {
     return ImmutableList.<String>builder()
         .add(ocamlDepTool.toString())
         .add("-one-line")

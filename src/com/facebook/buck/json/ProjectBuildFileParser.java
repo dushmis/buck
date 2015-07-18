@@ -19,13 +19,13 @@ package com.facebook.buck.json;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.facebook.buck.event.BuckEventBus;
-import com.facebook.buck.io.ProjectFilesystem;
+import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.log.Logger;
-import com.facebook.buck.parser.ParserConfig;
 import com.facebook.buck.rules.BuckPyFunction;
 import com.facebook.buck.rules.ConstructorArgMarshaller;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.util.Console;
+import com.facebook.buck.util.Escaper;
 import com.facebook.buck.util.InputStreamConsumer;
 import com.facebook.buck.util.MoreThrowables;
 import com.facebook.buck.util.NamedTemporaryFile;
@@ -84,7 +84,10 @@ public class ProjectBuildFileParser implements AutoCloseable {
   @Nullable private BufferedWriter buckPyStdinWriter;
 
   private final Path projectRoot;
-  private final ParserConfig parserConfig;
+  private final String pythonInterpreter;
+  private final boolean allowEmptyGlobs;
+  private final String buildFileName;
+  private final Iterable<String> defaultIncludes;
   private final ImmutableSet<Description<?>> descriptions;
   private final Console console;
   private final BuckEventBus buckEventBus;
@@ -97,14 +100,20 @@ public class ProjectBuildFileParser implements AutoCloseable {
   @Nullable private Thread stderrConsumer;
 
   protected ProjectBuildFileParser(
-      ProjectFilesystem projectFilesystem,
-      ParserConfig parserConfig,
+      Path projectRoot,
+      String pythonInterpreter,
+      boolean allowEmptyGlobs,
+      String buildFileName,
+      Iterable<String> defaultIncludes,
       ImmutableSet<Description<?>> descriptions,
       Console console,
       ImmutableMap<String, String> environment,
       BuckEventBus buckEventBus) {
-    this.projectRoot = projectFilesystem.getRootPath();
-    this.parserConfig = parserConfig;
+    this.projectRoot = projectRoot;
+    this.pythonInterpreter = pythonInterpreter;
+    this.allowEmptyGlobs = allowEmptyGlobs;
+    this.buildFileName = buildFileName;
+    this.defaultIncludes = defaultIncludes;
     this.descriptions = descriptions;
     this.pathToBuckPy = Optional.absent();
     this.console = console;
@@ -149,14 +158,6 @@ public class ProjectBuildFileParser implements AutoCloseable {
     ProcessBuilder processBuilder = new ProcessBuilder(buildArgs());
     processBuilder.environment().clear();
     processBuilder.environment().putAll(environment);
-    String pythonPath = environment.get("PYTHONPATH");
-    String pathlibPyDir = PATH_TO_PATHLIB_PY.getParent().toString();
-    if (pythonPath == null) {
-      pythonPath = pathlibPyDir;
-    } else {
-      pythonPath = pythonPath + ":" + pathlibPyDir;
-    }
-    processBuilder.environment().put("PYTHONPATH", pythonPath);
 
     LOG.debug(
         "Starting buck.py command: %s environment: %s",
@@ -192,7 +193,7 @@ public class ProjectBuildFileParser implements AutoCloseable {
     // Invoking buck.py and read JSON-formatted build rules from its stdout.
     ImmutableList.Builder<String> argBuilder = ImmutableList.builder();
 
-    argBuilder.add(parserConfig.getPythonInterpreter());
+    argBuilder.add(pythonInterpreter);
 
     // Ask python to unbuffer stdout so that we can coordinate based on the output as it is
     // produced.
@@ -208,15 +209,15 @@ public class ProjectBuildFileParser implements AutoCloseable {
 
     argBuilder.add(getPathToBuckPy(descriptions).toString());
 
-    if (parserConfig.getAllowEmptyGlobs()) {
+    if (allowEmptyGlobs) {
       argBuilder.add("--allow_empty_globs");
     }
 
     argBuilder.add("--project_root", projectRoot.toAbsolutePath().toString());
-    argBuilder.add("--build_file_name", parserConfig.getBuildFileName());
+    argBuilder.add("--build_file_name", buildFileName);
 
     // Add the --include flags.
-    for (String include : parserConfig.getDefaultIncludes()) {
+    for (String include : defaultIncludes) {
       argBuilder.add("--include");
       argBuilder.add(include);
     }
@@ -393,6 +394,12 @@ public class ProjectBuildFileParser implements AutoCloseable {
 
     try (Writer out = Files.newBufferedWriter(buckDotPy, UTF_8)) {
       URL resource = Resources.getResource(BUCK_PY_RESOURCE);
+      String pathlibDir = PATH_TO_PATHLIB_PY.getParent().toString();
+      out.write(
+          "from __future__ import with_statement\n" +
+          "import sys\n" +
+          "sys.path.insert(0, \"" +
+              Escaper.escapeAsBashString(MorePaths.pathWithUnixSeparators(pathlibDir)) + "\")\n");
       Resources.asCharSource(resource, UTF_8).copyTo(out);
       out.write("\n\n");
 

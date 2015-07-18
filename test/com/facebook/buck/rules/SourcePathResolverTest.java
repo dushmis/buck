@@ -30,9 +30,7 @@ import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.testutil.MoreAsserts;
 import com.facebook.buck.util.HumanReadableException;
 import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 
 import org.junit.Test;
 
@@ -53,7 +51,6 @@ public class SourcePathResolverTest {
 
   @Test
   public void resolveBuildTargetSourcePath() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
     Path expectedPath = Paths.get("foo");
@@ -62,14 +59,13 @@ public class SourcePathResolverTest {
         pathResolver,
         expectedPath);
     resolver.addToIndex(rule);
-    SourcePath sourcePath = new BuildTargetSourcePath(projectFilesystem, rule.getBuildTarget());
+    SourcePath sourcePath = new BuildTargetSourcePath(rule.getBuildTarget());
 
     assertEquals(expectedPath, pathResolver.getPath(sourcePath));
   }
 
   @Test
   public void resolveBuildTargetSourcePathWithOverriddenOutputPath() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
     Path expectedPath = Paths.get("foo");
@@ -78,10 +74,7 @@ public class SourcePathResolverTest {
         pathResolver,
         Paths.get("notfoo"));
     resolver.addToIndex(rule);
-    SourcePath sourcePath = new BuildTargetSourcePath(
-        projectFilesystem,
-        rule.getBuildTarget(),
-        expectedPath);
+    SourcePath sourcePath = new BuildTargetSourcePath(rule.getBuildTarget(), expectedPath);
 
     assertEquals(expectedPath, pathResolver.getPath(sourcePath));
   }
@@ -100,16 +93,13 @@ public class SourcePathResolverTest {
         pathResolver,
         buildTargetSourcePathExpectedPath);
     resolver.addToIndex(rule);
-    SourcePath buildTargetSourcePath = new BuildTargetSourcePath(
-        projectFilesystem,
-        rule.getBuildTarget());
+    SourcePath buildTargetSourcePath = new BuildTargetSourcePath(rule.getBuildTarget());
     BuildRule ruleWithOverriddenOutputPath = new PathReferenceRule(
         new FakeBuildRuleParamsBuilder(BuildTargetFactory.newInstance("//:baz")).build(),
         pathResolver,
         Paths.get("notbaz"));
     resolver.addToIndex(ruleWithOverriddenOutputPath);
     SourcePath buildTargetSourcePathWithOverriddenOutputPath = new BuildTargetSourcePath(
-        projectFilesystem,
         ruleWithOverriddenOutputPath.getBuildTarget(),
         buildRuleWithOverriddenOutputPathExpectedPath);
 
@@ -127,7 +117,6 @@ public class SourcePathResolverTest {
 
   @Test
   public void getRuleCanGetRuleOfBuildRuleSoucePath() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
     BuildRule rule = new OutputOnlyBuildRule(
@@ -135,7 +124,7 @@ public class SourcePathResolverTest {
         pathResolver,
         Paths.get("foo"));
     resolver.addToIndex(rule);
-    SourcePath sourcePath = new BuildTargetSourcePath(projectFilesystem, rule.getBuildTarget());
+    SourcePath sourcePath = new BuildTargetSourcePath(rule.getBuildTarget());
 
     assertEquals(Optional.of(rule), pathResolver.getRule(sourcePath));
   }
@@ -161,7 +150,6 @@ public class SourcePathResolverTest {
 
   @Test
   public void getRelativePathCannotGetRelativePathOfBuildTargetSourcePath() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
     BuildRule rule = new OutputOnlyBuildRule(
@@ -169,7 +157,7 @@ public class SourcePathResolverTest {
         pathResolver,
         Paths.get("foo"));
     resolver.addToIndex(rule);
-    SourcePath sourcePath = new BuildTargetSourcePath(projectFilesystem, rule.getBuildTarget());
+    SourcePath sourcePath = new BuildTargetSourcePath(rule.getBuildTarget());
 
     assertEquals(Optional.<Path>absent(), pathResolver.getRelativePath(sourcePath));
   }
@@ -184,11 +172,9 @@ public class SourcePathResolverTest {
 
   @Test
   public void testFilterInputsToCompareToOutputExcludesBuildTargetSourcePaths() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
     FakeBuildRule rule = new FakeBuildRule(
-        BuildRuleType.of("example"),
         BuildTargetFactory.newInstance("//java/com/facebook:facebook"),
         pathResolver);
     resolver.addToIndex(rule);
@@ -196,7 +182,7 @@ public class SourcePathResolverTest {
     Iterable<? extends SourcePath> sourcePaths = ImmutableList.of(
         new TestSourcePath("java/com/facebook/Main.java"),
         new TestSourcePath("java/com/facebook/BuckConfig.java"),
-        new BuildTargetSourcePath(projectFilesystem, rule.getBuildTarget()));
+        new BuildTargetSourcePath(rule.getBuildTarget()));
     Iterable<Path> inputs = pathResolver.filterInputsToCompareToOutput(sourcePaths);
     MoreAsserts.assertIterablesEquals(
         "Iteration order should be preserved: results should not be alpha-sorted.",
@@ -208,25 +194,22 @@ public class SourcePathResolverTest {
 
   @Test
   public void testFilterBuildRuleInputsExcludesPathSourcePaths() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
     FakeBuildRule rule = new FakeBuildRule(
-        BuildRuleType.of("example"),
         BuildTargetFactory.newInstance("//java/com/facebook:facebook"),
         pathResolver);
     resolver.addToIndex(rule);
     FakeBuildRule rule2 = new FakeBuildRule(
-        BuildRuleType.of("foo"),
         BuildTargetFactory.newInstance("//bar:foo"),
         pathResolver);
     resolver.addToIndex(rule2);
 
     Iterable<? extends SourcePath> sourcePaths = ImmutableList.of(
         new TestSourcePath("java/com/facebook/Main.java"),
-        new BuildTargetSourcePath(projectFilesystem, rule.getBuildTarget()),
+        new BuildTargetSourcePath(rule.getBuildTarget()),
         new TestSourcePath("java/com/facebook/BuckConfig.java"),
-        new BuildTargetSourcePath(projectFilesystem, rule2.getBuildTarget()));
+        new BuildTargetSourcePath(rule2.getBuildTarget()));
     Iterable<BuildRule> inputs = pathResolver.filterBuildRuleInputs(sourcePaths);
     MoreAsserts.assertIterablesEquals(
         "Iteration order should be preserved: results should not be alpha-sorted.",
@@ -252,7 +235,6 @@ public class SourcePathResolverTest {
 
   @Test
   public void getSourcePathNameOnBuildTargetSourcePath() {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
 
@@ -264,7 +246,6 @@ public class SourcePathResolverTest {
         .setOut(out)
         .build(resolver);
     BuildTargetSourcePath buildTargetSourcePath1 = new BuildTargetSourcePath(
-        projectFilesystem,
         genrule.getBuildTarget());
     String actual1 = pathResolver.getSourcePathName(
         BuildTargetFactory.newInstance("//:test"),
@@ -278,7 +259,6 @@ public class SourcePathResolverTest {
         pathResolver);
     resolver.addToIndex(fakeBuildRule);
     BuildTargetSourcePath buildTargetSourcePath2 = new BuildTargetSourcePath(
-        projectFilesystem,
         fakeBuildRule.getBuildTarget());
     String actual2 = pathResolver.getSourcePathName(
         BuildTargetFactory.newInstance("//:test"),
@@ -320,23 +300,13 @@ public class SourcePathResolverTest {
     }
 
     @Override
-    protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-      return ImmutableSet.of();
-    }
-
-    @Override
-    protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-      return builder;
-    }
-
-    @Override
     public ImmutableList<Step> getBuildSteps(
         BuildContext context, BuildableContext buildableContext) {
       return ImmutableList.of();
     }
 
     @Override
-    public Path getPathToOutputFile() {
+    public Path getPathToOutput() {
       return source;
     }
   }

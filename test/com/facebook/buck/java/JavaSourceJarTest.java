@@ -23,7 +23,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
-import com.facebook.buck.graph.MutableDirectedGraph;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.ActionGraph;
 import com.facebook.buck.rules.BuildContext;
@@ -59,7 +58,7 @@ public class JavaSourceJarTest {
         new SourcePathResolver(new BuildRuleResolver()),
         ImmutableSortedSet.<SourcePath>of());
 
-    Path output = rule.getPathToOutputFile();
+    Path output = rule.getPathToOutput();
 
     assertNotNull(output);
     assertTrue(output.toString().endsWith(Javac.SRC_ZIP));
@@ -70,7 +69,6 @@ public class JavaSourceJarTest {
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
     SourcePath fileBased = new TestSourcePath("some/path/File.java");
     SourcePath ruleBased = new BuildTargetSourcePath(
-        new FakeProjectFilesystem(),
         BuildTargetFactory.newInstance("//cheese:cake"));
 
     JavaPackageFinder finderStub = createNiceMock(JavaPackageFinder.class);
@@ -86,12 +84,8 @@ public class JavaSourceJarTest {
         pathResolver,
         ImmutableSortedSet.of(fileBased, ruleBased));
 
-    assertEquals(
-        ImmutableList.of(pathResolver.getPath(fileBased)),
-        rule.getInputsToCompareToOutput());
-
     BuildContext buildContext = FakeBuildContext.newBuilder(new FakeProjectFilesystem())
-        .setActionGraph(new ActionGraph(new MutableDirectedGraph<BuildRule>()))
+        .setActionGraph(new ActionGraph(ImmutableList.<BuildRule>of()))
         .setJavaPackageFinder(finderStub)
         .build();
     ImmutableList<Step> steps = rule.getBuildSteps(

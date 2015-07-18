@@ -19,24 +19,22 @@ package com.facebook.buck.android;
 import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildOutputInitializer;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.InitializableFromDisk;
 import com.facebook.buck.rules.OnDiskBuildInfo;
-import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.AbstractExecutionStep;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Functions;
-import com.google.common.base.Supplier;
-import com.google.common.base.Suppliers;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableBiMap;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -63,7 +61,7 @@ public class ResourcesFilter extends AbstractBuildRule
     implements FilteredResourcesProvider, InitializableFromDisk<ResourcesFilter.BuildOutput> {
 
   private static final String RES_DIRECTORIES_KEY = "res_directories";
-  private static final String NON_ENGLISH_STRING_FILES_KEY = "non_english_string_files";
+  private static final String STRING_FILES_KEY = "string_files";
 
   static enum ResourceCompressionMode {
     DISABLED(/* isCompressResources */ false, /* isStoreStringsAsAssets */ false),
@@ -90,18 +88,23 @@ public class ResourcesFilter extends AbstractBuildRule
     }
   }
 
-  private final ImmutableList<Path> resDirectories;
-  private final ImmutableSet<Path> whitelistedStringDirs;
+  // Rule key correctness is ensured by depping on all android_resource rules in
+  // Builder.setAndroidResourceDepsFinder()
+  private final ImmutableList<SourcePath> resDirectories;
+  private final ImmutableSet<SourcePath> whitelistedStringDirs;
+  @AddToRuleKey
   private final ImmutableSet<String> locales;
+  @AddToRuleKey
   private final ResourceCompressionMode resourceCompressionMode;
+  @AddToRuleKey
   private final FilterResourcesStep.ResourceFilter resourceFilter;
   private final BuildOutputInitializer<BuildOutput> buildOutputInitializer;
 
   public ResourcesFilter(
       BuildRuleParams params,
       SourcePathResolver resolver,
-      ImmutableList<Path> resDirectories,
-      ImmutableSet<Path> whitelistedStringDirs,
+      ImmutableList<SourcePath> resDirectories,
+      ImmutableSet<SourcePath> whitelistedStringDirs,
       ImmutableSet<String> locales,
       ResourceCompressionMode resourceCompressionMode,
       FilterResourcesStep.ResourceFilter resourceFilter) {
@@ -120,23 +123,8 @@ public class ResourcesFilter extends AbstractBuildRule
   }
 
   @Override
-  public ImmutableSet<Path> getNonEnglishStringFiles() {
-    return buildOutputInitializer.getBuildOutput().nonEnglishStringFiles;
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    // Rule key correctness is ensured by depping on all android_resource rules in
-    // Builder.setAndroidResourceDepsFinder()
-    return ImmutableSet.of();
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder
-        .setReflectively("resourceCompressionMode", resourceCompressionMode.toString())
-        .setReflectively("resourceFilter", resourceFilter.getDescription())
-        .setReflectively("locales", locales);
+  public ImmutableList<Path> getStringFiles() {
+    return buildOutputInitializer.getBuildOutput().stringFiles;
   }
 
   @Override
@@ -146,24 +134,29 @@ public class ResourcesFilter extends AbstractBuildRule
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
 
     final ImmutableList.Builder<Path> filteredResDirectoriesBuilder = ImmutableList.builder();
+    ImmutableSet<Path> whitelistedStringPaths =
+        ImmutableSet.copyOf(getResolver().getAllPaths(whitelistedStringDirs));
+    ImmutableList<Path> resPaths = getResolver().getAllPaths(resDirectories);
     final FilterResourcesStep filterResourcesStep = createFilterResourcesStep(
-        resDirectories,
-        whitelistedStringDirs,
+        resPaths,
+        whitelistedStringPaths,
         locales,
         filteredResDirectoriesBuilder);
     steps.add(filterResourcesStep);
 
-    final ImmutableList<Path> filteredResDirectories = filteredResDirectoriesBuilder.build();
-    final Supplier<ImmutableSet<Path>> nonEnglishStringFiles = Suppliers.memoize(
-        new Supplier<ImmutableSet<Path>>() {
-          @Override
-          public ImmutableSet<Path> get() {
-            return filterResourcesStep.getNonEnglishStringFiles();
-          }
-        });
+    final ImmutableList.Builder<Path> stringFilesBuilder = ImmutableList.builder();
+    // The list of strings.xml files is only needed to build string assets
+    if (resourceCompressionMode.isStoreStringsAsAssets()) {
+      GetStringsFilesStep getStringsFilesStep = new GetStringsFilesStep(
+          resPaths,
+          stringFilesBuilder,
+          whitelistedStringPaths);
+      steps.add(getStringsFilesStep);
+    }
 
+    final ImmutableList<Path> filteredResDirectories = filteredResDirectoriesBuilder.build();
     for (Path outputResourceDir : filteredResDirectories) {
-      buildableContext.recordArtifactsInDirectory(outputResourceDir);
+      buildableContext.recordArtifact(outputResourceDir);
     }
 
     steps.add(new AbstractExecutionStep("record_build_output") {
@@ -173,8 +166,8 @@ public class ResourcesFilter extends AbstractBuildRule
             RES_DIRECTORIES_KEY,
             Iterables.transform(filteredResDirectories, Functions.toStringFunction()));
         buildableContext.addMetadata(
-            NON_ENGLISH_STRING_FILES_KEY,
-            Iterables.transform(nonEnglishStringFiles.get(), Functions.toStringFunction()));
+            STRING_FILES_KEY,
+            Iterables.transform(stringFilesBuilder.build(), Functions.toStringFunction()));
         return 0;
       }
     });
@@ -184,13 +177,13 @@ public class ResourcesFilter extends AbstractBuildRule
 
   /**
    * Sets up filtering of resources, images/drawables and strings in particular, based on build
-   * rule parameters {@link #resourceFilter} and {@link #isStoreStringsAsAssets}.
+   * rule parameters {@link #resourceFilter} and {@link #resourceCompressionMode}.
    *
    * {@link com.facebook.buck.android.FilterResourcesStep.ResourceFilter} {@code resourceFilter}
    * determines which drawables end up in the APK (based on density - mdpi, hdpi etc), and also
    * whether higher density drawables get scaled down to the specified density (if not present).
    *
-   * {@code isStoreStringsAsAssets} determines whether non-english string resources are packaged
+   * {@link #resourceCompressionMode} determines whether non-english string resources are packaged
    * separately as assets (and not bundled together into the {@code resources.arsc} file).
    *
    * @param whitelistedStringDirs overrides storing non-english strings as assets for resources
@@ -216,19 +209,14 @@ public class ResourcesFilter extends AbstractBuildRule
         .setInResToOutResDirMap(resSourceToDestDirMap)
         .setResourceFilter(resourceFilter);
 
-    if (isStoreStringsAsAssets()) {
-      filterResourcesStepBuilder.enableStringsFilter();
+    if (resourceCompressionMode.isStoreStringsAsAssets()) {
+      filterResourcesStepBuilder.enableStringWhitelisting();
       filterResourcesStepBuilder.setWhitelistedStringDirs(whitelistedStringDirs);
     }
 
     filterResourcesStepBuilder.setLocales(locales);
 
     return filterResourcesStepBuilder.build();
-  }
-
-  @Override
-  public boolean isStoreStringsAsAssets() {
-    return resourceCompressionMode.isStoreStringsAsAssets();
   }
 
   private String getResDestinationBasePath() {
@@ -241,12 +229,12 @@ public class ResourcesFilter extends AbstractBuildRule
         FluentIterable.from(onDiskBuildInfo.getValues(RES_DIRECTORIES_KEY).get())
             .transform(MorePaths.TO_PATH)
             .toList();
-    ImmutableSet<Path> nonEnglishStringFiles =
-        FluentIterable.from(onDiskBuildInfo.getValues(NON_ENGLISH_STRING_FILES_KEY).get())
+    ImmutableList<Path> stringFiles =
+        FluentIterable.from(onDiskBuildInfo.getValues(STRING_FILES_KEY).get())
             .transform(MorePaths.TO_PATH)
-            .toSet();
+            .toList();
 
-    return new BuildOutput(resDirectories, nonEnglishStringFiles);
+    return new BuildOutput(resDirectories, stringFiles);
   }
 
   @Override
@@ -256,19 +244,19 @@ public class ResourcesFilter extends AbstractBuildRule
 
   public static class BuildOutput {
     private final ImmutableList<Path> resDirectories;
-    private final ImmutableSet<Path> nonEnglishStringFiles;
+    private final ImmutableList<Path> stringFiles;
 
     public BuildOutput(
         ImmutableList<Path> resDirectories,
-        ImmutableSet<Path> nonEnglishStringFiles) {
+        ImmutableList<Path> stringFiles) {
       this.resDirectories = resDirectories;
-      this.nonEnglishStringFiles = nonEnglishStringFiles;
+      this.stringFiles = stringFiles;
     }
   }
 
   @Nullable
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return null;
   }
 }

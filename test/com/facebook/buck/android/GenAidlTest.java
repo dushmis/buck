@@ -38,7 +38,6 @@ import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.facebook.buck.util.BuckConstant;
-import com.google.common.collect.ImmutableList;
 
 import org.junit.Test;
 
@@ -54,7 +53,7 @@ public class GenAidlTest {
     BuildContext context = null;
 
     Path pathToAidl = Paths.get("java/com/example/base/IWhateverService.aidl");
-    String importPath = "java/com/example/base";
+    String importPath = Paths.get("java/com/example/base").toString();
 
     BuildTarget target = BuildTargetFactory.newInstance("//java/com/example/base:IWhateverService");
     BuildRuleParams params = new FakeBuildRuleParamsBuilder(target).build();
@@ -68,12 +67,11 @@ public class GenAidlTest {
     assertEquals(GenAidlDescription.TYPE, description.getBuildRuleType());
     assertTrue(genAidlRule.getProperties().is(ANDROID));
 
-    assertEquals(ImmutableList.of(pathToAidl), genAidlRule.getInputsToCompareToOutput());
-
     List<Step> steps = genAidlRule.getBuildSteps(context, new FakeBuildableContext());
 
-    final String pathToAidlExecutable = "/usr/local/bin/aidl";
-    final String pathToFrameworkAidl = "/home/root/android/platforms/android-16/framework.aidl";
+    final String pathToAidlExecutable = Paths.get("/usr/local/bin/aidl").toString();
+    final String pathToFrameworkAidl = Paths.get(
+        "/home/root/android/platforms/android-16/framework.aidl").toString();
     AndroidPlatformTarget androidPlatformTarget = createMock(AndroidPlatformTarget.class);
     expect(androidPlatformTarget.getAidlExecutable()).andReturn(Paths.get(pathToAidlExecutable));
     expect(androidPlatformTarget.getAndroidFrameworkIdlFile())
@@ -81,6 +79,7 @@ public class GenAidlTest {
 
     ExecutionContext executionContext = createMock(ExecutionContext.class);
     expect(executionContext.getAndroidPlatformTarget()).andReturn(androidPlatformTarget);
+    expect(executionContext.getProjectDirectoryRoot()).andReturn(Paths.get("/"));
     expect(executionContext.getProjectFilesystem()).andReturn(
         new ProjectFilesystem(Paths.get(".")) {
           @Override
@@ -106,7 +105,7 @@ public class GenAidlTest {
     ShellStep aidlStep = (ShellStep) steps.get(2);
     assertEquals(
         "gen_aidl() should use the aidl binary to write .java files.",
-        String.format("%s -b -p%s -I%s -o%s %s",
+        String.format("(cd / && %s -b -p%s -I%s -o%s %s)",
             pathToAidlExecutable,
             pathToFrameworkAidl,
             importPath,

@@ -18,7 +18,6 @@ package com.facebook.buck.android;
 
 import com.facebook.buck.android.AndroidLibraryGraphEnhancer.ResourceDependencyMode;
 import com.facebook.buck.java.AnnotationProcessingParams;
-import com.facebook.buck.java.ImmutableJavacOptions;
 import com.facebook.buck.java.JavaLibrary;
 import com.facebook.buck.java.JavaLibraryDescription;
 import com.facebook.buck.java.JavaSourceJar;
@@ -29,14 +28,17 @@ import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
+import com.facebook.buck.rules.BuildRules;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.SourcePaths;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.base.Optional;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Iterables;
 
 import java.nio.file.Path;
 
@@ -44,6 +46,9 @@ public class AndroidLibraryDescription
     implements Description<AndroidLibraryDescription.Arg>, Flavored {
 
   public static final BuildRuleType TYPE = BuildRuleType.of("android_library");
+
+  private static final Flavor DUMMY_R_DOT_JAVA_FLAVOR =
+      AndroidLibraryGraphEnhancer.DUMMY_R_DOT_JAVA_FLAVOR;
 
   private final JavacOptions defaultOptions;
 
@@ -71,62 +76,82 @@ public class AndroidLibraryDescription
       return new JavaSourceJar(params, pathResolver, args.srcs.get());
     }
 
-    ImmutableJavacOptions.Builder javacOptions = JavaLibraryDescription.getJavacOptions(
-        resolver,
-        pathResolver,
-        args,
-        defaultOptions);
+    JavacOptions.Builder javacOptionsBuilder =
+        JavaLibraryDescription.getJavacOptions(
+            pathResolver,
+            args,
+            defaultOptions);
 
     AnnotationProcessingParams annotationParams = args.buildAnnotationProcessingParams(
         params.getBuildTarget(),
         params.getProjectFilesystem(),
         resolver);
-    javacOptions.setAnnotationProcessingParams(annotationParams);
+    javacOptionsBuilder.setAnnotationProcessingParams(annotationParams);
+
+    JavacOptions javacOptions = javacOptionsBuilder.build();
 
     AndroidLibraryGraphEnhancer graphEnhancer = new AndroidLibraryGraphEnhancer(
         params.getBuildTarget(),
         params.copyWithExtraDeps(
             Suppliers.ofInstance(resolver.getAllRules(args.exportedDeps.get()))),
-        javacOptions.build(),
+        javacOptions,
         ResourceDependencyMode.FIRST_ORDER);
-    Optional<DummyRDotJava> dummyRDotJava = graphEnhancer.createBuildableForAndroidResources(
+
+    boolean hasDummyRDotJavaFlavor =
+        params.getBuildTarget().getFlavors().contains(DUMMY_R_DOT_JAVA_FLAVOR);
+    Optional<DummyRDotJava> dummyRDotJava = graphEnhancer.getBuildableForAndroidResources(
         resolver,
-        /* createBuildableIfEmpty */ false);
+        /* createBuildableIfEmpty */ hasDummyRDotJavaFlavor);
 
-    ImmutableSet<Path> additionalClasspathEntries = ImmutableSet.of();
-    if (dummyRDotJava.isPresent()) {
-      additionalClasspathEntries = ImmutableSet.of(dummyRDotJava.get().getRDotJavaBinFolder());
-      ImmutableSortedSet<BuildRule> newDeclaredDeps = ImmutableSortedSet.<BuildRule>naturalOrder()
-          .addAll(params.getDeclaredDeps())
-          .add(dummyRDotJava.get())
-          .build();
-      params = params.copyWithDeps(
-          Suppliers.ofInstance(newDeclaredDeps),
-          Suppliers.ofInstance(params.getExtraDeps()));
+    if (hasDummyRDotJavaFlavor) {
+      return dummyRDotJava.get();
+    } else {
+      ImmutableSet<Path> additionalClasspathEntries = ImmutableSet.of();
+      if (dummyRDotJava.isPresent()) {
+        additionalClasspathEntries = ImmutableSet.of(dummyRDotJava.get().getRDotJavaBinFolder());
+        ImmutableSortedSet<BuildRule> newDeclaredDeps = ImmutableSortedSet.<BuildRule>naturalOrder()
+            .addAll(params.getDeclaredDeps())
+            .add(dummyRDotJava.get())
+            .build();
+        params = params.copyWithDeps(
+            Suppliers.ofInstance(newDeclaredDeps),
+            Suppliers.ofInstance(params.getExtraDeps()));
+      }
+
+      ImmutableSortedSet<BuildRule> exportedDeps = resolver.getAllRules(args.exportedDeps.get());
+      return new AndroidLibrary(
+          params.appendExtraDeps(
+              Iterables.concat(
+                  BuildRules.getExportedRules(
+                      Iterables.concat(
+                          params.getDeclaredDeps(),
+                          exportedDeps,
+                          resolver.getAllRules(args.providedDeps.get()))),
+                  pathResolver.filterBuildRuleInputs(
+                      javacOptions.getInputs(pathResolver)))),
+          pathResolver,
+          args.srcs.get(),
+          JavaLibraryDescription.validateResources(
+              pathResolver,
+              args,
+              params.getProjectFilesystem()),
+          args.proguardConfig.transform(SourcePaths.toSourcePath(params.getProjectFilesystem())),
+          args.postprocessClassesCommands.get(),
+          exportedDeps,
+          resolver.getAllRules(args.providedDeps.get()),
+          additionalClasspathEntries,
+          javacOptions,
+          args.resourcesRoot,
+          args.manifest,
+          /* isPrebuiltAar */ false);
     }
-
-    return new AndroidLibrary(
-        params,
-        pathResolver,
-        args.srcs.get(),
-        JavaLibraryDescription.validateResources(
-            pathResolver,
-            args,
-            params.getProjectFilesystem()),
-        args.proguardConfig,
-        args.postprocessClassesCommands.get(),
-        resolver.getAllRules(args.exportedDeps.get()),
-        resolver.getAllRules(args.providedDeps.get()),
-        additionalClasspathEntries,
-        javacOptions.build(),
-        args.resourcesRoot,
-        args.manifest,
-        /* isPrebuiltAar */ false);
   }
 
   @Override
   public boolean hasFlavors(ImmutableSet<Flavor> flavors) {
-    return flavors.contains(JavaLibrary.SRC_JAR) || flavors.isEmpty();
+    return flavors.isEmpty() ||
+        flavors.equals(ImmutableSet.of(JavaLibrary.SRC_JAR)) ||
+        flavors.equals(ImmutableSet.of(DUMMY_R_DOT_JAVA_FLAVOR));
   }
 
   @SuppressFieldNotInitialized

@@ -20,31 +20,21 @@ import static com.facebook.buck.util.BuckConstant.GEN_DIR;
 import static org.junit.Assert.assertEquals;
 
 import com.facebook.buck.android.AndroidBinaryBuilder;
-import com.facebook.buck.android.AndroidDirectoryResolver;
 import com.facebook.buck.android.AndroidLibraryBuilder;
-import com.facebook.buck.android.FakeAndroidDirectoryResolver;
-import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckEventBusFactory;
-import com.facebook.buck.java.FakeJavaPackageFinder;
 import com.facebook.buck.java.JavaLibraryBuilder;
 import com.facebook.buck.java.JavaTestBuilder;
 import com.facebook.buck.java.KeystoreBuilder;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
-import com.facebook.buck.parser.ParserConfig;
-import com.facebook.buck.rules.ArtifactCache;
-import com.facebook.buck.rules.FakeRepositoryFactory;
-import com.facebook.buck.rules.NoopArtifactCache;
-import com.facebook.buck.rules.Repository;
+import com.facebook.buck.rules.TargetGraphToActionGraph;
+import com.facebook.buck.rules.TargetGraphTransformer;
 import com.facebook.buck.rules.TargetNode;
-import com.facebook.buck.rules.TestRepositoryBuilder;
 import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.testutil.TargetGraphFactory;
 import com.facebook.buck.testutil.TestConsole;
-import com.facebook.buck.util.environment.Platform;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.facebook.buck.util.NullFileHashCache;
 import com.google.common.base.Joiner;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Sets;
@@ -61,29 +51,20 @@ public class AuditClasspathCommandTest {
 
   private TestConsole console;
   private AuditClasspathCommand auditClasspathCommand;
+  private CommandRunnerParams params;
+  private TargetGraphTransformer targetGraphTransformer;
 
   @Before
   public void setUp() throws IOException, InterruptedException {
     console = new TestConsole();
-    AndroidDirectoryResolver androidDirectoryResolver = new FakeAndroidDirectoryResolver();
-    ArtifactCache artifactCache = new NoopArtifactCache();
-    BuckEventBus eventBus = BuckEventBusFactory.newInstance();
-
-    Repository repository = new TestRepositoryBuilder().build();
-
-    auditClasspathCommand = new AuditClasspathCommand(
-        CommandRunnerParamsForTesting.createCommandRunnerParamsForTesting(
-            console,
-            new FakeRepositoryFactory(),
-            repository,
-            androidDirectoryResolver,
-            new InstanceArtifactCacheFactory(artifactCache),
-            eventBus,
-            new ParserConfig(new FakeBuckConfig()),
-            Platform.detect(),
-            ImmutableMap.copyOf(System.getenv()),
-            new FakeJavaPackageFinder(),
-            new ObjectMapper()));
+    auditClasspathCommand = new AuditClasspathCommand();
+    params = CommandRunnerParamsForTesting.builder()
+        .setConsole(console)
+        .build();
+    targetGraphTransformer = new TargetGraphToActionGraph(
+        BuckEventBusFactory.newInstance(),
+        new BuildTargetNodeToBuildRuleTransformer(),
+        new NullFileHashCache());
   }
 
   @Test
@@ -91,7 +72,9 @@ public class AuditClasspathCommandTest {
       throws IOException, InterruptedException {
     // Test that no output is created.
     auditClasspathCommand.printClasspath(
+        params,
         TargetGraphFactory.newInstance(ImmutableSet.<TargetNode<?>>of()),
+        targetGraphTransformer,
         ImmutableSet.<BuildTarget>of());
     assertEquals("", console.getTextWrittenToStdOut());
     assertEquals("", console.getTextWrittenToStdErr());
@@ -121,7 +104,6 @@ public class AuditClasspathCommandTest {
     TargetNode<?> testAndroidNode = AndroidBinaryBuilder
         .createBuilder(testAndroidTarget)
         .setManifest(new TestSourcePath("AndroidManifest.xml"))
-        .setTarget("Google Inc.:Google APIs:16")
         .setKeystore(keystoreTarget)
         .setOriginalDeps(ImmutableSortedSet.of(androidLibraryTarget, javaLibraryTarget))
         .build();
@@ -135,6 +117,7 @@ public class AuditClasspathCommandTest {
         .build();
 
     auditClasspathCommand.printClasspath(
+        params,
         TargetGraphFactory.newInstance(
             ImmutableSet.of(
                 javaLibraryNode,
@@ -142,6 +125,7 @@ public class AuditClasspathCommandTest {
                 keystoreNode,
                 testAndroidNode,
                 testJavaNode)),
+        targetGraphTransformer,
         ImmutableSet.<BuildTarget>of());
 
     // Still empty.
@@ -153,6 +137,7 @@ public class AuditClasspathCommandTest {
     // - dependencies are walked
     // - independent targets in the same BUCK file are not included in the output
     auditClasspathCommand.printClasspath(
+        params,
         TargetGraphFactory.newInstance(
             ImmutableSet.of(
                 javaLibraryNode,
@@ -160,6 +145,7 @@ public class AuditClasspathCommandTest {
                 keystoreNode,
                 testAndroidNode,
                 testJavaNode)),
+        targetGraphTransformer,
         ImmutableSet.of(
             testAndroidTarget));
 
@@ -178,6 +164,7 @@ public class AuditClasspathCommandTest {
     // Note that the output streams are reset.
     setUp();
     auditClasspathCommand.printClasspath(
+        params,
         TargetGraphFactory.newInstance(
             ImmutableSet.of(
                 javaLibraryNode,
@@ -185,6 +172,7 @@ public class AuditClasspathCommandTest {
                 keystoreNode,
                 testAndroidNode,
                 testJavaNode)),
+        targetGraphTransformer,
         ImmutableSet.of(
             testAndroidTarget,
             javaLibraryTarget,
@@ -228,10 +216,12 @@ public class AuditClasspathCommandTest {
         .build();
 
     auditClasspathCommand.printJsonClasspath(
+        params,
         TargetGraphFactory.newInstance(
             ImmutableSet.of(
                 androidNode,
                 javaNode)),
+        targetGraphTransformer,
         ImmutableSet.of(
             androidTarget,
             javaTarget));

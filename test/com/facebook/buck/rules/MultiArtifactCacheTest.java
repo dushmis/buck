@@ -17,9 +17,17 @@
 package com.facebook.buck.rules;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThat;
 
+import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 
+import org.hamcrest.Matchers;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.File;
@@ -28,11 +36,16 @@ import java.io.IOException;
 import javax.annotation.Nullable;
 
 public class MultiArtifactCacheTest {
+
+  @Rule
+  public DebuggableTemporaryFolder tmp = new DebuggableTemporaryFolder();
+
   private static final RuleKey dummyRuleKey =
       new RuleKey("76b1c1beae69428db2d1befb31cf743ac8ce90df");
   private static final File dummyFile = new File("dummy");
 
-  class DummyArtifactCache implements ArtifactCache {
+  class DummyArtifactCache extends NoopArtifactCache {
+
     @Nullable public RuleKey storeKey;
 
     public void reset() {
@@ -41,12 +54,15 @@ public class MultiArtifactCacheTest {
 
     @Override
     public CacheResult fetch(RuleKey ruleKey, File output) {
-      return ruleKey.equals(storeKey) ? CacheResult.LOCAL_KEY_UNCHANGED_HIT : CacheResult.MISS;
+      return ruleKey.equals(storeKey) ? CacheResult.hit("cache") : CacheResult.miss();
     }
 
     @Override
-    public void store(RuleKey ruleKey, File output) {
-      storeKey = ruleKey;
+    public void store(
+        ImmutableSet<RuleKey> ruleKeys,
+        ImmutableMap<String, String> metadata,
+        File output) {
+      storeKey = Iterables.getFirst(ruleKeys, null);
     }
 
     @Override
@@ -54,10 +70,16 @@ public class MultiArtifactCacheTest {
       return true;
     }
 
+  }
+
+  // An cache which always returns errors from fetching.
+  class ErroringArtifactCache extends NoopArtifactCache {
+
     @Override
-    public void close() {
-      // Nothing to complete - do nothing.
+    public CacheResult fetch(RuleKey ruleKey, File output) {
+      return CacheResult.error("cache", "error");
     }
+
   }
 
   @Test
@@ -68,21 +90,29 @@ public class MultiArtifactCacheTest {
         (ArtifactCache) dummyArtifactCache1,
         dummyArtifactCache2));
 
-    assertEquals("Fetch should fail",
-        CacheResult.MISS,
-        multiArtifactCache.fetch(dummyRuleKey, dummyFile));
+    assertEquals(
+        "Fetch should fail",
+        CacheResult.Type.MISS,
+        multiArtifactCache.fetch(dummyRuleKey, dummyFile).getType());
 
-    dummyArtifactCache1.store(dummyRuleKey, dummyFile);
-    assertEquals("Fetch should succeed after store",
-        CacheResult.LOCAL_KEY_UNCHANGED_HIT,
-        multiArtifactCache.fetch(dummyRuleKey, dummyFile));
+    dummyArtifactCache1.store(
+        ImmutableSet.of(dummyRuleKey),
+        ImmutableMap.<String, String>of(),
+        dummyFile);
+    assertEquals(
+        "Fetch should succeed after store",
+        CacheResult.Type.HIT,
+        multiArtifactCache.fetch(dummyRuleKey, dummyFile).getType());
 
     dummyArtifactCache1.reset();
     dummyArtifactCache2.reset();
-    dummyArtifactCache2.store(dummyRuleKey, dummyFile);
+    dummyArtifactCache2.store(
+        ImmutableSet.of(dummyRuleKey),
+        ImmutableMap.<String, String>of(),
+        dummyFile);
     assertEquals("Fetch should succeed after store",
-        CacheResult.LOCAL_KEY_UNCHANGED_HIT,
-        multiArtifactCache.fetch(dummyRuleKey, dummyFile));
+        CacheResult.Type.HIT,
+        multiArtifactCache.fetch(dummyRuleKey, dummyFile).getType());
 
     multiArtifactCache.close();
   }
@@ -95,9 +125,13 @@ public class MultiArtifactCacheTest {
         dummyArtifactCache1,
         dummyArtifactCache2));
 
-    multiArtifactCache.store(dummyRuleKey, dummyFile);
+    multiArtifactCache.store(
+        ImmutableSet.of(dummyRuleKey),
+        ImmutableMap.<String, String>of(),
+        dummyFile);
 
-    assertEquals("MultiArtifactCache.store() should store to all contained ArtifactCaches",
+    assertEquals(
+        "MultiArtifactCache.store() should store to all contained ArtifactCaches",
         dummyArtifactCache1.storeKey,
         dummyRuleKey);
     assertEquals("MultiArtifactCache.store() should store to all contained ArtifactCaches",
@@ -106,4 +140,40 @@ public class MultiArtifactCacheTest {
 
     multiArtifactCache.close();
   }
+
+  @Test
+  public void preserveErrorsFromInnerCache() throws InterruptedException, IOException {
+    ErroringArtifactCache inner = new ErroringArtifactCache();
+    MultiArtifactCache cache = new MultiArtifactCache(ImmutableList.<ArtifactCache>of(inner));
+    CacheResult result = cache.fetch(dummyRuleKey, dummyFile);
+    assertSame(result.getType(), CacheResult.Type.ERROR);
+    cache.close();
+  }
+
+  @Test
+  public void cacheFetchPushesMetadataToHigherCache() throws Exception {
+    InMemoryArtifactCache cache1 = new InMemoryArtifactCache();
+    InMemoryArtifactCache cache2 = new InMemoryArtifactCache();
+    MultiArtifactCache multiArtifactCache =
+        new MultiArtifactCache(ImmutableList.<ArtifactCache>of(
+            cache1,
+            cache2));
+
+    File output = tmp.newFile();
+
+    ImmutableMap<String, String> metadata = ImmutableMap.of("hello", "world");
+    cache2.store(ImmutableSet.of(dummyRuleKey), metadata, new byte[0]);
+    multiArtifactCache.fetch(dummyRuleKey, output);
+
+    CacheResult result = cache1.fetch(dummyRuleKey, output);
+    assertThat(
+        result.getType(),
+        Matchers.equalTo(CacheResult.Type.HIT));
+    assertThat(
+        result.getMetadata(),
+        Matchers.equalTo(metadata));
+
+    multiArtifactCache.close();
+  }
+
 }

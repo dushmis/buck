@@ -16,13 +16,13 @@
 
 package com.facebook.buck.apple;
 
+import static org.hamcrest.Matchers.emptyString;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.assertThat;
+
 import com.facebook.buck.util.HumanReadableException;
 import com.google.common.collect.ImmutableMap;
-
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.isEmptyString;
-
-import static org.junit.Assert.assertThat;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -42,7 +42,7 @@ public class InfoPlistSubstitutionTest {
         InfoPlistSubstitution.replaceVariablesInString(
             "",
             ImmutableMap.<String, String>of()),
-        isEmptyString());
+        is(emptyString()));
   }
 
   @Test
@@ -102,6 +102,18 @@ public class InfoPlistSubstitutionTest {
   }
 
   @Test
+  public void recursiveVariableThrows() {
+    thrown.expect(HumanReadableException.class);
+    thrown.expectMessage("Recursive plist variable: FOO -> BAR -> BAZ -> FOO");
+    InfoPlistSubstitution.replaceVariablesInString(
+        "Hello ${FOO}",
+        ImmutableMap.<String, String>of(
+            "FOO", "${BAR}",
+            "BAR", "${BAZ}",
+            "BAZ", "${FOO}"));
+  }
+
+  @Test
   public void mismatchedParenIgnored() {
     assertThat(
         InfoPlistSubstitution.replaceVariablesInString(
@@ -125,7 +137,8 @@ public class InfoPlistSubstitutionTest {
         InfoPlistSubstitution.replaceVariablesInString(
             "Hello ${FOO} world",
             ImmutableMap.of(
-                "FOO", "${BAZ}")),
-        equalTo("Hello ${BAZ} world"));
+                "FOO", "${BAZ}",
+                "BAZ", "$BAR")),
+        equalTo("Hello $BAR world"));
   }
 }

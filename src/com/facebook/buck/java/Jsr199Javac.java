@@ -16,14 +16,15 @@
 
 package com.facebook.buck.java;
 
+import com.facebook.buck.event.BuckEventBus;
+import com.facebook.buck.event.BuckTracingEventBusBridge;
 import com.facebook.buck.event.MissingSymbolEvent;
+import com.facebook.buck.event.api.BuckTracing;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTarget;
-import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.ExecutionContext;
-import com.facebook.buck.util.ClassLoaderCache;
 import com.facebook.buck.util.HumanReadableException;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Joiner;
@@ -36,6 +37,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -60,7 +62,6 @@ import javax.tools.JavaCompiler;
 import javax.tools.JavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
-import javax.tools.ToolProvider;
 
 /**
  * Command used to compile java libraries with a variety of ways to handle dependencies.
@@ -75,40 +76,18 @@ import javax.tools.ToolProvider;
  * {@code transitiveClasspathEntries} but warn the developer about which dependencies were in
  * the transitive classpath but not in the declared classpath.
  */
-public class Jsr199Javac implements Javac {
+public abstract class Jsr199Javac implements Javac {
 
   private static final Logger LOG = Logger.get(Jsr199Javac.class);
-  private static final JavacVersion VERSION = new JavacVersion() {
-    @Override
-    public String getVersionString() {
-      return "in memory";
-    }
-  };
+  private static final JavacVersion VERSION = JavacVersion.of("in memory");
 
   @Override
   public JavacVersion getVersion() {
     return VERSION;
   }
 
-  private Optional<Path> javacJar;
-
-  /**
-   * @param javacJar If absent, use the system compiler.  Otherwise, load the compiler from this
-   *                 path.
-   */
-  Jsr199Javac(Optional<Path> javacJar) {
-    // XXX: maybe we can accept a Provider<JavaCompiler> or just a JavaCompiler instance.
-    this.javacJar = javacJar;
-  }
-
-  @VisibleForTesting
-  public Optional<Path> getJavacJar() {
-    return javacJar;
-  }
-
   @Override
   public String getDescription(
-      ExecutionContext context,
       ImmutableList<String> options,
       ImmutableSet<Path> javaSourceFilePaths,
       Optional<Path> pathToSrcsList) {
@@ -135,48 +114,20 @@ public class Jsr199Javac implements Javac {
     return false;
   }
 
-  @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder, String key) {
-    return builder.setReflectively(key + ".javac", "jsr199")
-        .setReflectively(key + ".javac.version", "in-memory")
-        .setReflectively(key + ".javacjar", javacJar);
-  }
+  protected abstract JavaCompiler createCompiler(
+      ExecutionContext context,
+      SourcePathResolver resolver);
 
   @Override
   public int buildWithClasspath(
       ExecutionContext context,
+      SourcePathResolver resolver,
       BuildTarget invokingRule,
       ImmutableList<String> options,
       ImmutableSet<Path> javaSourceFilePaths,
       Optional<Path> pathToSrcsList,
       Optional<Path> workingDirectory) {
-    JavaCompiler compiler;
-
-    if (javacJar.isPresent()) {
-      ClassLoaderCache classLoaderCache = context.getClassLoaderCache();
-      ClassLoader compilerClassLoader = classLoaderCache.getClassLoaderForClassPath(
-          ClassLoader.getSystemClassLoader(),
-          ImmutableList.of(javacJar.get()));
-      try {
-        compiler = (JavaCompiler)
-            compilerClassLoader.loadClass("com.sun.tools.javac.api.JavacTool")
-            .newInstance();
-      } catch (ClassNotFoundException | IllegalAccessException | InstantiationException ex) {
-        throw new RuntimeException(ex);
-      }
-    } else {
-      synchronized (ToolProvider.class) {
-        // ToolProvider has no synchronization internally, so if we don't synchronize from the
-        // outside we could wind up loading the compiler classes multiple times from different
-        // class loaders.
-        compiler = ToolProvider.getSystemJavaCompiler();
-      }
-
-      if (compiler == null) {
-        throw new HumanReadableException(
-            "No system compiler found. Did you install the JRE instead of the JDK?");
-      }
-    }
+    JavaCompiler compiler = createCompiler(context, resolver);
 
     StandardJavaFileManager fileManager = compiler.getStandardFileManager(null, null, null);
     Iterable<? extends JavaFileObject> compilationUnits = ImmutableSet.of();
@@ -222,24 +173,36 @@ public class Jsr199Javac implements Javac {
         classNamesForAnnotationProcessing,
         compilationUnits);
 
-    // Ensure annotation processors are loaded from their own classloader. If we don't do this,
-    // then the evidence suggests that they get one polluted with Buck's own classpath, which
-    // means that libraries that have dependencies on different versions of Buck's deps may choke
-    // with novel errors that don't occur on the command line.
-    ProcessorBundle bundle = null;
-    boolean isSuccess;
-
+    boolean isSuccess = false;
+    BuckTracing.setCurrentThreadTracingInterfaceFromJsr199Javac(
+        new BuckTracingEventBusBridge(context.getBuckEventBus(), invokingRule));
     try {
-      bundle = prepareProcessors(
+      // Ensure annotation processors are loaded from their own classloader. If we don't do this,
+      // then the evidence suggests that they get one polluted with Buck's own classpath, which
+      // means that libraries that have dependencies on different versions of Buck's deps may choke
+      // with novel errors that don't occur on the command line.
+      try (ProcessorBundle bundle = prepareProcessors(
+          context.getBuckEventBus(),
           compiler.getClass().getClassLoader(),
           invokingRule,
-          options);
-      compilationTask.setProcessors(bundle.processors);
+          options)) {
+        compilationTask.setProcessors(bundle.processors);
 
-      // Invoke the compilation and inspect the result.
-      isSuccess = compilationTask.call();
+        // Invoke the compilation and inspect the result.
+        isSuccess = compilationTask.call();
+      } catch (IOException e) {
+        LOG.warn(e, "Unable to close annotation processor class loader. We may be leaking memory.");
+      } finally {
+        close(fileManager, compilationUnits);
+      }
     } finally {
-      close(fileManager, compilationUnits);
+      // Clear the tracing interface so we have no chance of leaking it to code that shouldn't
+      // be using it.
+      BuckTracing.clearCurrentThreadTracingInterfaceFromJsr199Javac();
+    }
+
+    for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
+      LOG.debug("javac: %s", DiagnosticPrettyPrinter.format(diagnostic));
     }
 
     if (isSuccess) {
@@ -258,7 +221,7 @@ public class Jsr199Javac implements Javac {
             ++numWarnings;
           }
 
-          context.getStdErr().println(diagnostic);
+          context.getStdErr().println(DiagnosticPrettyPrinter.format(diagnostic));
         }
 
         if (numErrors > 0 || numWarnings > 0) {
@@ -291,8 +254,9 @@ public class Jsr199Javac implements Javac {
   }
 
   private ProcessorBundle prepareProcessors(
+      BuckEventBus buckEventBus,
       ClassLoader compilerClassLoader,
-      @Nullable BuildTarget target,
+      BuildTarget target,
       List<String> options) {
     String processorClassPath = null;
     String processorNames = null;
@@ -353,12 +317,16 @@ public class Jsr199Javac implements Javac {
             Preconditions.checkNotNull(processorBundle.classLoader)
                 .loadClass(name)
                 .asSubclass(Processor.class);
-        processorBundle.processors.add(aClass.newInstance());
+        processorBundle.processors.add(
+            new TracingProcessorWrapper(
+                buckEventBus,
+                target,
+                aClass.newInstance()));
       } catch (ReflectiveOperationException e) {
         // If this happens, then the build is really in trouble. Better warn the user.
         throw new HumanReadableException(
             "%s: javac unable to load annotation processor: %s",
-            target != null ? target.getFullyQualifiedName() : "unknown target",
+            target.getFullyQualifiedName(),
             name);
       }
     }
@@ -402,8 +370,8 @@ public class Jsr199Javac implements Javac {
     JavacErrorParser javacErrorParser = new JavacErrorParser(
         context.getProjectFilesystem(),
         context.getJavaPackageFinder());
-    Optional<String> symbol =
-        javacErrorParser.getMissingSymbolFromCompilerError(diagnostic.toString());
+    Optional<String> symbol = javacErrorParser.getMissingSymbolFromCompilerError(
+        DiagnosticPrettyPrinter.format(diagnostic));
     if (!symbol.isPresent()) {
       // This error wasn't related to a missing symbol, as far as we can tell.
       return;
@@ -415,9 +383,16 @@ public class Jsr199Javac implements Javac {
     context.getBuckEventBus().post(event);
   }
 
-  private static class ProcessorBundle {
+  private static class ProcessorBundle implements Closeable {
     @Nullable
-    public ClassLoader classLoader;
+    public URLClassLoader classLoader;
     public List<Processor> processors = Lists.newArrayList();
+
+    @Override
+    public void close() throws IOException {
+      if (classLoader != null) {
+        classLoader.close();
+      }
+    }
   }
 }

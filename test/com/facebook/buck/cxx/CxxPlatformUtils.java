@@ -24,19 +24,21 @@ public class CxxPlatformUtils {
 
   private CxxPlatformUtils() {}
 
-  public static final ImmutableCxxPlatform DEFAULT_PLATFORM =
-      ImmutableCxxPlatform.builder()
+  public static final CxxPlatform DEFAULT_PLATFORM =
+      CxxPlatform.builder()
           .setFlavor(ImmutableFlavor.of("platform"))
           .setAs(new HashedFileTool(Paths.get("tool")))
           .setAspp(new HashedFileTool(Paths.get("tool")))
-          .setCc(new HashedFileTool(Paths.get("tool")))
+          .setCc(new DefaultCompiler(new HashedFileTool(Paths.get("tool"))))
           .setCpp(new HashedFileTool(Paths.get("tool")))
-          .setCxx(new HashedFileTool(Paths.get("tool")))
+          .setCxx(new DefaultCompiler(new HashedFileTool(Paths.get("tool"))))
           .setCxxpp(new HashedFileTool(Paths.get("tool")))
-          .setCxxld(new HashedFileTool(Paths.get("tool")))
+          .setCxxld(new GnuLinker(new HashedFileTool(Paths.get("tool"))))
           .setLd(new GnuLinker(new HashedFileTool(Paths.get("tool"))))
-          .setAr(new HashedFileTool(Paths.get("tool")))
+          .setStrip(new HashedFileTool(Paths.get("tool")))
+          .setAr(new GnuArchiver(new HashedFileTool(Paths.get("tool"))))
           .setSharedLibraryExtension(".so")
+          .setDebugPathSanitizer(CxxPlatforms.DEFAULT_DEBUG_PATH_SANITIZER)
           .build();
 
 }

@@ -20,7 +20,6 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetPattern;
 import com.facebook.buck.model.Pair;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.rules.Label;
 import com.facebook.buck.rules.SourcePath;
 import com.google.common.base.Preconditions;
@@ -36,48 +35,46 @@ import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.nio.file.Path;
+import java.util.regex.Pattern;
 
 /**
  * Create {@link TypeCoercer}s that can convert incoming java structures (from json) into particular
  * types.
  */
 public class TypeCoercerFactory {
-  private final TypeCoercer<Label> labelTypeCoercer = new LabelTypeCoercer();
-  private final TypeCoercer<Path> pathTypeCoercer = new PathTypeCoercer();
-  private final TypeCoercer<BuildTarget> buildTargetTypeCoercer;
-  private final TypeCoercer<SourcePath> sourcePathTypeCoercer;
 
-  // This has no implementation, but is here so that constructor succeeds so that it can be queried.
-  // This is only used for the visibility field, which is not actually handled by the coercer.
-  private final TypeCoercer<BuildTargetPattern> buildTargetPatternTypeCoercer =
-      new IdentityTypeCoercer<BuildTargetPattern>(BuildTargetPattern.class) {
-        @Override
-        public BuildTargetPattern coerce(
-            BuildTargetParser buildTargetParser,
-            ProjectFilesystem filesystem,
-            Path pathRelativeToProjectRoot,
-            Object object)
-            throws CoerceFailedException {
-          throw new UnsupportedOperationException();
-        }
-      };
+  private final TypeCoercer<Pattern> patternTypeCoercer = new PatternTypeCoercer();
 
-  private final TypeCoercer<String> stringTypeCoercer = new IdentityTypeCoercer<>(String.class);
-
-  private final TypeCoercer<SourceWithFlags> sourceWithFlagsTypeCoercer;
-
-  private final TypeCoercer<OCamlSource> ocamlSourceTypeCoercer;
-
-  private final TypeCoercer<?>[] nonContainerTypeCoercers;
+  private final TypeCoercer<?>[] nonParameterizedTypeCoercers;
 
   public TypeCoercerFactory() {
-    buildTargetTypeCoercer = new BuildTargetTypeCoercer();
-    sourcePathTypeCoercer = new SourcePathTypeCoercer(buildTargetTypeCoercer, pathTypeCoercer);
-    sourceWithFlagsTypeCoercer = new SourceWithFlagsTypeCoercer(
+    TypeCoercer<String> stringTypeCoercer = new IdentityTypeCoercer<>(String.class);
+    TypeCoercer<Path> pathTypeCoercer = new PathTypeCoercer();
+    TypeCoercer<Label> labelTypeCoercer = new LabelTypeCoercer();
+    // This has no implementation, but is here so that constructor succeeds so that it can be
+    // queried. This is only used for the visibility field, which is not actually handled by the
+    // coercer.
+    TypeCoercer<BuildTargetPattern> buildTargetPatternTypeCoercer =
+        new IdentityTypeCoercer<BuildTargetPattern>(BuildTargetPattern.class) {
+          @Override
+          public BuildTargetPattern coerce(
+              ProjectFilesystem filesystem,
+              Path pathRelativeToProjectRoot,
+              Object object)
+              throws CoerceFailedException {
+            throw new UnsupportedOperationException();
+          }
+        };
+    TypeCoercer<BuildTarget> buildTargetTypeCoercer = new BuildTargetTypeCoercer();
+    TypeCoercer<SourcePath> sourcePathTypeCoercer = new SourcePathTypeCoercer(
+        buildTargetTypeCoercer,
+        pathTypeCoercer);
+    TypeCoercer<SourceWithFlags> sourceWithFlagsTypeCoercer = new SourceWithFlagsTypeCoercer(
         sourcePathTypeCoercer,
         new ListTypeCoercer<>(stringTypeCoercer));
-    ocamlSourceTypeCoercer = new OCamlSourceTypeCoercer(sourcePathTypeCoercer);
-    nonContainerTypeCoercers = new TypeCoercer<?>[] {
+    TypeCoercer<OCamlSource> ocamlSourceTypeCoercer = new OCamlSourceTypeCoercer(
+        sourcePathTypeCoercer);
+    nonParameterizedTypeCoercers = new TypeCoercer<?>[] {
         // special classes
         labelTypeCoercer,
         pathTypeCoercer,
@@ -100,10 +97,12 @@ public class TypeCoercerFactory {
         // other simple
         sourceWithFlagsTypeCoercer,
         ocamlSourceTypeCoercer,
-        new AppleBundleDestinationTypeCoercer(stringTypeCoercer),
         new BuildConfigFieldsTypeCoercer(),
         new UriTypeCoercer(),
         new FrameworkPathTypeCoercer(sourcePathTypeCoercer),
+        new SourceWithFlagsListTypeCoercer(stringTypeCoercer, sourceWithFlagsTypeCoercer),
+        new SourceListTypeCoercer(stringTypeCoercer, sourcePathTypeCoercer),
+        patternTypeCoercer,
     };
   }
 
@@ -130,7 +129,7 @@ public class TypeCoercerFactory {
       }
 
       TypeCoercer<?> selectedTypeCoercer = null;
-      for (TypeCoercer<?> typeCoercer : nonContainerTypeCoercers) {
+      for (TypeCoercer<?> typeCoercer : nonParameterizedTypeCoercers) {
         if (rawClass.isAssignableFrom(typeCoercer.getOutputClass())) {
           if (selectedTypeCoercer == null) {
             selectedTypeCoercer = typeCoercer;
@@ -194,6 +193,10 @@ public class TypeCoercerFactory {
             typeCoercerForComparableType(parameterizedType.getActualTypeArguments()[0]),
             typeCoercerForType(parameterizedType.getActualTypeArguments()[1]));
         return sortedMapTypeCoercer;
+      } else if (rawClass.isAssignableFrom(PatternMatchedCollection.class)) {
+        return new PatternMatchedCollectionTypeCoercer<>(
+            patternTypeCoercer,
+            typeCoercerForType(getSingletonTypeParameter(parameterizedType)));
       } else {
         throw new IllegalArgumentException("Unhandled type: " + type);
       }

@@ -17,7 +17,6 @@
 package com.facebook.buck.java;
 
 import com.facebook.buck.cxx.CxxPlatform;
-import com.facebook.buck.graph.AbstractBreadthFirstTraversal;
 import com.facebook.buck.io.DefaultDirectoryTraverser;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.Flavor;
@@ -37,7 +36,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
@@ -68,32 +67,6 @@ public class JavaBinaryDescription implements Description<JavaBinaryDescription.
     return new Args();
   }
 
-  /**
-   * @return all the transitive native libraries we depend on, represented as a map from their
-   *     system-specific library names to their {@link SourcePath} objects.
-   */
-  private ImmutableMap<String, SourcePath> getNativeLibraries(Iterable<BuildRule> deps) {
-    final ImmutableMap.Builder<String, SourcePath> libraries = ImmutableMap.builder();
-
-    new AbstractBreadthFirstTraversal<BuildRule>(deps) {
-      @Override
-      public ImmutableSet<BuildRule> visit(BuildRule rule) {
-        if (rule instanceof JavaNativeLinkable) {
-          JavaNativeLinkable linkable = (JavaNativeLinkable) rule;
-          libraries.putAll(linkable.getSharedLibraries(cxxPlatform));
-        }
-        if (rule instanceof JavaNativeLinkable ||
-            rule instanceof JavaLibrary) {
-          return rule.getDeps();
-        } else {
-          return ImmutableSet.of();
-        }
-      }
-    }.start();
-
-    return libraries.build();
-  }
-
   @Override
   public <A extends Args> BuildRule createBuildRule(
       BuildRuleParams params,
@@ -101,38 +74,39 @@ public class JavaBinaryDescription implements Description<JavaBinaryDescription.
       A args) {
 
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
-    ImmutableMap<String, SourcePath> nativeLibraries = getNativeLibraries(params.getDeps());
+    ImmutableMap<String, SourcePath> nativeLibraries =
+        JavaLibraryRules.getNativeLibraries(params.getDeps(), cxxPlatform);
     BuildRuleParams binaryParams = params;
 
     // If we're packaging native libraries, we'll build the binary JAR in a separate rule and
     // package it into the final fat JAR, so adjust it's params to use a flavored target.
     if (!nativeLibraries.isEmpty()) {
       binaryParams = params.copyWithChanges(
-          params.getBuildRuleType(),
           BuildTarget.builder(params.getBuildTarget()).addFlavors(FAT_JAR_INNER_JAR_FLAVOR).build(),
           Suppliers.ofInstance(params.getDeclaredDeps()),
           Suppliers.ofInstance(params.getExtraDeps()));
     }
 
     // Construct the build rule to build the binary JAR.
+    ImmutableSetMultimap<JavaLibrary, Path> transitiveClasspathEntries =
+        Classpaths.getClasspathEntries(binaryParams.getDeps());
     BuildRule rule = new JavaBinary(
-        binaryParams,
+        binaryParams.appendExtraDeps(transitiveClasspathEntries.keys()),
         pathResolver,
         args.mainClass.orNull(),
         args.manifestFile.orNull(),
         args.mergeManifests.or(true),
         args.metaInfDirectory.orNull(),
         args.blacklist.or(ImmutableSortedSet.<String>of()),
-        new DefaultDirectoryTraverser());
+        new DefaultDirectoryTraverser(),
+        transitiveClasspathEntries);
 
     // If we're packaging native libraries, construct the rule to build the fat JAR, which packages
     // up the original binary JAR and any required native libraries.
     if (!nativeLibraries.isEmpty()) {
       BuildRule innerJarRule = rule;
       resolver.addToIndex(innerJarRule);
-      SourcePath innerJar = new BuildTargetSourcePath(
-          innerJarRule.getProjectFilesystem(),
-          innerJarRule.getBuildTarget());
+      SourcePath innerJar = new BuildTargetSourcePath(innerJarRule.getBuildTarget());
       rule = new JarFattener(
           params.appendExtraDeps(
               Suppliers.<Iterable<BuildRule>>ofInstance(

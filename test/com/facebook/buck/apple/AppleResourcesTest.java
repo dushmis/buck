@@ -16,24 +16,23 @@
 
 package com.facebook.buck.apple;
 
+import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasItems;
+import static org.junit.Assert.assertThat;
+
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.testutil.TargetGraphFactory;
-
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 
-import java.nio.file.Path;
+import java.util.Set;
 
-import static org.hamcrest.Matchers.empty;
-import static org.hamcrest.Matchers.hasItem;
-import static org.hamcrest.Matchers.hasItems;
-
-import static org.junit.Assert.assertThat;
 import org.junit.Test;
 
 public class AppleResourcesTest {
@@ -54,10 +53,17 @@ public class AppleResourcesTest {
   @Test
   public void libWithSingleResourceDepReturnsResource() {
     BuildTarget resourceTarget = BuildTarget.builder("//foo", "resource").build();
+
+    Set<SourcePath> variants = ImmutableSet.<SourcePath>of(
+        new TestSourcePath("path/aa.lproj/Localizable.strings"),
+        new TestSourcePath("path/bb.lproj/Localizable.strings"),
+        new TestSourcePath("path/cc.lproj/Localizable.strings"));
+
     TargetNode<AppleResourceDescription.Arg> resourceNode =
         AppleResourceBuilder.createBuilder(resourceTarget)
             .setFiles(ImmutableSet.<SourcePath>of(new TestSourcePath("foo.png")))
-            .setDirs(ImmutableSet.<Path>of())
+            .setDirs(ImmutableSet.<SourcePath>of())
+            .setVariants(Optional.of(variants))
             .build();
     TargetNode<AppleNativeTargetDescriptionArg> libNode = AppleLibraryBuilder
         .createBuilder(BuildTarget.builder("//foo", "lib").build())
@@ -83,7 +89,7 @@ public class AppleResourcesTest {
     TargetNode<AppleResourceDescription.Arg> fooResourceNode =
         AppleResourceBuilder.createBuilder(fooResourceTarget)
             .setFiles(ImmutableSet.<SourcePath>of(new TestSourcePath("foo.png")))
-            .setDirs(ImmutableSet.<Path>of())
+            .setDirs(ImmutableSet.<SourcePath>of())
             .build();
     BuildTarget fooLibTarget = BuildTarget.builder("//foo", "lib").build();
     TargetNode<AppleNativeTargetDescriptionArg> fooLibNode = AppleLibraryBuilder
@@ -94,7 +100,7 @@ public class AppleResourcesTest {
     TargetNode<AppleResourceDescription.Arg> barResourceNode =
         AppleResourceBuilder.createBuilder(barResourceTarget)
             .setFiles(ImmutableSet.<SourcePath>of(new TestSourcePath("bar.png")))
-            .setDirs(ImmutableSet.<Path>of())
+            .setDirs(ImmutableSet.<SourcePath>of())
             .build();
     TargetNode<AppleNativeTargetDescriptionArg> barLibNode = AppleLibraryBuilder
         .createBuilder(BuildTarget.builder("//bar", "lib").build())

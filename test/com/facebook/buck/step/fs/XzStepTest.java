@@ -19,8 +19,8 @@ package com.facebook.buck.step.fs;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.io.PathByteSource;
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.TestExecutionContext;
 import com.facebook.buck.testutil.integration.TestDataHelper;
@@ -66,7 +66,7 @@ public class XzStepTest {
         XZ.CHECK_CRC32);
 
     ProjectFilesystem fs = EasyMock.createMock(ProjectFilesystem.class);
-    EasyMock.expect(fs.deleteFileAtPath(sourceFile)).andReturn(true);
+    fs.deleteFileAtPath(sourceFile);
     EasyMock.replay(fs);
 
     ExecutionContext context = TestExecutionContext.newBuilder()

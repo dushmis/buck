@@ -16,6 +16,7 @@
 
 package com.facebook.buck.cxx;
 
+import com.facebook.buck.cxx.CxxDescriptionEnhancer.CxxLinkAndCompileRules;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.FlavorDomain;
@@ -31,6 +32,7 @@ import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.SymlinkTree;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
+import com.google.common.base.Optional;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
@@ -48,17 +50,17 @@ public class CxxBinaryDescription implements
   private final CxxBuckConfig cxxBuckConfig;
   private final CxxPlatform defaultCxxPlatform;
   private final FlavorDomain<CxxPlatform> cxxPlatforms;
-  private final CxxSourceRuleFactory.Strategy compileStrategy;
+  private final CxxPreprocessMode preprocessMode;
 
   public CxxBinaryDescription(
       CxxBuckConfig cxxBuckConfig,
       CxxPlatform defaultCxxPlatform,
       FlavorDomain<CxxPlatform> cxxPlatforms,
-      CxxSourceRuleFactory.Strategy compileStrategy) {
+      CxxPreprocessMode preprocessMode) {
     this.cxxBuckConfig = cxxBuckConfig;
     this.defaultCxxPlatform = defaultCxxPlatform;
     this.cxxPlatforms = cxxPlatforms;
-    this.compileStrategy = compileStrategy;
+    this.preprocessMode = preprocessMode;
   }
 
   /**
@@ -77,8 +79,8 @@ public class CxxBinaryDescription implements
         /* includeLexYaccHeaders */ true,
         CxxDescriptionEnhancer.parseLexSources(params, resolver, args),
         CxxDescriptionEnhancer.parseYaccSources(params, resolver, args),
-        CxxDescriptionEnhancer.parseHeaders(params, resolver, args),
-        CxxDescriptionEnhancer.HeaderVisibility.PRIVATE);
+        CxxDescriptionEnhancer.parseHeaders(params, resolver, cxxPlatform, args),
+        HeaderVisibility.PRIVATE);
   }
 
   @Override
@@ -115,7 +117,6 @@ public class CxxBinaryDescription implements
           .build();
       BuildRuleParams typeParams =
           params.copyWithChanges(
-              params.getBuildRuleType(),
               target,
               Suppliers.ofInstance(params.getDeclaredDeps()),
               Suppliers.ofInstance(params.getExtraDeps()));
@@ -128,27 +129,30 @@ public class CxxBinaryDescription implements
     }
 
     if (flavors.contains(CxxCompilationDatabase.COMPILATION_DATABASE)) {
-      CxxDescriptionEnhancer.createBuildRulesForCxxBinaryDescriptionArg(
-          params,
-          resolver,
-          cxxPlatform,
-          args,
-          compileStrategy);
-
+      BuildRuleParams paramsWithoutCompilationDatabaseFlavor = CxxCompilationDatabase
+          .paramsWithoutCompilationDatabaseFlavor(params);
+      CxxLinkAndCompileRules cxxLinkAndCompileRules = CxxDescriptionEnhancer
+          .createBuildRulesForCxxBinaryDescriptionArg(
+              paramsWithoutCompilationDatabaseFlavor,
+              resolver,
+              cxxPlatform,
+              args,
+              preprocessMode);
       return CxxCompilationDatabase.createCompilationDatabase(
           params,
-          resolver,
           new SourcePathResolver(resolver),
-          compileStrategy);
+          preprocessMode,
+          cxxLinkAndCompileRules.compileRules);
     }
 
-    CxxLink cxxLink =
-        CxxDescriptionEnhancer.createBuildRulesForCxxBinaryDescriptionArg(
+    CxxLinkAndCompileRules cxxLinkAndCompileRules = CxxDescriptionEnhancer
+        .createBuildRulesForCxxBinaryDescriptionArg(
             params,
             resolver,
             cxxPlatform,
             args,
-            compileStrategy);
+            preprocessMode);
+    CxxLink cxxLink = cxxLinkAndCompileRules.cxxLink;
 
     // Return a CxxBinary rule as our representative in the action graph, rather than the CxxLink
     // rule above for a couple reasons:
@@ -168,9 +172,12 @@ public class CxxBinaryDescription implements
                     .add(cxxLink)
                     .build()),
             Suppliers.ofInstance(params.getExtraDeps())),
+        resolver,
         new SourcePathResolver(resolver),
         cxxLink.getOutput(),
-        cxxLink);
+        cxxLink,
+        args.frameworkSearchPaths.get(),
+        args.tests.get());
   }
 
   @Override
@@ -210,7 +217,14 @@ public class CxxBinaryDescription implements
     return flavors.isEmpty();
   }
 
+  public enum LinkStyle {
+    STATIC,
+    SHARED,
+  }
+
   @SuppressFieldNotInitialized
-  public static class Arg extends CxxConstructorArg {}
+  public static class Arg extends CxxConstructorArg {
+    public Optional<LinkStyle> linkStyle;
+  }
 
 }

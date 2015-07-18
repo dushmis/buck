@@ -19,7 +19,6 @@ package com.facebook.buck.cxx;
 import com.facebook.buck.android.AndroidPackageable;
 import com.facebook.buck.android.AndroidPackageableCollector;
 import com.facebook.buck.model.BuildTarget;
-import com.facebook.buck.python.ImmutablePythonPackageComponents;
 import com.facebook.buck.python.PythonPackageComponents;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
@@ -27,8 +26,10 @@ import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
@@ -84,7 +85,7 @@ public final class FakeCxxLibrary extends AbstractCxxLibrary {
   @Override
   public CxxPreprocessorInput getCxxPreprocessorInput(
       CxxPlatform cxxPlatform,
-      CxxDescriptionEnhancer.HeaderVisibility headerVisibility) {
+      HeaderVisibility headerVisibility) {
       switch (headerVisibility) {
         case PUBLIC:
           return CxxPreprocessorInput.builder()
@@ -101,30 +102,52 @@ public final class FakeCxxLibrary extends AbstractCxxLibrary {
   }
 
   @Override
+  public ImmutableMap<BuildTarget, CxxPreprocessorInput> getTransitiveCxxPreprocessorInput(
+      CxxPlatform cxxPlatform, HeaderVisibility headerVisibility) {
+    ImmutableMap.Builder<BuildTarget, CxxPreprocessorInput> builder = ImmutableMap.builder();
+    builder.put(getBuildTarget(), getCxxPreprocessorInput(cxxPlatform, headerVisibility));
+    for (BuildRule dep : getDeps()) {
+      if (dep instanceof CxxPreprocessorDep) {
+        builder.putAll(
+            ((CxxPreprocessorDep) dep).getTransitiveCxxPreprocessorInput(
+                cxxPlatform,
+                headerVisibility));
+      }
+    }
+    return builder.build();
+  }
+
+  @Override
   public NativeLinkableInput getNativeLinkableInput(
       CxxPlatform cxxPlatform,
       Linker.LinkableDepType type) {
     return type == Linker.LinkableDepType.STATIC ?
-        ImmutableNativeLinkableInput.of(
+        NativeLinkableInput.of(
             ImmutableList.<SourcePath>of(
-                new BuildTargetSourcePath(getProjectFilesystem(), archive.getBuildTarget())),
-            ImmutableList.of(archiveOutput.toString())) :
-        ImmutableNativeLinkableInput.of(
-            ImmutableList.<SourcePath>of(
-                new BuildTargetSourcePath(
-                    getProjectFilesystem(),
-                    sharedLibrary.getBuildTarget())),
-            ImmutableList.of(sharedLibraryOutput.toString()));
+                new BuildTargetSourcePath(archive.getBuildTarget())),
+            ImmutableList.of(archiveOutput.toString()),
+            ImmutableSet.<Path>of()) :
+        NativeLinkableInput.of(
+            ImmutableList.<SourcePath>of(new BuildTargetSourcePath(sharedLibrary.getBuildTarget())),
+            ImmutableList.of(sharedLibraryOutput.toString()),
+            ImmutableSet.<Path>of());
+  }
+
+  @Override
+  public Optional<Linker.LinkableDepType> getPreferredLinkage(CxxPlatform cxxPlatform) {
+    return Optional.absent();
   }
 
   @Override
   public PythonPackageComponents getPythonPackageComponents(CxxPlatform cxxPlatform) {
-    return ImmutablePythonPackageComponents.of(
+    return PythonPackageComponents.of(
         ImmutableMap.<Path, SourcePath>of(),
         ImmutableMap.<Path, SourcePath>of(),
         ImmutableMap.<Path, SourcePath>of(
             Paths.get(sharedLibrarySoname),
-            new PathSourcePath(getProjectFilesystem(), sharedLibraryOutput)));
+            new PathSourcePath(getProjectFilesystem(), sharedLibraryOutput)),
+        ImmutableSet.<SourcePath>of(),
+        Optional.<Boolean>absent());
   }
 
   @Override
@@ -141,7 +164,7 @@ public final class FakeCxxLibrary extends AbstractCxxLibrary {
   }
 
   @Override
-  public ImmutableSortedSet<BuildTarget> getTests() {
-    return tests;
+  public boolean isTestedBy(BuildTarget testTarget) {
+    return tests.contains(testTarget);
   }
 }

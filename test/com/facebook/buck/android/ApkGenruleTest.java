@@ -22,6 +22,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import com.facebook.buck.event.BuckEventBusFactory;
+import com.facebook.buck.io.MorePathsForTests;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.JavaLibraryBuilder;
 import com.facebook.buck.java.JavaPackageFinder;
@@ -39,7 +40,6 @@ import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
-import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.ExopackageInfo;
 import com.facebook.buck.rules.FakeBuildRule;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
@@ -89,7 +89,7 @@ public class ApkGenruleTest {
       new Function<Path, Path>() {
         @Override
         public Path apply(Path path) {
-          return Paths.get("/opt/local/fbandroid").resolve(path);
+          return MorePathsForTests.rootRelativePath("/opt/local/fbandroid").resolve(path);
         }
       };
 
@@ -109,7 +109,6 @@ public class ApkGenruleTest {
 
     AndroidBinaryBuilder.createBuilder(BuildTargetFactory.newInstance("//:fb4a"))
         .setManifest(new TestSourcePath("AndroidManifest.xml"))
-        .setTarget("Google Inc.:Google APIs:16")
         .setOriginalDeps(ImmutableSortedSet.of(androidLibRule.getBuildTarget()))
         .setKeystore(keystore.getBuildTarget())
         .build(ruleResolver);
@@ -135,10 +134,7 @@ public class ApkGenruleTest {
     BuildTarget buildTarget = BuildTarget.builder("//src/com/facebook", "sign_fb4a").build();
     ApkGenruleDescription description = new ApkGenruleDescription();
     ApkGenruleDescription.Arg arg = description.createUnpopulatedConstructorArg();
-    arg.apk = new FakeInstallable(
-        AndroidBinaryDescription.TYPE,
-        apkTarget,
-        new SourcePathResolver(ruleResolver)).getBuildTarget();
+    arg.apk = new FakeInstallable(apkTarget, new SourcePathResolver(ruleResolver)).getBuildTarget();
     arg.bash = Optional.of("");
     arg.cmd = Optional.of("python signer.py $APK key.properties > $OUT");
     arg.cmdExe = Optional.of("");
@@ -159,7 +155,8 @@ public class ApkGenruleTest {
 
     // Verify all of the observers of the Genrule.
     String expectedApkOutput =
-        "/opt/local/fbandroid/" + GEN_DIR + "/src/com/facebook/sign_fb4a.apk";
+        MorePathsForTests.rootRelativePath(
+            "/opt/local/fbandroid/" + GEN_DIR + "/src/com/facebook/sign_fb4a.apk").toString();
     assertEquals(expectedApkOutput,
         apkGenrule.getAbsoluteOutputFilePath());
     assertEquals(
@@ -198,8 +195,9 @@ public class ApkGenruleTest {
         "First command should delete the output file to be written by the genrule.",
         ImmutableList.of(
             "rm",
+            "-r",
             "-f",
-            apkGenrule.getPathToOutputFile().toString()),
+            apkGenrule.getPathToOutput().toString()),
         rmCommand.getShellCommand(executionContext));
 
     Step secondStep = steps.get(1);
@@ -261,11 +259,8 @@ public class ApkGenruleTest {
 
   private static class FakeInstallable extends FakeBuildRule implements InstallableApk {
 
-    public FakeInstallable(
-        BuildRuleType type,
-        BuildTarget buildTarget,
-        SourcePathResolver resolver) {
-      super(type, buildTarget, resolver);
+    public FakeInstallable(BuildTarget buildTarget, SourcePathResolver resolver) {
+      super(buildTarget, resolver);
     }
 
     @Override

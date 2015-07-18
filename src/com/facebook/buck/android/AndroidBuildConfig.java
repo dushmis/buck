@@ -18,11 +18,11 @@ package com.facebook.buck.android;
 
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.coercer.BuildConfigFields;
@@ -35,7 +35,6 @@ import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 
 import java.io.IOException;
@@ -130,9 +129,13 @@ import javax.annotation.Nullable;
  */
 public class AndroidBuildConfig extends AbstractBuildRule {
 
+  @AddToRuleKey
   private final String javaPackage;
+  @AddToRuleKey(stringify = true)
   private final BuildConfigFields defaultValues;
+  @AddToRuleKey
   private final Optional<SourcePath> valuesFile;
+  @AddToRuleKey
   private final boolean useConstantExpressions;
   private final Path pathToOutputFile;
 
@@ -150,20 +153,6 @@ public class AndroidBuildConfig extends AbstractBuildRule {
     this.useConstantExpressions = useConstantExpressions;
     this.pathToOutputFile = BuildTargets.getGenPath(buildRuleParams.getBuildTarget(), "__%s__")
         .resolve("BuildConfig.java");
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return getResolver().filterInputsToCompareToOutput(valuesFile.asSet());
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder
-        .setReflectively("javaPackage", javaPackage)
-        .setReflectively("valuesFile", valuesFile.isPresent() ? valuesFile.get().toString() : null)
-        .setReflectively("useConstantExpressions", useConstantExpressions)
-        .setReflectively("defaultValues", defaultValues.toString());
   }
 
   @Override
@@ -200,7 +189,7 @@ public class AndroidBuildConfig extends AbstractBuildRule {
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return pathToOutputFile;
   }
 

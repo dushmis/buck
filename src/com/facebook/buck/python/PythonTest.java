@@ -21,6 +21,7 @@ import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
+import com.facebook.buck.rules.HasRuntimeDeps;
 import com.facebook.buck.rules.Label;
 import com.facebook.buck.rules.NoopBuildRule;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -39,14 +40,16 @@ import com.google.common.base.Optional;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
 @SuppressWarnings("PMD.TestClassWithoutTestCases")
-public class PythonTest extends NoopBuildRule implements TestRule {
+public class PythonTest extends NoopBuildRule implements TestRule, HasRuntimeDeps {
 
   private final PythonBinary binary;
+  private final ImmutableSortedSet<BuildRule> additionalDeps;
   private final ImmutableSet<Label> labels;
   private final ImmutableSet<String> contacts;
   private final ImmutableSet<BuildRule> sourceUnderTest;
@@ -55,6 +58,7 @@ public class PythonTest extends NoopBuildRule implements TestRule {
       BuildRuleParams params,
       SourcePathResolver resolver,
       PythonBinary binary,
+      ImmutableSortedSet<BuildRule> additionalDeps,
       ImmutableSet<BuildRule> sourceUnderTest,
       ImmutableSet<Label> labels,
       ImmutableSet<String> contacts) {
@@ -62,6 +66,7 @@ public class PythonTest extends NoopBuildRule implements TestRule {
     super(params, resolver);
 
     this.binary = binary;
+    this.additionalDeps = additionalDeps;
     this.sourceUnderTest = sourceUnderTest;
     this.labels = labels;
     this.contacts = contacts;
@@ -73,8 +78,8 @@ public class PythonTest extends NoopBuildRule implements TestRule {
       @Override
       protected ImmutableList<String> getShellCommandInternal(ExecutionContext context) {
         ProjectFilesystem fs = context.getProjectFilesystem();
-        ImmutableList.Builder<String> builder = new ImmutableList.Builder<String>();
-        builder.addAll(binary.getExecutableCommand(fs));
+        ImmutableList.Builder<String> builder = new ImmutableList.Builder<>();
+        builder.addAll(binary.getExecutableCommand().getCommandPrefix(getResolver()));
         builder.add("-o", fs.resolve(getPathToTestOutputResult()).toString());
         return builder.build();
       }
@@ -93,7 +98,8 @@ public class PythonTest extends NoopBuildRule implements TestRule {
       ExecutionContext executionContext,
       boolean isDryRun,
       boolean isShufflingTests,
-      TestSelectorList testSelectorList) {
+      TestSelectorList testSelectorList,
+      TestRule.TestReportingCallback testReportingCallback) {
     return ImmutableList.of(
         new MakeCleanDirectoryStep(getPathToTestOutputDirectory()),
         getRunTestStep());
@@ -161,4 +167,24 @@ public class PythonTest extends NoopBuildRule implements TestRule {
     };
   }
 
+  @Override
+  public boolean runTestSeparately() {
+    return false;
+  }
+
+  // A python test rule is actually just a {@link NoopBuildRule} which contains a references to
+  // a {@link PythonBinary} rule, which is the actual test binary.  Therefore, we *need* this
+  // rule around to run this test, so model this via the {@link HasRuntimeDeps} interface.
+  @Override
+  public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
+    return ImmutableSortedSet.<BuildRule>naturalOrder()
+        .add(binary)
+        .addAll(additionalDeps)
+        .build();
+  }
+
+  @Override
+  public boolean supportsStreamingTests() {
+    return false;
+  }
 }

@@ -32,13 +32,12 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.Files;
 
-import java.util.List;
-
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
 import java.io.IOException;
+import java.util.List;
 
 public class TargetsCommandIntegrationTest {
 
@@ -62,7 +61,7 @@ public class TargetsCommandIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "targets",
-        "--show_output",
+        "--show-output",
         "//:test");
     result.assertSuccess();
     assertEquals("//:test buck-out/gen/test-output\n", result.getStdout());
@@ -76,10 +75,10 @@ public class TargetsCommandIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "targets",
-        "--show_rulekey",
+        "--show-rulekey",
         "//:test");
     result.assertSuccess();
-    assertEquals("//:test 1daea9887d3ccc0ec2cdafb5f330b45e75b0e2be\n", result.getStdout());
+    assertEquals("//:test 8df358d272c27e9671f35759b8be58abc8a68ff8\n", result.getStdout());
   }
 
   @Test
@@ -90,12 +89,12 @@ public class TargetsCommandIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "targets",
-        "--show_rulekey",
-        "--show_output",
+        "--show-rulekey",
+        "--show-output",
         "//:test");
     result.assertSuccess();
     assertEquals(
-        "//:test 1daea9887d3ccc0ec2cdafb5f330b45e75b0e2be buck-out/gen/test-output\n",
+        "//:test 8df358d272c27e9671f35759b8be58abc8a68ff8 buck-out/gen/test-output\n",
         result.getStdout());
   }
 
@@ -107,7 +106,7 @@ public class TargetsCommandIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "targets",
-        "--show_output");
+        "--show-output");
     result.assertFailure();
     assertEquals("BUILD FAILED: Must specify at least one build target.\n", result.getStderr());
   }
@@ -120,7 +119,7 @@ public class TargetsCommandIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "targets",
-        "--show_rulekey");
+        "--show-rulekey");
     result.assertFailure();
     assertEquals("BUILD FAILED: Must specify at least one build target.\n", result.getStderr());
   }
@@ -292,7 +291,7 @@ public class TargetsCommandIntegrationTest {
 
     ProcessResult result = workspace.runBuckCommand(
         "targets",
-        "--referenced_file",
+        "--referenced-file",
         ABSOLUTE_PATH_TO_FILE_OUTSIDE_THE_PROJECT_THAT_EXISTS_ON_THE_FS);
     result.assertSuccess("Even though the file is outside the project, " +
         "`buck targets` should succeed.");
@@ -309,7 +308,7 @@ public class TargetsCommandIntegrationTest {
         "targets",
         "--type",
         "prebuilt_jar",
-        "--referenced_file",
+        "--referenced-file",
         ABSOLUTE_PATH_TO_FILE_OUTSIDE_THE_PROJECT_THAT_EXISTS_ON_THE_FS,
         "libs/guava.jar", // relative path in project
         tmp.getRootPath().resolve("libs/junit.jar").toString()); // absolute path in project
@@ -334,7 +333,7 @@ public class TargetsCommandIntegrationTest {
     assertFalse(workspace.getFile(pathToNonExistentFile).exists());
     ProcessResult result = workspace.runBuckCommand(
         "targets",
-        "--referenced_file",
+        "--referenced-file",
         pathToNonExistentFile);
     result.assertSuccess("Even though the file does not exist, buck targets` should succeed.");
     assertEquals("Because no targets match, stdout should be empty.", "", result.getStdout());
@@ -346,23 +345,24 @@ public class TargetsCommandIntegrationTest {
         this, "target_validation", tmp);
     workspace.setUp();
 
-    ProcessResult result = workspace.runBuckCommand("targets", "--resolvealias", "//:test-library");
+    ProcessResult result = workspace.runBuckCommand(
+        "targets", "--resolve-alias", "//:test-library");
     assertTrue(result.getStdout(), result.getStdout().contains("//:test-library"));
 
     try {
-      workspace.runBuckCommand("targets", "--resolvealias", "//:");
+      workspace.runBuckCommand("targets", "--resolve-alias", "//:");
     } catch (HumanReadableException e) {
       assertEquals("//: cannot end with a colon", e.getMessage());
     }
 
     try {
-      workspace.runBuckCommand("targets", "--resolvealias", "//:test-libarry");
+      workspace.runBuckCommand("targets", "--resolve-alias", "//:test-libarry");
     } catch (HumanReadableException e) {
       assertEquals("//:test-libarry is not a valid target.", e.getMessage());
     }
 
     try {
-      workspace.runBuckCommand("targets", "--resolvealias", "//blah/foo");
+      workspace.runBuckCommand("targets", "--resolve-alias", "//blah/foo");
     } catch (HumanReadableException e) {
       assertEquals("//blah/foo must contain exactly one colon (found 0)", e.getMessage());
     }

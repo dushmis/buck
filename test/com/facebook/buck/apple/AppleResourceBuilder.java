@@ -21,8 +21,6 @@ import com.facebook.buck.rules.AbstractNodeBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.google.common.base.Optional;
 
-import java.nio.file.Path;
-import java.util.Map;
 import java.util.Set;
 
 public class AppleResourceBuilder extends AbstractNodeBuilder<AppleResourceDescription.Arg> {
@@ -35,7 +33,7 @@ public class AppleResourceBuilder extends AbstractNodeBuilder<AppleResourceDescr
     return new AppleResourceBuilder(target);
   }
 
-  public AppleResourceBuilder setDirs(Set<Path> dirs) {
+  public AppleResourceBuilder setDirs(Set<SourcePath> dirs) {
     arg.dirs = dirs;
     return this;
   }
@@ -45,7 +43,7 @@ public class AppleResourceBuilder extends AbstractNodeBuilder<AppleResourceDescr
     return this;
   }
 
-  public AppleResourceBuilder setVariants(Optional<Map<String, Map<String, SourcePath>>> variants) {
+  public AppleResourceBuilder setVariants(Optional<Set<SourcePath>> variants) {
     arg.variants = variants;
     return this;
   }

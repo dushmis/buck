@@ -22,11 +22,13 @@ import static org.junit.Assert.assertEquals;
 import com.facebook.buck.cli.BuckConfig;
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckEventBusFactory;
+import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.json.DefaultProjectBuildFileParserFactory;
 import com.facebook.buck.json.ProjectBuildFileParserFactory;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.parser.ParserConfig;
+import com.facebook.buck.python.PythonBuckConfig;
 import com.facebook.buck.rules.DefaultKnownBuildRuleTypes;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.testutil.TestConsole;
@@ -63,6 +65,10 @@ public class JavaSymbolFinderIntegrationTest {
         ImmutableList.of(projectFilesystem.getFileForRelativePath(".buckconfig")),
         Platform.detect(),
         ImmutableMap.copyOf(System.getenv()));
+    ParserConfig parserConfig = new ParserConfig(config);
+    PythonBuckConfig pythonBuckConfig = new PythonBuckConfig(
+        config,
+        new ExecutableFinder());
     ImmutableSet<Description<?>> allDescriptions =
         DefaultKnownBuildRuleTypes
         .getDefaultKnownBuildRuleTypes(projectFilesystem)
@@ -70,8 +76,11 @@ public class JavaSymbolFinderIntegrationTest {
     SrcRootsFinder srcRootsFinder = new SrcRootsFinder(projectFilesystem);
     ProjectBuildFileParserFactory projectBuildFileParserFactory =
         new DefaultProjectBuildFileParserFactory(
-            projectFilesystem,
-            new ParserConfig(config),
+            projectFilesystem.getRootPath(),
+            pythonBuckConfig.getPythonInterpreter(),
+            parserConfig.getAllowEmptyGlobs(),
+            parserConfig.getBuildFileName(),
+            parserConfig.getDefaultIncludes(),
             allDescriptions);
     BuckEventBus buckEventBus = BuckEventBusFactory.newInstance();
     JavaSymbolFinder finder = new JavaSymbolFinder(

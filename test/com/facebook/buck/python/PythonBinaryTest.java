@@ -33,8 +33,10 @@ import com.facebook.buck.rules.keys.DefaultRuleKeyBuilderFactory;
 import com.facebook.buck.testutil.FakeFileHashCache;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Charsets;
+import com.google.common.base.Optional;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -50,13 +52,13 @@ public class PythonBinaryTest {
   @Rule
   public final TemporaryFolder tmpDir = new TemporaryFolder();
 
-  private RuleKey.Builder.RuleKeyPair getRuleKeyForModuleLayout(
+  private RuleKey getRuleKeyForModuleLayout(
       RuleKeyBuilderFactory ruleKeyBuilderFactory,
+      SourcePathResolver resolver,
       String main, Path mainSrc,
       String mod1, Path src1,
       String mod2, Path src2) throws IOException {
     ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
-    SourcePathResolver resolver = new SourcePathResolver(new BuildRuleResolver());
 
     // The top-level python binary that lists the above libraries as deps.
     PythonBinary binary = new PythonBinary(
@@ -65,24 +67,27 @@ public class PythonBinaryTest {
         resolver,
         Paths.get("dummy_path_to_pex"),
         Paths.get("dummy_path_to_pex_runner"),
-        new PythonEnvironment(Paths.get("fake_python"), ImmutablePythonVersion.of("Python 2.7")),
+        ".pex",
+        new PythonEnvironment(Paths.get("fake_python"), PythonVersion.of("Python 2.7")),
         "main",
-        ImmutablePythonPackageComponents.of(
+        PythonPackageComponents.of(
             ImmutableMap.<Path, SourcePath>of(
                 Paths.get(main), new PathSourcePath(projectFilesystem, mainSrc),
                 Paths.get(mod1), new PathSourcePath(projectFilesystem, src1),
                 Paths.get(mod2), new PathSourcePath(projectFilesystem, src2)),
             ImmutableMap.<Path, SourcePath>of(),
-            ImmutableMap.<Path, SourcePath>of()));
+            ImmutableMap.<Path, SourcePath>of(),
+            ImmutableSet.<SourcePath>of(),
+            Optional.<Boolean>absent()));
 
     // Calculate and return the rule key.
-    RuleKey.Builder builder = ruleKeyBuilderFactory.newInstance(binary, resolver);
-    binary.appendToRuleKey(builder);
+    RuleKey.Builder builder = ruleKeyBuilderFactory.newInstance(binary);
     return builder.build();
   }
 
   @Test
   public void testRuleKeysFromModuleLayouts() throws IOException {
+    SourcePathResolver resolver = new SourcePathResolver(new BuildRuleResolver());
 
     // Create two different sources, which we'll swap in as different modules.
     Path main = tmpDir.newFile().toPath();
@@ -103,36 +108,41 @@ public class PythonBinaryTest {
                 ImmutableMap.of(
                     mainRelative.toString(), Strings.repeat("a", 40),
                     source1Relative.toString(), Strings.repeat("b", 40),
-                    source2Relative.toString(), Strings.repeat("c", 40))));
+                    source2Relative.toString(), Strings.repeat("c", 40))),
+            resolver);
 
     // Calculate the rule keys for the various ways we can layout the source and modules
     // across different python libraries.
-    RuleKey.Builder.RuleKeyPair pair1 = getRuleKeyForModuleLayout(
+    RuleKey pair1 = getRuleKeyForModuleLayout(
         ruleKeyBuilderFactory,
+        resolver,
         "main.py", mainRelative,
         "module/one.py", source1Relative,
         "module/two.py", source2Relative);
-    RuleKey.Builder.RuleKeyPair pair2 = getRuleKeyForModuleLayout(
+    RuleKey pair2 = getRuleKeyForModuleLayout(
         ruleKeyBuilderFactory,
+        resolver,
         "main.py", mainRelative,
         "module/two.py", source2Relative,
         "module/one.py", source1Relative);
-    RuleKey.Builder.RuleKeyPair pair3 = getRuleKeyForModuleLayout(
+    RuleKey pair3 = getRuleKeyForModuleLayout(
         ruleKeyBuilderFactory,
+        resolver,
         "main.py", mainRelative,
         "module/one.py", source2Relative,
         "module/two.py", source1Relative);
-    RuleKey.Builder.RuleKeyPair pair4 = getRuleKeyForModuleLayout(
+    RuleKey pair4 = getRuleKeyForModuleLayout(
         ruleKeyBuilderFactory,
+        resolver,
         "main.py", mainRelative,
         "module/two.py", source1Relative,
         "module/one.py", source2Relative);
 
     // Make sure only cases where the actual module layouts are different result
     // in different rules keys.
-    assertEquals(pair1.getTotalRuleKey(), pair2.getTotalRuleKey());
-    assertEquals(pair3.getTotalRuleKey(), pair4.getTotalRuleKey());
-    assertNotEquals(pair1.getTotalRuleKey(), pair3.getTotalRuleKey());
+    assertEquals(pair1, pair2);
+    assertEquals(pair3, pair4);
+    assertNotEquals(pair1, pair3);
   }
 
 }

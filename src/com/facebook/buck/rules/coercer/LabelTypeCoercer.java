@@ -17,8 +17,6 @@
 package com.facebook.buck.rules.coercer;
 
 import com.facebook.buck.io.ProjectFilesystem;
-import com.facebook.buck.parser.BuildTargetParser;
-import com.facebook.buck.rules.ImmutableLabel;
 import com.facebook.buck.rules.Label;
 
 import java.nio.file.Path;
@@ -31,12 +29,11 @@ public class LabelTypeCoercer extends LeafTypeCoercer<Label> {
 
   @Override
   public Label coerce(
-      BuildTargetParser buildTargetParser,
       ProjectFilesystem filesystem,
       Path pathRelativeToProjectRoot,
       Object object) throws CoerceFailedException {
     if (object instanceof String) {
-      return ImmutableLabel.of((String) object);
+      return Label.of((String) object);
     }
     throw CoerceFailedException.simple(object, getOutputClass());
   }

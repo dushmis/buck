@@ -21,106 +21,152 @@ import com.facebook.buck.json.BuildFileParseException;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetException;
+import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.parser.BuildTargetPatternParser;
 import com.facebook.buck.parser.ParserConfig;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetGraphAndTargets;
 import com.facebook.buck.rules.TargetNode;
+import com.facebook.buck.rules.TargetNodes;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
-import com.google.common.collect.Collections2;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Multimaps;
 import com.google.common.collect.Sets;
+import com.google.common.collect.TreeMultimap;
+
+import org.kohsuke.args4j.Argument;
+import org.kohsuke.args4j.Option;
 
 import java.io.IOException;
 import java.util.Collection;
-import java.util.Set;
+import java.util.List;
 
 
-public class AuditDependenciesCommand extends AbstractCommandRunner<AuditDependenciesOptions> {
+public class AuditDependenciesCommand extends AbstractCommand {
 
   private static final Logger LOG = Logger.get(AuditDependenciesCommand.class);
 
-  public AuditDependenciesCommand(CommandRunnerParams params) {
-    super(params);
+  @Option(name = "--json",
+      usage = "Output in JSON format")
+  private boolean generateJsonOutput;
+
+  public boolean shouldGenerateJsonOutput() {
+    return generateJsonOutput;
+  }
+
+  @Option(
+      name = "--include-tests",
+      usage = "Includes a target's tests with its dependencies. With the transitive flag, this " +
+          "prints the dependencies of the tests as well")
+  private boolean includeTests = false;
+
+  @Option(name = "--transitive",
+      aliases = { "-t" },
+      usage = "Whether to include transitive dependencies in the output")
+  private boolean transitive = false;
+
+  @Argument
+  private List<String> arguments = Lists.newArrayList();
+
+  public List<String> getArguments() {
+    return arguments;
+  }
+
+  @VisibleForTesting
+  void setArguments(List<String> arguments) {
+    this.arguments = arguments;
+  }
+
+  public boolean shouldShowTransitiveDependencies() {
+    return transitive;
+  }
+
+  public boolean shouldIncludeTests() {
+    return includeTests;
+  }
+
+  public List<String> getArgumentsFormattedAsBuildTargets(BuckConfig buckConfig) {
+    return getCommandLineBuildTargetNormalizer(buckConfig).normalizeAll(getArguments());
   }
 
   @Override
-  AuditDependenciesOptions createOptions(BuckConfig buckConfig) {
-    return new AuditDependenciesOptions(buckConfig);
-  }
-
-  @Override
-  int runCommandWithOptionsInternal(AuditDependenciesOptions options)
+  public int runWithoutHelp(final CommandRunnerParams params)
       throws IOException, InterruptedException {
     final ImmutableSet<String> fullyQualifiedBuildTargets = ImmutableSet.copyOf(
-        options.getArgumentsFormattedAsBuildTargets());
+        getArgumentsFormattedAsBuildTargets(params.getBuckConfig()));
 
     if (fullyQualifiedBuildTargets.isEmpty()) {
-      console.printBuildFailure("Must specify at least one build target.");
+      params.getConsole().printBuildFailure("Must specify at least one build target.");
       return 1;
     }
 
     ImmutableSet<BuildTarget> targets = FluentIterable
-        .from(options.getArgumentsFormattedAsBuildTargets())
+        .from(getArgumentsFormattedAsBuildTargets(params.getBuckConfig()))
         .transform(
             new Function<String, BuildTarget>() {
               @Override
               public BuildTarget apply(String input) {
-                return getParser().getBuildTargetParser().parse(
+                return BuildTargetParser.INSTANCE.parse(
                     input,
-                    BuildTargetPatternParser.fullyQualified(
-                        getParser().getBuildTargetParser()));
+                    BuildTargetPatternParser.fullyQualified());
               }
             })
         .toSet();
 
     TargetGraph graph;
     try {
-      graph = getParser().buildTargetGraphForBuildTargets(
+      graph = params.getParser().buildTargetGraphForBuildTargets(
           targets,
-          new ParserConfig(options.getBuckConfig()),
-          getBuckEventBus(),
-          console,
-          environment,
-          options.getEnableProfiling());
+          new ParserConfig(params.getBuckConfig()),
+          params.getBuckEventBus(),
+          params.getConsole(),
+          params.getEnvironment(),
+          getEnableProfiling());
     } catch (BuildTargetException | BuildFileParseException e) {
-      console.printBuildFailureWithoutStacktrace(e);
+      params.getConsole().printBuildFailureWithoutStacktrace(e);
       return 1;
     }
 
-    ImmutableSet<BuildTarget> targetsToPrint = options.shouldShowTransitiveDependencies() ?
-        getTransitiveDependencies(targets, graph) :
-        getImmediateDependencies(targets, graph);
-
-    if (options.shouldIncludeTests()) {
-      ImmutableSet.Builder<BuildTarget> targetsBuilder = ImmutableSet.builder();
-      targetsToPrint = targetsBuilder
-          .addAll(targetsToPrint)
-          .addAll(getTestTargetDependencies(targets, graph, options))
-          .build();
+    TreeMultimap<BuildTarget, BuildTarget> targetsAndDependencies = TreeMultimap.create();
+    for (BuildTarget target : targets) {
+      targetsAndDependencies.putAll(target, getDependenciesWithOptions(params, target, graph));
     }
 
-    Collection<String> namesToPrint = Collections2.transform(
-        targetsToPrint, new Function<BuildTarget, String>() {
-
-          @Override
-          public String apply(final BuildTarget target) {
-            return target.getFullyQualifiedName();
-          }
-        });
-
-    ImmutableSortedSet<String> sortedNames = ImmutableSortedSet.copyOf(namesToPrint);
-
-    if (options.shouldGenerateJsonOutput()) {
-      printJSON(sortedNames);
+    if (shouldGenerateJsonOutput()) {
+      printJSON(params, targetsAndDependencies);
     } else {
-      printToConsole(sortedNames);
+      printToConsole(params, targetsAndDependencies);
     }
 
     return 0;
+  }
+
+  @Override
+  public boolean isReadOnly() {
+    return true;
+  }
+
+  ImmutableSet<BuildTarget> getDependenciesWithOptions(
+      CommandRunnerParams params,
+      BuildTarget target,
+      TargetGraph graph) throws IOException, InterruptedException {
+    ImmutableSet<BuildTarget> targetsToPrint = shouldShowTransitiveDependencies() ?
+        getTransitiveDependencies(ImmutableSet.of(target), graph) :
+        getImmediateDependencies(target, graph);
+
+    if (shouldIncludeTests()) {
+      ImmutableSet.Builder<BuildTarget> builder = ImmutableSet.builder();
+      targetsToPrint = builder
+          .addAll(targetsToPrint)
+          .addAll(getTestTargetDependencies(params, target, graph))
+          .build();
+    }
+    return targetsToPrint;
   }
 
   @VisibleForTesting
@@ -152,68 +198,72 @@ public class AuditDependenciesCommand extends AbstractCommandRunner<AuditDepende
   }
 
   @VisibleForTesting
-  ImmutableSet<BuildTarget> getImmediateDependencies(
-      final ImmutableSet<BuildTarget> targets,
-      TargetGraph graph) {
-    ImmutableSet.Builder<BuildTarget> builder = ImmutableSet.builder();
-
-    for (BuildTarget target : targets) {
-      TargetNode<?> targetNode = graph.get(target);
-      builder.addAll(targetNode.getDeps());
-    }
-
-    return builder.build();
+  ImmutableSet<BuildTarget> getImmediateDependencies(BuildTarget target, TargetGraph graph) {
+    return Preconditions.checkNotNull(graph.get(target)).getDeps();
   }
 
   @VisibleForTesting
   Collection<BuildTarget> getTestTargetDependencies(
-      final ImmutableSet<BuildTarget> targets,
-      TargetGraph graph,
-      AuditDependenciesOptions options) throws IOException, InterruptedException {
-    if (!options.shouldShowTransitiveDependencies()) {
-      return TargetGraphAndTargets.getExplicitTestTargets(graph.getAll(targets));
+      CommandRunnerParams params,
+      BuildTarget target,
+      TargetGraph graph) throws IOException, InterruptedException {
+    if (!shouldShowTransitiveDependencies()) {
+      return TargetNodes.getTestTargetsForNode(Preconditions.checkNotNull(graph.get(target)));
     }
 
     ProjectGraphParser projectGraphParser = ProjectGraphParsers.createProjectGraphParser(
-        getParser(),
-        new ParserConfig(options.getBuckConfig()),
-        getBuckEventBus(),
-        console,
-        environment,
-        options.getEnableProfiling());
+        params.getParser(),
+        new ParserConfig(params.getBuckConfig()),
+        params.getBuckEventBus(),
+        params.getConsole(),
+        params.getEnvironment(),
+        getEnableProfiling());
 
     TargetGraph graphWithTests = TargetGraphTestParsing.expandedTargetGraphToIncludeTestsForTargets(
         projectGraphParser,
         graph,
-        targets);
+        ImmutableSet.of(target));
+
     ImmutableSet<BuildTarget> tests = TargetGraphAndTargets.getExplicitTestTargets(
-        targets,
+        ImmutableSet.of(target),
         graphWithTests);
     // We want to return the set of all tests plus their dependencies. Luckily
     // `getTransitiveDependencies` will give us the last part, but we need to make sure we include
     // the tests themselves in our final output
-    Set<BuildTarget> testsWithDependencies = Sets.union(
+    Sets.SetView<BuildTarget> testsWithDependencies = Sets.union(
         tests,
         getTransitiveDependencies(tests, graphWithTests));
     // Tests normally depend on the code they are testing, but we don't want to include that in our
     // output, so explicitly filter that here.
-    return Sets.difference(testsWithDependencies, targets);
+    return Sets.difference(testsWithDependencies, ImmutableSet.of(target));
   }
 
-  private void printJSON(Collection<String> names) throws IOException {
-    getObjectMapper().writeValue(
-        console.getStdOut(),
-        names);
+  private void printJSON(
+      CommandRunnerParams params,
+      Multimap<BuildTarget, BuildTarget> targetsAndDependencies) throws IOException {
+    Multimap<BuildTarget, String> targetsAndDependenciesNames =
+        Multimaps.transformValues(
+            targetsAndDependencies, new Function<BuildTarget, String>() {
+              @Override
+              public String apply(BuildTarget input) {
+                return Preconditions.checkNotNull(input.getFullyQualifiedName());
+              }
+            });
+    params.getObjectMapper().writeValue(
+        params.getConsole().getStdOut(),
+        targetsAndDependenciesNames.asMap());
   }
 
-  private void printToConsole(Collection<String> names) {
-    for (String name : names) {
-      getStdOut().println(name);
+  private void printToConsole(
+      CommandRunnerParams params,
+      Multimap<BuildTarget, BuildTarget> targetsAndDependencies) {
+    for (BuildTarget target : targetsAndDependencies.values()) {
+      params.getConsole().getStdOut().println(target.getFullyQualifiedName());
     }
   }
 
   @Override
-  String getUsageIntro() {
+  public String getShortDescription() {
     return "provides facilities to audit build targets' dependencies";
   }
 

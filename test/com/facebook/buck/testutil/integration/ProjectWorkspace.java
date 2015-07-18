@@ -19,11 +19,13 @@ package com.facebook.buck.testutil.integration;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeTrue;
 
 import com.facebook.buck.cli.Main;
-import com.facebook.buck.cli.TestCommand;
+import com.facebook.buck.cli.TestRunning;
 import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.event.BuckEventListener;
+import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.io.MoreFiles;
 import com.facebook.buck.model.BuildId;
 import com.facebook.buck.testutil.TestConsole;
@@ -48,6 +50,7 @@ import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -175,7 +178,7 @@ public class ProjectWorkspace {
     // TODO(jacko): This is going to overwrite the build.log. Maybe stash that and return it?
     ProjectWorkspace.ProcessResult outputFileResult = runBuckCommand(
         "targets",
-        "--show_output",
+        "--show-output",
         target.toString());
     outputFileResult.assertSuccess();
     String pathToGeneratedJarFile = outputFileResult.getStdout().split(" ")[1].trim();
@@ -225,8 +228,20 @@ public class ProjectWorkspace {
   public ProcessResult runBuckCommand(String... args)
       throws IOException {
     return runBuckCommandWithEnvironmentAndContext(
+        destPath,
         Optional.<NGContext>absent(),
         Optional.<BuckEventListener>absent(),
+        Optional.<ImmutableMap<String, String>>absent(),
+        args);
+  }
+
+  public ProcessResult runBuckCommand(Path repoRoot, String... args)
+      throws IOException {
+    return runBuckCommandWithEnvironmentAndContext(
+        repoRoot,
+        Optional.<NGContext>absent(),
+        Optional.<BuckEventListener>absent(),
+        Optional.<ImmutableMap<String, String>>absent(),
         args);
   }
 
@@ -245,9 +260,16 @@ public class ProjectWorkspace {
 
   public ProcessResult runBuckdCommand(NGContext context, String... args)
       throws IOException {
+    assumeTrue(
+        "watchman must exist to run buckd",
+        new ExecutableFinder(Platform.detect()).getOptionalExecutable(
+            Paths.get("watchman"),
+            ImmutableMap.copyOf(System.getenv())).isPresent());
     return runBuckCommandWithEnvironmentAndContext(
+        destPath,
         Optional.of(context),
         Optional.<BuckEventListener>absent(),
+        Optional.<ImmutableMap<String, String>>absent(),
         args);
   }
 
@@ -257,14 +279,18 @@ public class ProjectWorkspace {
       String... args)
       throws IOException {
     return runBuckCommandWithEnvironmentAndContext(
+        destPath,
         Optional.of(context),
         Optional.of(eventListener),
+        Optional.<ImmutableMap<String, String>>absent(),
         args);
   }
 
-  private ProcessResult runBuckCommandWithEnvironmentAndContext(
+  public ProcessResult runBuckCommandWithEnvironmentAndContext(
+      Path repoRoot,
       Optional<NGContext> context,
       Optional<BuckEventListener> eventListener,
+      Optional<ImmutableMap<String, String>> env,
       String... args)
     throws IOException {
     assertTrue("setUp() must be run before this method is invoked", isSetUp);
@@ -315,16 +341,16 @@ public class ProjectWorkspace {
         envBuilder.put(variable, value);
       }
     }
-    ImmutableMap<String, String> env = envBuilder.build();
+    ImmutableMap<String, String> sanizitedEnv = envBuilder.build();
 
     Main main = new Main(stdout, stderr, eventListeners.build());
     int exitCode = 0;
     try {
       exitCode = main.runMainWithExitCode(
           new BuildId(),
-          destPath,
+          repoRoot,
           context,
-          env,
+          env.or(sanizitedEnv),
           args);
     } catch (InterruptedException e) {
       e.printStackTrace(stderr);
@@ -359,6 +385,10 @@ public class ProjectWorkspace {
 
   public void copyFile(String source, String dest) throws IOException {
     Files.copy(getFile(source), getFile(dest));
+  }
+
+  public void copyRecursively(Path source, Path pathRelativeToProjectRoot) throws IOException {
+    MoreFiles.copyRecursively(source, destPath.resolve(pathRelativeToProjectRoot));
   }
 
   public void move(String source, String dest) throws IOException {
@@ -453,11 +483,11 @@ public class ProjectWorkspace {
     }
 
     public ProcessResult assertTestFailure() {
-      return assertExitCode(null, TestCommand.TEST_FAILURES_EXIT_CODE);
+      return assertExitCode(null, TestRunning.TEST_FAILURES_EXIT_CODE);
     }
 
     public ProcessResult assertTestFailure(String message) {
-      return assertExitCode(message, TestCommand.TEST_FAILURES_EXIT_CODE);
+      return assertExitCode(message, TestRunning.TEST_FAILURES_EXIT_CODE);
     }
 
     public ProcessResult assertFailure(String message) {

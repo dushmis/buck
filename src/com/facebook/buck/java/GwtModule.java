@@ -19,15 +19,14 @@ package com.facebook.buck.java;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey.Builder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
@@ -45,6 +44,7 @@ public class GwtModule extends AbstractBuildRule {
   // To do that, we need a way to register a flavor with a Description from outside the package.
 
   private final Path outputFile;
+  @AddToRuleKey
   private final ImmutableSortedSet<SourcePath> filesForGwtModule;
 
   GwtModule(
@@ -57,11 +57,6 @@ public class GwtModule extends AbstractBuildRule {
         target,
         "__gwt_module_%s__/" + target.getShortNameAndFlavorPostfix() + ".jar");
     this.filesForGwtModule = filesForGwtModule;
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return getResolver().filterInputsToCompareToOutput(filesForGwtModule);
   }
 
   @Override
@@ -97,12 +92,7 @@ public class GwtModule extends AbstractBuildRule {
   }
 
   @Override
-  public Builder appendDetailsToRuleKey(Builder builder) {
-    return builder.setReflectively("filesForGwtModule", filesForGwtModule);
-  }
-
-  @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return outputFile;
   }
 }

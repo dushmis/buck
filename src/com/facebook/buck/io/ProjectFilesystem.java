@@ -33,7 +33,6 @@ import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
-import com.google.common.collect.Iterables;
 import com.google.common.hash.Hashing;
 import com.google.common.io.ByteStreams;
 
@@ -62,7 +61,6 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
@@ -78,6 +76,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+
+import okio.BufferedSource;
+import okio.Okio;
 
 /**
  * An injectable service for interacting with the filesystem relative to the project root.
@@ -109,6 +110,7 @@ public class ProjectFilesystem {
   private final Path projectRoot;
 
   private final Function<Path, Path> pathAbsolutifier;
+  private final Function<Path, Path> pathRelativizer;
 
   private final ImmutableSet<Path> ignorePaths;
 
@@ -132,7 +134,10 @@ public class ProjectFilesystem {
     this(projectRoot.getFileSystem(), projectRoot, ignorePaths);
   }
 
-  protected ProjectFilesystem(FileSystem vfs, Path projectRoot, ImmutableSet<Path> ignorePaths) {
+  protected ProjectFilesystem(
+      FileSystem vfs,
+      final Path projectRoot,
+      ImmutableSet<Path> ignorePaths) {
     Preconditions.checkArgument(Files.isDirectory(projectRoot));
     Preconditions.checkState(vfs.equals(projectRoot.getFileSystem()));
     this.projectRoot = projectRoot;
@@ -140,6 +145,12 @@ public class ProjectFilesystem {
       @Override
       public Path apply(Path path) {
         return resolve(path);
+      }
+    };
+    this.pathRelativizer = new Function<Path, Path>() {
+      @Override
+      public Path apply(Path input) {
+        return projectRoot.relativize(input);
       }
     };
     this.ignorePaths = MorePaths.filterForSubpaths(ignorePaths, this.projectRoot);
@@ -168,6 +179,10 @@ public class ProjectFilesystem {
     return pathAbsolutifier;
   }
 
+  public Function<Path, Path> getRelativizer() {
+    return pathRelativizer;
+  }
+
   /**
    * @return A {@link ImmutableSet} of {@link Path} objects to have buck ignore.  All paths will be
    *     relative to the {@link ProjectFilesystem#getRootPath()}.
@@ -183,7 +198,7 @@ public class ProjectFilesystem {
   public File getFileForRelativePath(String pathRelativeToProjectRoot) {
     return pathRelativeToProjectRoot.isEmpty()
         ? projectRoot.toFile()
-        : getPathForRelativePath(Paths.get(pathRelativeToProjectRoot)).toFile();
+        : getPathForRelativePath(pathRelativeToProjectRoot).toFile();
   }
 
   /**
@@ -197,6 +212,11 @@ public class ProjectFilesystem {
   public Path getPathForRelativePath(Path pathRelativeToProjectRoot) {
     return projectRoot.resolve(pathRelativeToProjectRoot);
   }
+
+  public Path getPathForRelativePath(String pathRelativeToProjectRoot) {
+    return projectRoot.resolve(pathRelativeToProjectRoot);
+  }
+
 
   /**
    * @param path Absolute path or path relative to the project root.
@@ -255,16 +275,21 @@ public class ProjectFilesystem {
 
   /**
    * Deletes a file specified by its path relative to the project root.
+   *
+   * Ignores the failure if the file does not exist.
    * @param pathRelativeToProjectRoot path to the file
-   * @return true if the file was successfully deleted, false otherwise
+   * @return {@code true} if the file was deleted, {@code false} if it did not exist
    */
-  public boolean deleteFileAtPath(Path pathRelativeToProjectRoot) {
-    try {
-      Files.delete(getPathForRelativePath(pathRelativeToProjectRoot));
-      return true;
-    } catch (IOException e) {
-      return false;
-    }
+  public boolean deleteFileAtPathIfExists(Path pathRelativeToProjectRoot) throws IOException {
+    return Files.deleteIfExists(getPathForRelativePath(pathRelativeToProjectRoot));
+  }
+
+  /**
+   * Deletes a file specified by its path relative to the project root.
+   * @param pathRelativeToProjectRoot path to the file
+   */
+  public void deleteFileAtPath(Path pathRelativeToProjectRoot) throws IOException {
+    Files.delete(getPathForRelativePath(pathRelativeToProjectRoot));
   }
 
   public Properties readPropertiesFile(Path pathToPropertiesFileRelativeToProjectRoot)
@@ -388,6 +413,13 @@ public class ProjectFilesystem {
   }
 
   /**
+   * Allows {@link Files#isExecutable} to be faked in tests.
+   */
+  public boolean isExecutable(Path child) {
+    return Files.isExecutable(resolve(child));
+  }
+
+  /**
    * Allows {@link java.io.File#listFiles} to be faked in tests.
    *
    * // @deprecated Replaced by {@link #getDirectoryContents}
@@ -463,8 +495,16 @@ public class ProjectFilesystem {
   /**
    * Recursively delete everything under the specified path.
    */
-  public void rmdir(Path pathRelativeToProjectRoot) throws IOException {
-    MoreFiles.rmdir(resolve(pathRelativeToProjectRoot));
+  public void deleteRecursively(Path pathRelativeToProjectRoot) throws IOException {
+    MoreFiles.deleteRecursively(resolve(pathRelativeToProjectRoot));
+  }
+
+  /**
+   * Recursively delete everything under the specified path. Ignore the failure if the file at the
+   * specified path does not exist.
+   */
+  public void deleteRecursivelyIfExists(Path pathRelativeToProjectRoot) throws IOException {
+    MoreFiles.deleteRecursivelyIfExists(resolve(pathRelativeToProjectRoot));
   }
 
   /**
@@ -489,7 +529,7 @@ public class ProjectFilesystem {
    *  {@link #createParentDirs(java.nio.file.Path)}.
    */
   public void createParentDirs(String pathRelativeToProjectRoot) throws IOException {
-    Path file = getPathForRelativePath(Paths.get(pathRelativeToProjectRoot));
+    Path file = getPathForRelativePath(pathRelativeToProjectRoot);
     mkdirs(file.getParent());
   }
 
@@ -572,6 +612,10 @@ public class ProjectFilesystem {
         Files.newInputStream(getPathForRelativePath(pathRelativeToProjectRoot)));
   }
 
+  public BufferedSource newSource(Path pathRelativeToProjectRoot) throws IOException {
+    return Okio.buffer(Okio.source(getPathForRelativePath(pathRelativeToProjectRoot)));
+  }
+
   /**
    * @param inputStream Source of the bytes. This method does not close this stream.
    */
@@ -633,7 +677,7 @@ public class ProjectFilesystem {
    *  {@link #readFirstLine(java.nio.file.Path)}
    */
   public Optional<String> readFirstLine(String pathRelativeToProjectRoot) {
-    return readFirstLine(Paths.get(pathRelativeToProjectRoot));
+    return readFirstLine(projectRoot.getFileSystem().getPath(pathRelativeToProjectRoot));
   }
 
   /**
@@ -720,24 +764,24 @@ public class ProjectFilesystem {
     copy(source, target, CopySourceMode.FILE);
   }
 
-  public void createSymLink(Path sourcePath, Path targetPath, boolean force)
+  public void createSymLink(Path symLink, Path realFile, boolean force)
       throws IOException {
     if (force) {
-      Files.deleteIfExists(targetPath);
+      Files.deleteIfExists(symLink);
     }
     if (Platform.detect() == Platform.WINDOWS) {
-      if (isDirectory(sourcePath)) {
+      if (isDirectory(realFile)) {
         // Creating symlinks to directories on Windows requires escalated privileges. We're just
         // going to have to copy things recursively.
-        MoreFiles.copyRecursively(sourcePath, targetPath);
+        MoreFiles.copyRecursively(realFile, symLink);
       } else {
         // When sourcePath is relative, resolve it from the targetPath. We're creating a hard link
         // anyway.
-        sourcePath = targetPath.getParent().resolve(sourcePath).normalize();
-        Files.createLink(targetPath, sourcePath);
+        realFile = symLink.getParent().resolve(realFile).normalize();
+        Files.createLink(symLink, realFile);
       }
     } else {
-      Files.createSymbolicLink(targetPath, sourcePath);
+      Files.createSymbolicLink(symLink, realFile);
     }
   }
 
@@ -747,6 +791,13 @@ public class ProjectFilesystem {
    */
   public boolean isSymLink(Path path) throws IOException {
     return Files.isSymbolicLink(getPathForRelativePath(path));
+  }
+
+  /**
+   * Returns the target of the specified symbolic link.
+   */
+  public Path readSymLink(Path path) throws IOException {
+    return Files.readSymbolicLink(getPathForRelativePath(path));
   }
 
   /**
@@ -765,12 +816,9 @@ public class ProjectFilesystem {
       Collection<Path> pathsToIncludeInZip,
       File out,
       ImmutableMap<Path, String> additionalFileContents) throws IOException {
-    Preconditions.checkState(!Iterables.isEmpty(pathsToIncludeInZip));
     try (CustomZipOutputStream zip = ZipOutputStreams.newOutputStream(out)) {
       for (Path path : pathsToIncludeInZip) {
-        Path full = getPathForRelativePath(path);
-        File file = full.toFile();
-        boolean isDirectory = isDirectory(full);
+        boolean isDirectory = isDirectory(path);
 
         String entryName = path.toString();
         if (isDirectory) {
@@ -778,10 +826,13 @@ public class ProjectFilesystem {
         }
         CustomZipEntry entry = new CustomZipEntry(entryName);
 
+        // We want deterministic ZIPs, so avoid mtimes.
+        entry.setTime(0);
+
         // Support executable files.  If we detect this file is executable, store this
         // information as 0100 in the field typically used in zip implementations for
         // POSIX file permissions.  We'll use this information when unzipping.
-        if (file.canExecute()) {
+        if (isExecutable(path)) {
           entry.setExternalAttributes(
               MorePosixFilePermissions.toMode(
                   EnumSet.of(PosixFilePermission.OWNER_EXECUTE)) << 16);
@@ -789,7 +840,7 @@ public class ProjectFilesystem {
 
         zip.putNextEntry(entry);
         if (!isDirectory) {
-          try (InputStream input = Files.newInputStream(getPathForRelativePath(path))) {
+          try (InputStream input = newFileInputStream(path)) {
             ByteStreams.copy(input, zip);
           }
         }
@@ -798,6 +849,8 @@ public class ProjectFilesystem {
 
       for (Map.Entry<Path, String> fileContentsEntry : additionalFileContents.entrySet()) {
         CustomZipEntry entry = new CustomZipEntry(fileContentsEntry.getKey().toString());
+        // We want deterministic ZIPs, so avoid mtimes.
+        entry.setTime(0);
         zip.putNextEntry(entry);
         try (InputStream stream =
                  new ByteArrayInputStream(fileContentsEntry.getValue().getBytes(Charsets.UTF_8))) {

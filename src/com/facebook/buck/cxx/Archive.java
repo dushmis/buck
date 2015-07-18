@@ -17,16 +17,16 @@
 package com.facebook.buck.cxx;
 
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
+import com.facebook.buck.step.fs.FileScrubberStep;
 import com.facebook.buck.step.fs.MkdirStep;
 import com.facebook.buck.step.fs.RmStep;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 
 import java.nio.file.Path;
@@ -37,32 +37,23 @@ import java.nio.file.Path;
  */
 public class Archive extends AbstractBuildRule {
 
-  private final Tool archiver;
+  @AddToRuleKey
+  private final Archiver archiver;
+  @AddToRuleKey(stringify = true)
   private final Path output;
+  @AddToRuleKey
   private final ImmutableList<SourcePath> inputs;
 
   public Archive(
       BuildRuleParams params,
       SourcePathResolver resolver,
-      Tool archiver,
+      Archiver archiver,
       Path output,
       ImmutableList<SourcePath> inputs) {
     super(params, resolver);
     this.archiver = archiver;
     this.output = output;
     this.inputs = inputs;
-  }
-
-  @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return getResolver().filterInputsToCompareToOutput(inputs);
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder
-        .setReflectively("archiver", archiver)
-        .setReflectively("output", output.toString());
   }
 
   @Override
@@ -80,11 +71,11 @@ public class Archive extends AbstractBuildRule {
             archiver.getCommandPrefix(getResolver()),
             output,
             getResolver().getAllPaths(inputs)),
-        new ArchiveScrubberStep(output));
+        new FileScrubberStep(output, archiver.getScrubbers()));
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return output;
   }
 

@@ -19,7 +19,6 @@ package com.facebook.buck.rules;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.step.Step;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 
@@ -38,14 +37,12 @@ public class FakeBuildRule extends AbstractBuildRule implements BuildRule {
   private RuleKey ruleKey;
 
   public FakeBuildRule(
-      BuildRuleType type,
       BuildTarget target,
       SourcePathResolver resolver,
       ImmutableSortedSet<BuildRule> deps) {
     this(
         new FakeBuildRuleParamsBuilder(target)
             .setDeps(deps)
-            .setType(type)
             .build(), resolver);
   }
 
@@ -53,8 +50,8 @@ public class FakeBuildRule extends AbstractBuildRule implements BuildRule {
     super(buildRuleParams, resolver);
   }
 
-  public FakeBuildRule(BuildRuleType type, BuildTarget buildTarget, SourcePathResolver resolver) {
-    this(new FakeBuildRuleParamsBuilder(buildTarget).setType(type).build(), resolver);
+  public FakeBuildRule(BuildTarget buildTarget, SourcePathResolver resolver) {
+    this(new FakeBuildRuleParamsBuilder(buildTarget).build(), resolver);
   }
 
   public FakeBuildRule(BuildTarget target, SourcePathResolver resolver, BuildRule... deps) {
@@ -69,12 +66,7 @@ public class FakeBuildRule extends AbstractBuildRule implements BuildRule {
   }
 
   @Override
-  public ImmutableCollection<Path> getInputs() {
-    return ImmutableList.of();
-  }
-
-  @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return outputFile;
   }
 
@@ -93,21 +85,6 @@ public class FakeBuildRule extends AbstractBuildRule implements BuildRule {
     } else {
       throw new IllegalStateException("This method should not be called");
     }
-  }
-
-  @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
-    throw new IllegalStateException("This method should not be called");
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    throw new IllegalStateException("This method should not be called");
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    throw new UnsupportedOperationException();
   }
 
   @Override

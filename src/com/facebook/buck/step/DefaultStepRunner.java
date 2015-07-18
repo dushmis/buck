@@ -30,6 +30,7 @@ import com.google.common.util.concurrent.ListeningExecutorService;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
@@ -38,36 +39,24 @@ public final class DefaultStepRunner implements StepRunner {
   private static final Logger LOG = Logger.get(DefaultStepRunner.class);
 
   private final ExecutionContext context;
-  private final ListeningExecutorService listeningExecutorService;
 
-  public DefaultStepRunner(
-      ExecutionContext executionContext,
-      ListeningExecutorService listeningExecutorService) {
+  public DefaultStepRunner(ExecutionContext executionContext) {
     this.context = executionContext;
-    this.listeningExecutorService = listeningExecutorService;
-
   }
 
   @Override
-  public void runStep(Step step) throws StepFailedException, InterruptedException {
-    runStepInternal(step, Optional.<BuildTarget>absent());
-  }
-
-  @Override
-  public void runStepForBuildTarget(Step step, BuildTarget buildTarget)
-      throws StepFailedException, InterruptedException {
-    runStepInternal(step, Optional.of(buildTarget));
-  }
-
-  protected void runStepInternal(final Step step, final Optional<BuildTarget> buildTarget)
+  public void runStepForBuildTarget(Step step, Optional<BuildTarget> buildTarget)
       throws StepFailedException, InterruptedException {
 
     if (context.getVerbosity().shouldPrintCommand()) {
       context.getStdErr().println(step.getDescription(context));
     }
 
+    String stepShortName = step.getShortName();
+    String stepDescription = step.getDescription(context);
+    UUID stepUuid = UUID.randomUUID();
     context.getBuckEventBus().logDebugAndPost(
-        LOG, StepEvent.started(step, step.getDescription(context)));
+        LOG, StepEvent.started(stepShortName, stepDescription, stepUuid));
     int exitCode = 1;
     try {
       exitCode = step.execute(context);
@@ -75,7 +64,7 @@ public final class DefaultStepRunner implements StepRunner {
       throw StepFailedException.createForFailingStepWithException(step, e, buildTarget);
     } finally {
       context.getBuckEventBus().logDebugAndPost(
-          LOG, StepEvent.finished(step, step.getDescription(context), exitCode));
+          LOG, StepEvent.finished(stepShortName, stepDescription, stepUuid, exitCode));
     }
     if (exitCode != 0) {
       throw StepFailedException.createForFailingStepWithExitCode(step,
@@ -86,17 +75,22 @@ public final class DefaultStepRunner implements StepRunner {
   }
 
   @Override
-  public <T> ListenableFuture<T> runStepsAndYieldResult(final List<Step> steps,
-                                                        final Callable<T> interpretResults,
-                                                        final BuildTarget buildTarget) {
+  public <T> ListenableFuture<T> runStepsAndYieldResult(
+      final List<Step> steps,
+      final Callable<T> interpretResults,
+      final Optional<BuildTarget> buildTarget,
+      ListeningExecutorService listeningExecutorService,
+      final StepRunningCallback callback) {
     Preconditions.checkState(!listeningExecutorService.isShutdown());
     Callable<T> callable = new Callable<T>() {
 
       @Override
       public T call() throws Exception {
+        callback.stepsWillRun(buildTarget);
         for (Step step : steps) {
           runStepForBuildTarget(step, buildTarget);
         }
+        callback.stepsDidRun(buildTarget);
 
         return interpretResults.call();
       }
@@ -113,7 +107,11 @@ public final class DefaultStepRunner implements StepRunner {
    * @param steps List of steps to execute.
    */
   @Override
-  public void runStepsInParallelAndWait(final List<Step> steps)
+  public void runStepsInParallelAndWait(
+      final List<Step> steps,
+      final Optional<BuildTarget> target,
+      ListeningExecutorService listeningExecutorService,
+      final StepRunningCallback callback)
       throws StepFailedException, InterruptedException {
     List<Callable<Void>> callables = Lists.transform(steps,
         new Function<Step, Callable<Void>>() {
@@ -122,7 +120,7 @@ public final class DefaultStepRunner implements StepRunner {
         return new Callable<Void>() {
           @Override
           public Void call() throws Exception {
-            runStep(step);
+            runStepForBuildTarget(step, target);
             return null;
           }
         };
@@ -130,7 +128,9 @@ public final class DefaultStepRunner implements StepRunner {
     });
 
     try {
+      callback.stepsWillRun(target);
       MoreFutures.getAll(listeningExecutorService, callables);
+      callback.stepsDidRun(target);
     } catch (ExecutionException e) {
       Throwable cause = e.getCause();
       Throwables.propagateIfInstanceOf(cause, StepFailedException.class);
@@ -143,9 +143,9 @@ public final class DefaultStepRunner implements StepRunner {
   @Override
   public <T> ListenableFuture<Void> addCallback(
       ListenableFuture<List<T>> dependencies,
-      FutureCallback<List<T>> callback) {
+      FutureCallback<List<T>> callback,
+      ListeningExecutorService listeningExecutorService) {
     Preconditions.checkState(!listeningExecutorService.isShutdown());
     return MoreFutures.addListenableCallback(dependencies, callback, listeningExecutorService);
   }
-
 }

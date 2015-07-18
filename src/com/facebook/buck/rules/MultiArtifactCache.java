@@ -17,6 +17,8 @@
 package com.facebook.buck.rules;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 
 import java.io.File;
 import java.io.IOException;
@@ -51,30 +53,35 @@ public class MultiArtifactCache implements ArtifactCache {
   @Override
   public CacheResult fetch(RuleKey ruleKey, File output)
       throws InterruptedException {
+    CacheResult cacheResult = CacheResult.miss();
     for (ArtifactCache artifactCache : artifactCaches) {
-      CacheResult cacheResult = artifactCache.fetch(ruleKey, output);
-      if (cacheResult.isSuccess()) {
+      cacheResult = artifactCache.fetch(ruleKey, output);
+      if (cacheResult.getType().isSuccess()) {
         // Success; terminate search for a cached artifact, and propagate artifact to caches
         // earlier in the search order so that subsequent searches terminate earlier.
         for (ArtifactCache priorArtifactCache : artifactCaches) {
           if (priorArtifactCache.equals(artifactCache)) {
             break;
           }
-          priorArtifactCache.store(ruleKey, output);
+          priorArtifactCache.store(ImmutableSet.of(ruleKey), cacheResult.getMetadata(), output);
         }
         return cacheResult;
       }
     }
-    return CacheResult.MISS;
+    return cacheResult;
   }
 
   /**
    * Store the artifact to all encapsulated ArtifactCaches.
    */
   @Override
-  public void store(RuleKey ruleKey, File output) throws InterruptedException {
+  public void store(
+      ImmutableSet<RuleKey> ruleKeys,
+      ImmutableMap<String, String> metadata,
+      File output)
+      throws InterruptedException {
     for (ArtifactCache artifactCache : artifactCaches) {
-      artifactCache.store(ruleKey, output);
+      artifactCache.store(ruleKeys, metadata, output);
     }
   }
 
@@ -88,7 +95,7 @@ public class MultiArtifactCache implements ArtifactCache {
   public void close() throws IOException {
     // TODO(natthu): It's possible for this to be interrupted before it gets to call close() on all
     // the individual caches. This is acceptable for now since every ArtifactCache.close() is a
-    // no-op in every cache except CassandraArtifactCache.
+    // no-op.
     for (ArtifactCache artifactCache : artifactCaches) {
       artifactCache.close();
     }

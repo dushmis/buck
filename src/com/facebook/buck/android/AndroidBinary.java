@@ -30,16 +30,15 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AbiRule;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.BuildableProperties;
 import com.facebook.buck.rules.ExopackageInfo;
-import com.facebook.buck.rules.ImmutableExopackageInfo;
-import com.facebook.buck.rules.ImmutableSha1HashCode;
+import com.facebook.buck.rules.HasRuntimeDeps;
 import com.facebook.buck.rules.InstallableApk;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -49,10 +48,11 @@ import com.facebook.buck.shell.SymlinkFilesIntoDirectoryStep;
 import com.facebook.buck.step.AbstractExecutionStep;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
+import com.facebook.buck.step.fs.CopyStep;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.facebook.buck.step.fs.MkdirStep;
-import com.facebook.buck.util.Optionals;
 import com.facebook.buck.zip.RepackZipEntriesStep;
+import com.facebook.buck.zip.ZipScrubberStep;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
@@ -61,7 +61,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -72,6 +71,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 import com.google.common.hash.HashCode;
 import com.google.common.io.Files;
+import com.google.common.util.concurrent.ListeningExecutorService;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -90,8 +90,9 @@ import java.util.Set;
  * )
  * </pre>
  */
-public class AndroidBinary extends AbstractBuildRule implements
-    AbiRule, HasClasspathEntries, InstallableApk {
+public class AndroidBinary
+    extends AbstractBuildRule
+    implements AbiRule, HasClasspathEntries, HasRuntimeDeps, InstallableApk {
 
   private static final BuildableProperties PROPERTIES = new BuildableProperties(ANDROID, PACKAGING);
 
@@ -102,9 +103,6 @@ public class AndroidBinary extends AbstractBuildRule implements
   static final String SMART_DEX_SECONDARY_DEX_SUBDIR =
       "assets/smart-dex-secondary-program-dex-jars";
   static final String SECONDARY_DEX_SUBDIR = "assets/secondary-program-dex-jars";
-
-  private final Optional<Path> proguardJarOverride;
-  private final String proguardMaxHeapSize;
 
   /**
    * This list of package types is taken from the set of targets that the default build.xml provides
@@ -129,13 +127,6 @@ public class AndroidBinary extends AbstractBuildRule implements
     final boolean isCrunchPngFiles() {
       return this == RELEASE;
     }
-  }
-
-  public static enum TargetCpuType {
-    ARM,
-    ARMV7,
-    X86,
-    MIPS,
   }
 
   static enum ExopackageMode {
@@ -166,34 +157,48 @@ public class AndroidBinary extends AbstractBuildRule implements
     }
   }
 
-  private final SourcePath manifest;
+  @AddToRuleKey
   private final Keystore keystore;
+  @AddToRuleKey
   private final PackageType packageType;
+  @AddToRuleKey
   private DexSplitMode dexSplitMode;
   private final ImmutableSet<BuildTarget> buildTargetsToExcludeFromDex;
+  @AddToRuleKey
   private final ProGuardObfuscateStep.SdkProguardType sdkProguardConfig;
+  @AddToRuleKey
   private final Optional<Integer> optimizationPasses;
+  @AddToRuleKey
   private final Optional<SourcePath> proguardConfig;
+  @AddToRuleKey
+  private final Optional<Path> proguardJarOverride;
+  private final String proguardMaxHeapSize;
+  @AddToRuleKey
   private final ResourceCompressionMode resourceCompressionMode;
-  private final ImmutableSet<TargetCpuType> cpuFilters;
+  @AddToRuleKey
+  private final ImmutableSet<NdkCxxPlatforms.TargetCpuType> cpuFilters;
   private final ResourceFilter resourceFilter;
   private final Path primaryDexPath;
+  @AddToRuleKey
   private final EnumSet<ExopackageMode> exopackageModes;
-  private final ImmutableSortedSet<BuildRule> preprocessJavaClassesDeps;
   private final Function<String, String> macroExpander;
+  @AddToRuleKey
   private final Optional<String> preprocessJavaClassesBash;
   private final Optional<Boolean> reorderClassesIntraDex;
   private final Optional<SourcePath> dexReorderToolFile;
   private final Optional<SourcePath> dexReorderDataDumpFile;
+  @AddToRuleKey
   protected final ImmutableSortedSet<JavaLibrary> rulesToExcludeFromDex;
   protected final AndroidGraphEnhancementResult enhancementResult;
+  private final ListeningExecutorService dxExecutorService;
+  @AddToRuleKey
+  private final Optional<Integer> xzCompressionLevel;
 
   AndroidBinary(
       BuildRuleParams params,
       SourcePathResolver resolver,
       Optional<Path> proguardJarOverride,
       String proguardMaxHeapSize,
-      SourcePath manifest,
       Keystore keystore,
       PackageType packageType,
       DexSplitMode dexSplitMode,
@@ -202,21 +207,21 @@ public class AndroidBinary extends AbstractBuildRule implements
       Optional<Integer> proguardOptimizationPasses,
       Optional<SourcePath> proguardConfig,
       ResourceCompressionMode resourceCompressionMode,
-      Set<TargetCpuType> cpuFilters,
+      Set<NdkCxxPlatforms.TargetCpuType> cpuFilters,
       ResourceFilter resourceFilter,
       EnumSet<ExopackageMode> exopackageModes,
-      Set<BuildRule> preprocessJavaClassesDeps,
       Function<String, String> macroExpander,
       Optional<String> preprocessJavaClassesBash,
       ImmutableSortedSet<JavaLibrary> rulesToExcludeFromDex,
       AndroidGraphEnhancementResult enhancementResult,
       Optional<Boolean> reorderClassesIntraDex,
       Optional<SourcePath> dexReorderToolFile,
-      Optional<SourcePath> dexReorderDataDumpFile) {
+      Optional<SourcePath> dexReorderDataDumpFile,
+      Optional<Integer> xzCompressionLevel,
+      ListeningExecutorService dxExecutorService) {
     super(params, resolver);
     this.proguardJarOverride = proguardJarOverride;
     this.proguardMaxHeapSize = proguardMaxHeapSize;
-    this.manifest = manifest;
     this.keystore = keystore;
     this.packageType = packageType;
     this.dexSplitMode = dexSplitMode;
@@ -228,7 +233,6 @@ public class AndroidBinary extends AbstractBuildRule implements
     this.cpuFilters = ImmutableSet.copyOf(cpuFilters);
     this.resourceFilter = resourceFilter;
     this.exopackageModes = exopackageModes;
-    this.preprocessJavaClassesDeps = ImmutableSortedSet.copyOf(preprocessJavaClassesDeps);
     this.macroExpander = macroExpander;
     this.preprocessJavaClassesBash = preprocessJavaClassesBash;
     this.rulesToExcludeFromDex = rulesToExcludeFromDex;
@@ -237,6 +241,8 @@ public class AndroidBinary extends AbstractBuildRule implements
     this.reorderClassesIntraDex = reorderClassesIntraDex;
     this.dexReorderToolFile = dexReorderToolFile;
     this.dexReorderDataDumpFile = dexReorderDataDumpFile;
+    this.dxExecutorService = dxExecutorService;
+    this.xzCompressionLevel = xzCompressionLevel;
 
     if (ExopackageMode.enabledForSecondaryDexes(exopackageModes)) {
       Preconditions.checkArgument(enhancementResult.getPreDexMerge().isPresent(),
@@ -260,27 +266,6 @@ public class AndroidBinary extends AbstractBuildRule implements
     return PROPERTIES;
   }
 
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    builder
-        .setReflectively("keystore", keystore.getBuildTarget())
-        .setReflectively("packageType", packageType)
-        .setReflectively("sdkProguardConfig", sdkProguardConfig)
-        .setReflectively("optimizationPasses", optimizationPasses)
-        .setReflectively("resourceCompressionMode", resourceCompressionMode)
-        .setReflectively("cpuFilters", ImmutableSortedSet.copyOf(cpuFilters))
-        .setReflectively("exopackageModes", exopackageModes)
-        .setReflectively("preprocessJavaClassesBash", preprocessJavaClassesBash)
-        .setReflectively("preprocessJavaClassesDeps", preprocessJavaClassesDeps)
-        .setReflectively("proguardJarOverride", proguardJarOverride);
-
-    for (JavaLibrary library : rulesToExcludeFromDex) {
-      library.appendDetailsToRuleKey(builder);
-    }
-
-    return dexSplitMode.appendToRuleKey(builder, "dexSplitMode");
-  }
-
   public ImmutableSortedSet<JavaLibrary> getRulesToExcludeFromDex() {
     return rulesToExcludeFromDex;
   }
@@ -301,7 +286,7 @@ public class AndroidBinary extends AbstractBuildRule implements
     return resourceCompressionMode;
   }
 
-  public ImmutableSet<TargetCpuType> getCpuFilters() {
+  public ImmutableSet<NdkCxxPlatforms.TargetCpuType> getCpuFilters() {
     return this.cpuFilters;
   }
 
@@ -333,27 +318,26 @@ public class AndroidBinary extends AbstractBuildRule implements
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return getApkPath();
   }
 
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    ImmutableList.Builder<SourcePath> sourcePaths = ImmutableList.builder();
-    sourcePaths.add(manifest);
-
-    Optionals.addIfPresent(proguardConfig, sourcePaths);
-    sourcePaths.addAll(dexSplitMode.getSourcePaths());
-
-    return getResolver().filterInputsToCompareToOutput(sourcePaths.build());
-  }
-
+  @SuppressWarnings("PMD.PrematureDeclaration")
   @Override
   public ImmutableList<Step> getBuildSteps(
       BuildContext context,
       BuildableContext buildableContext) {
 
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
+
+    // The `InstallableApk` interface needs access to the manifest, so make sure we create our
+    // own copy of this so that we don't have a runtime dep on the `AaptPackageResources` step.
+    steps.add(new MkdirStep(getManifestPath().getParent()));
+    steps.add(
+        CopyStep.forFile(
+            enhancementResult.getAaptPackageResources().getAndroidManifestXml(),
+            getManifestPath()));
+    buildableContext.recordArtifact(getManifestPath());
 
     // Create the .dex files if we aren't doing pre-dexing.
     Path signedApkPath = getSignedApkPath();
@@ -379,8 +363,12 @@ public class AndroidBinary extends AbstractBuildRule implements
       Path pathForNativeLibsAsAssets = getPathForNativeLibsAsAssets();
       Path libSubdirectory = pathForNativeLibsAsAssets.resolve("assets").resolve("lib");
       steps.add(new MakeCleanDirectoryStep(libSubdirectory));
-      for (Path nativeLibDir : packageableCollection.getNativeLibAssetsDirectories()) {
-        CopyNativeLibraries.copyNativeLibrary(nativeLibDir, libSubdirectory, cpuFilters, steps);
+      for (SourcePath nativeLibDir : packageableCollection.getNativeLibAssetsDirectories()) {
+        CopyNativeLibraries.copyNativeLibrary(
+            getResolver().getPath(nativeLibDir),
+            libSubdirectory,
+            cpuFilters,
+            steps);
       }
       nativeLibraryAsAssetDirectories = ImmutableSet.of(pathForNativeLibsAsAssets);
     } else {
@@ -395,6 +383,20 @@ public class AndroidBinary extends AbstractBuildRule implements
       zipFiles.add(pathToStringAssetsZip);
     }
 
+    if (ExopackageMode.enabledForNativeLibraries(exopackageModes)) {
+      // We need to include a few dummy native libraries with our application so that Android knows
+      // to run it as 32-bit.  Android defaults to 64-bit when no libraries are provided at all,
+      // causing us to fail to load our 32-bit exopackage native libraries later.
+      String fakeNativeLibraryBundle =
+          System.getProperty("buck.native_exopackage_fake_path");
+
+      if (fakeNativeLibraryBundle == null) {
+        throw new RuntimeException("fake native bundle not specified in properties");
+      }
+
+      zipFiles.add(Paths.get(fakeNativeLibraryBundle));
+    }
+
     ImmutableSet<Path> allAssetDirectories = ImmutableSet.<Path>builder()
         .addAll(nativeLibraryAsAssetDirectories)
         .addAll(dexFilesInfo.secondaryDexDirs)
@@ -407,12 +409,17 @@ public class AndroidBinary extends AbstractBuildRule implements
         allAssetDirectories,
         nativeLibraryDirectories,
         zipFiles.build(),
-        ImmutableSortedSet.copyOf(packageableCollection.getPathsToThirdPartyJars()),
+        FluentIterable.from(packageableCollection.getPathsToThirdPartyJars())
+            .transform(getResolver().getPathFunction())
+            .toSet(),
         keystore.getPathToStore(),
         keystore.getPathToPropertiesFile(),
         /* debugMode */ false);
     steps.add(apkBuilderCommand);
 
+    // The `ApkBuilderStep` delegates to android tools to build a ZIP with timestamps in it, making
+    // the output non-deterministic.  So use an additional scrubbing step to zero these out.
+    steps.add(new ZipScrubberStep(signedApkPath));
 
     Path apkToAlign;
     // Optionally, compress the resources file in the .apk.
@@ -449,7 +456,7 @@ public class AndroidBinary extends AbstractBuildRule implements
     // Returning our RuleKey has this effect because we will never get an ABI match after a
     // RuleKey miss.
     if (exopackageModes.isEmpty()) {
-      return ImmutableSha1HashCode.of(getRuleKey().toString());
+      return Sha1HashCode.of(getRuleKey().toString());
     }
     return enhancementResult.getComputeExopackageDepsAbi().get().getAndroidBinaryAbiHash();
   }
@@ -524,7 +531,8 @@ public class AndroidBinary extends AbstractBuildRule implements
     if (packageType.isBuildWithObfuscation()) {
       classpathEntriesToDex = addProguardCommands(
           classpathEntriesToDex,
-          packageableCollection.getProguardConfigs(),
+          ImmutableSet.copyOf(
+              getResolver().getAllPaths(packageableCollection.getProguardConfigs())),
           steps,
           buildableContext);
     }
@@ -868,27 +876,29 @@ public class AndroidBinary extends AbstractBuildRule implements
         secondaryOutputToInputs,
         hashInputJarsToDexStep,
         successDir,
-        Optional.<Integer>absent(),
-        dxOptions);
+        dxOptions,
+        dxExecutorService,
+        xzCompressionLevel);
     steps.add(smartDexingCommand);
 
     if (isReorderingClasses()) {
-      IntraDexReorder intraDexReorder = new IntraDexReorder(
-        dexReorderToolFile.get(),
-        dexReorderDataDumpFile.get(),
+      IntraDexReorderStep intraDexReorderStep = new IntraDexReorderStep(
+        dexReorderToolFile,
+        dexReorderDataDumpFile,
+        getResolver(),
         getBuildTarget(),
         selectedPrimaryDexPath,
         primaryDexPath,
         secondaryOutputToInputs,
         SMART_DEX_SECONDARY_DEX_SUBDIR,
         SECONDARY_DEX_SUBDIR);
-      steps.addAll(intraDexReorder.generateReorderCommands());
+      steps.add(intraDexReorderStep);
     }
   }
 
   @Override
   public Path getManifestPath() {
-    return enhancementResult.getAaptPackageResources().getAndroidManifestXml();
+    return BuildTargets.getGenPath(getBuildTarget(), "%s/AndroidManifest.xml");
   }
 
   boolean shouldSplitDex() {
@@ -899,11 +909,11 @@ public class AndroidBinary extends AbstractBuildRule implements
   public Optional<ExopackageInfo> getExopackageInfo() {
     boolean shouldInstall = false;
 
-    ImmutableExopackageInfo.Builder builder = ImmutableExopackageInfo.builder();
+    ExopackageInfo.Builder builder = ExopackageInfo.builder();
     if (ExopackageMode.enabledForSecondaryDexes(exopackageModes)) {
       PreDexMerge preDexMerge = enhancementResult.getPreDexMerge().get();
       builder.setDexInfo(
-          ImmutableExopackageInfo.DexInfo.of(
+          ExopackageInfo.DexInfo.of(
               preDexMerge.getMetadataTxtPath(),
               preDexMerge.getDexDirectory()));
       shouldInstall = true;
@@ -913,7 +923,7 @@ public class AndroidBinary extends AbstractBuildRule implements
         enhancementResult.getCopyNativeLibraries().isPresent()) {
       CopyNativeLibraries copyNativeLibraries = enhancementResult.getCopyNativeLibraries().get();
       builder.setNativeLibsInfo(
-          ImmutableExopackageInfo.NativeLibsInfo.of(
+          ExopackageInfo.NativeLibsInfo.of(
               copyNativeLibraries.getPathToMetadataTxt(),
               copyNativeLibraries.getPathToNativeLibsDir()));
       shouldInstall = true;
@@ -935,6 +945,18 @@ public class AndroidBinary extends AbstractBuildRule implements
   public ImmutableSetMultimap<JavaLibrary, Path> getTransitiveClasspathEntries() {
     // This is used primarily for buck audit classpath.
     return Classpaths.getClasspathEntries(getClasspathDeps());
+  }
+
+  @Override
+  public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
+    ImmutableSortedSet.Builder<BuildRule> deps = ImmutableSortedSet.naturalOrder();
+    if (ExopackageMode.enabledForNativeLibraries(exopackageModes)) {
+      deps.addAll(enhancementResult.getCopyNativeLibraries().asSet());
+    }
+    if (ExopackageMode.enabledForSecondaryDexes(exopackageModes)) {
+      deps.addAll(enhancementResult.getPreDexMerge().asSet());
+    }
+    return deps.build();
   }
 
   /**

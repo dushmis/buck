@@ -31,9 +31,16 @@ import com.facebook.buck.apple.xcode.xcodeproj.PBXReference;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXResourcesBuildPhase;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXShellScriptBuildPhase;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXSourcesBuildPhase;
-import com.facebook.buck.apple.xcode.xcodeproj.PBXTarget;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXVariantGroup;
+import com.facebook.buck.apple.xcode.xcodeproj.ProductType;
 import com.facebook.buck.apple.xcode.xcodeproj.SourceTreePath;
+import com.facebook.buck.cxx.HeaderVisibility;
+import com.facebook.buck.io.ProjectFilesystem;
+import com.facebook.buck.js.IosReactNativeLibraryDescription;
+import com.facebook.buck.js.ReactNativeBundle;
+import com.facebook.buck.js.ReactNativeFlavors;
+import com.facebook.buck.js.ReactNativeLibraryArgs;
+import com.facebook.buck.js.ReactNativePlatform;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.parser.NoSuchBuildTargetException;
 import com.facebook.buck.rules.SourcePath;
@@ -41,15 +48,19 @@ import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.coercer.FrameworkPath;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.facebook.buck.shell.GenruleDescription;
+import com.facebook.buck.util.HumanReadableException;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -74,7 +85,7 @@ public class NewNativeTargetProjectMutator {
   private final PathRelativizer pathRelativizer;
   private final Function<SourcePath, Path> sourcePathResolver;
 
-  private PBXTarget.ProductType productType = PBXTarget.ProductType.BUNDLE;
+  private ProductType productType = ProductType.BUNDLE;
   private Path productOutputPath = Paths.get("");
   private String productName = "";
   private String targetName = "";
@@ -84,6 +95,7 @@ public class NewNativeTargetProjectMutator {
   private ImmutableSet<SourcePath> extraXcodeSources = ImmutableSet.of();
   private ImmutableSet<SourcePath> publicHeaders = ImmutableSet.of();
   private ImmutableSet<SourcePath> privateHeaders = ImmutableSet.of();
+  private Optional<SourcePath> prefixHeader = Optional.absent();
   private boolean shouldGenerateCopyHeadersPhase = true;
   private ImmutableSet<FrameworkPath> frameworks = ImmutableSet.of();
   private ImmutableSet<PBXFileReference> archives = ImmutableSet.of();
@@ -91,7 +103,10 @@ public class NewNativeTargetProjectMutator {
   private ImmutableSet<AppleAssetCatalogDescription.Arg> assetCatalogs = ImmutableSet.of();
   private Path assetCatalogBuildScript = Paths.get("");
   private Iterable<TargetNode<?>> preBuildRunScriptPhases = ImmutableList.of();
+  private Iterable<PBXBuildPhase> copyFilesPhases = ImmutableList.of();
   private Iterable<TargetNode<?>> postBuildRunScriptPhases = ImmutableList.of();
+  private boolean skipRNBundle = false;
+  private Collection<Path> additionalRunScripts = ImmutableList.of();
 
   public NewNativeTargetProjectMutator(
       PathRelativizer pathRelativizer,
@@ -108,7 +123,7 @@ public class NewNativeTargetProjectMutator {
    * @param productOutputPath build output relative product path.
    */
   public NewNativeTargetProjectMutator setProduct(
-      PBXNativeTarget.ProductType productType,
+      ProductType productType,
       String productName,
       Path productOutputPath) {
     this.productName = productName;
@@ -156,6 +171,11 @@ public class NewNativeTargetProjectMutator {
     return this;
   }
 
+  public NewNativeTargetProjectMutator setPrefixHeader(Optional<SourcePath> prefixHeader) {
+    this.prefixHeader = prefixHeader;
+    return this;
+  }
+
   public NewNativeTargetProjectMutator setShouldGenerateCopyHeadersPhase(boolean value) {
     this.shouldGenerateCopyHeadersPhase = value;
     return this;
@@ -181,9 +201,23 @@ public class NewNativeTargetProjectMutator {
     return this;
   }
 
+  public NewNativeTargetProjectMutator setCopyFilesPhases(Iterable<PBXBuildPhase> phases) {
+    copyFilesPhases = phases;
+    return this;
+  }
+
   public NewNativeTargetProjectMutator setPostBuildRunScriptPhases(Iterable<TargetNode<?>> phases) {
     postBuildRunScriptPhases = phases;
     return this;
+  }
+
+  public NewNativeTargetProjectMutator skipReactNativeBundle(boolean skipRNBundle) {
+    this.skipRNBundle = skipRNBundle;
+    return this;
+  }
+
+  public void setAdditionalRunScripts(Collection<Path> scripts) {
+    additionalRunScripts = scripts;
   }
 
   /**
@@ -200,12 +234,9 @@ public class NewNativeTargetProjectMutator {
 
   public Result buildTargetAndAddToProject(PBXProject project)
       throws NoSuchBuildTargetException {
-    PBXNativeTarget target = new PBXNativeTarget(targetName, productType);
+    PBXNativeTarget target = new PBXNativeTarget(targetName);
 
-    PBXGroup targetGroup = project.getMainGroup();
-    for (String groupPathPart : targetGroupPath) {
-      targetGroup = targetGroup.getOrCreateChildGroupByName(groupPathPart);
-    }
+    PBXGroup targetGroup = project.getMainGroup().getOrCreateDescendantGroupByPath(targetGroupPath);
     targetGroup = targetGroup.getOrCreateChildGroupByName(targetName);
 
     if (gid.isPresent()) {
@@ -218,7 +249,9 @@ public class NewNativeTargetProjectMutator {
     addFrameworksBuildPhase(project, target);
     addResourcesBuildPhase(target, targetGroup);
     addAssetCatalogBuildPhase(target, targetGroup);
+    target.getBuildPhases().addAll((Collection<? extends PBXBuildPhase>) copyFilesPhases);
     addRunScriptBuildPhases(target, postBuildRunScriptPhases);
+    addRawScriptBuildPhases(target);
 
     // Product
 
@@ -227,6 +260,7 @@ public class NewNativeTargetProjectMutator {
         new SourceTreePath(PBXReference.SourceTree.BUILT_PRODUCTS_DIR, productOutputPath));
     target.setProductName(productName);
     target.setProductReference(productReference);
+    target.setProductType(productType);
 
     project.getTargets().add(target);
     return new Result(target, targetGroup);
@@ -258,6 +292,14 @@ public class NewNativeTargetProjectMutator {
             extraXcodeSources,
             publicHeaders,
             privateHeaders));
+
+    if (prefixHeader.isPresent()) {
+      SourceTreePath prefixHeaderSourceTreePath = new SourceTreePath(
+          PBXReference.SourceTree.GROUP,
+          pathRelativizer.outputPathToSourcePath(prefixHeader.get())
+      );
+      sourcesGroup.getOrCreateFileReferenceBySourceTreePath(prefixHeaderSourceTreePath);
+    }
 
     if (!sourcesBuildPhase.getFiles().isEmpty()) {
       target.getBuildPhases().add(sourcesBuildPhase);
@@ -296,7 +338,7 @@ public class NewNativeTargetProjectMutator {
             privateHeader,
             sourcesGroup,
             headersBuildPhase,
-            HeaderVisibility.PROJECT);
+            HeaderVisibility.PRIVATE);
       }
 
       @Override
@@ -356,11 +398,11 @@ public class NewNativeTargetProjectMutator {
             PBXReference.SourceTree.SOURCE_ROOT,
             pathRelativizer.outputPathToSourcePath(headerPath)));
     PBXBuildFile buildFile = new PBXBuildFile(fileReference);
-    if (visibility != HeaderVisibility.PROJECT) {
+    if (visibility != HeaderVisibility.PRIVATE) {
       NSDictionary settings = new NSDictionary();
       settings.put(
           "ATTRIBUTES",
-          new NSArray(new NSString(visibility.toXcodeAttribute())));
+          new NSArray(new NSString(AppleHeaderVisibilities.toXcodeAttribute(visibility))));
       buildFile.setSettings(Optional.of(settings));
     } else {
       buildFile.setSettings(Optional.<NSDictionary>absent());
@@ -421,9 +463,9 @@ public class NewNativeTargetProjectMutator {
     PBXBuildPhase phase = new PBXResourcesBuildPhase();
     target.getBuildPhases().add(phase);
     for (AppleResourceDescription.Arg resource : resources) {
-      Iterable<Path> paths = Iterables.concat(
-          Iterables.transform(resource.files, sourcePathResolver),
-          resource.dirs);
+      Iterable<Path> paths = Iterables.transform(
+          Iterables.concat(resource.files, resource.dirs),
+          sourcePathResolver);
       for (Path path : paths) {
         PBXFileReference fileReference = resourcesGroup.getOrCreateFileReferenceBySourceTreePath(
             new SourceTreePath(
@@ -433,25 +475,34 @@ public class NewNativeTargetProjectMutator {
         phase.getFiles().add(buildFile);
       }
 
-      for (Map.Entry<String, Map<String, SourcePath>> virtualOutputEntry :
-          resource.variants.get().entrySet()) {
-        String variantName = Paths.get(virtualOutputEntry.getKey()).getFileName().toString();
-        PBXVariantGroup variantGroup =
-            resourcesGroup.getOrCreateChildVariantGroupByName(variantName);
-
-        PBXBuildFile buildFile = new PBXBuildFile(variantGroup);
-        phase.getFiles().add(buildFile);
-
-        for (Map.Entry<String, SourcePath> childVirtualNameEntry :
-            virtualOutputEntry.getValue().entrySet()) {
-          SourceTreePath sourceTreePath = new SourceTreePath(
-              PBXReference.SourceTree.SOURCE_ROOT,
-              pathRelativizer.outputPathToSourcePath(childVirtualNameEntry.getValue()));
-
-          variantGroup.getOrCreateVariantFileReferenceByNameAndSourceTreePath(
-              childVirtualNameEntry.getKey(),
-              sourceTreePath);
+      Map<String, PBXVariantGroup> variantGroups = Maps.newHashMap();
+      for (SourcePath variantSourcePath : resource.variants.get()) {
+        String lprojSuffix = ".lproj";
+        Path variantFilePath = sourcePathResolver.apply(variantSourcePath);
+        Path variantDirectory = variantFilePath.getParent();
+        if (variantDirectory == null || !variantDirectory.toString().endsWith(lprojSuffix)) {
+          throw new HumanReadableException(
+              "Variant files have to be in a directory with name ending in '.lproj', " +
+                  "but '%s' is not.",
+              variantFilePath);
         }
+        String variantDirectoryName = variantDirectory.getFileName().toString();
+        String variantLocalization =
+            variantDirectoryName.substring(0, variantDirectoryName.length() - lprojSuffix.length());
+        String variantFileName = variantFilePath.getFileName().toString();
+        PBXVariantGroup variantGroup = variantGroups.get(variantFileName);
+        if (variantGroup == null) {
+          variantGroup = resourcesGroup.getOrCreateChildVariantGroupByName(variantFileName);
+          PBXBuildFile buildFile = new PBXBuildFile(variantGroup);
+          phase.getFiles().add(buildFile);
+          variantGroups.put(variantFileName, variantGroup);
+        }
+        SourceTreePath sourceTreePath = new SourceTreePath(
+            PBXReference.SourceTree.SOURCE_ROOT,
+            pathRelativizer.outputPathToSourcePath(variantSourcePath));
+        variantGroup.getOrCreateVariantFileReferenceByNameAndSourceTreePath(
+            variantLocalization,
+            sourceTreePath);
       }
     }
     LOG.debug("Added resources build phase %s", phase);
@@ -561,16 +612,62 @@ public class NewNativeTargetProjectMutator {
         if (!arg.out.isEmpty()) {
           shellScriptBuildPhase.getOutputPaths().add(arg.out);
         }
-      } else if (IosPostprocessResourcesDescription.TYPE.equals(node.getType())) {
-        IosPostprocessResourcesDescription.Arg arg =
-            (IosPostprocessResourcesDescription.Arg) node.getConstructorArg();
-        if (arg.cmd.isPresent()) {
-          shellScriptBuildPhase.setShellScript(arg.cmd.get());
-        }
+      } else if (XcodePrebuildScriptDescription.TYPE.equals(node.getType())) {
+        XcodePrebuildScriptDescription.Arg arg =
+            (XcodePrebuildScriptDescription.Arg) node.getConstructorArg();
+        shellScriptBuildPhase.setShellScript(arg.cmd);
+      } else if (XcodePostbuildScriptDescription.TYPE.equals(node.getType())) {
+        XcodePostbuildScriptDescription.Arg arg =
+            (XcodePostbuildScriptDescription.Arg) node.getConstructorArg();
+        shellScriptBuildPhase.setShellScript(arg.cmd);
+      } else if (IosReactNativeLibraryDescription.TYPE.equals(node.getType())) {
+        shellScriptBuildPhase.setShellScript(generateXcodeShellScript(node));
       } else {
         // unreachable
         throw new IllegalStateException("Invalid rule type for shell script build phase");
       }
     }
+  }
+
+  private void addRawScriptBuildPhases(PBXNativeTarget target) {
+    for (Path runScript : additionalRunScripts) {
+      PBXShellScriptBuildPhase phase = new PBXShellScriptBuildPhase();
+      phase.setShellScript(runScript.toString());
+      target.getBuildPhases().add(phase);
+    }
+  }
+
+  private String generateXcodeShellScript(TargetNode<?> targetNode) {
+    Preconditions.checkArgument(targetNode.getConstructorArg() instanceof ReactNativeLibraryArgs);
+
+    ProjectFilesystem filesystem = targetNode.getRuleFactoryParams().getProjectFilesystem();
+    ReactNativeLibraryArgs args = (ReactNativeLibraryArgs) targetNode.getConstructorArg();
+    IosReactNativeLibraryDescription description =
+        (IosReactNativeLibraryDescription) targetNode.getDescription();
+    ImmutableList.Builder<String> script = ImmutableList.builder();
+    script.add("BASE_DIR=${CONFIGURATION_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}");
+    script.add("JS_OUT=${BASE_DIR}/" + args.bundleName);
+    script.add("SOURCE_MAP=${TEMP_DIR}/rn_source_map/" + args.bundleName + ".map");
+
+    if (skipRNBundle) {
+      // Working in server mode: make sure that we clear the bundle from a previous build.
+      script.add("rm -rf ${JS_OUT}");
+    } else {
+      script.add("mkdir -p `dirname ${JS_OUT}`");
+      script.add("mkdir -p `dirname ${SOURCE_MAP}`");
+
+      script.add(Joiner.on(" ").join(
+              ReactNativeBundle.getBundleScript(
+                  filesystem.resolve(
+                      sourcePathResolver.apply(description.getReactNativePackager())),
+                  filesystem.resolve(sourcePathResolver.apply(args.entryPath)),
+                  ReactNativePlatform.IOS,
+                  ReactNativeFlavors.isDevMode(targetNode.getBuildTarget()),
+                  "${JS_OUT}",
+                  "${BASE_DIR}",
+                  "${SOURCE_MAP}")));
+    }
+
+    return Joiner.on(" && ").join(script.build());
   }
 }

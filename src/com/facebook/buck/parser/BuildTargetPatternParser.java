@@ -21,11 +21,9 @@ import com.facebook.buck.model.BuildTargetPattern;
 import com.facebook.buck.model.ImmediateDirectoryBuildTargetPattern;
 import com.facebook.buck.model.SingletonBuildTargetPattern;
 import com.facebook.buck.model.SubdirectoryBuildTargetPattern;
-import com.facebook.buck.model.UnflavoredBuildTarget;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 
-import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 
 /**
@@ -33,31 +31,21 @@ import javax.annotation.concurrent.Immutable;
  * regardless of the context.
  */
 @Immutable
-public abstract class BuildTargetPatternParser {
+public abstract class BuildTargetPatternParser<T> {
 
   private static final String VISIBILITY_PUBLIC = "PUBLIC";
   private static final String BUILD_RULE_PREFIX = "//";
   private static final String WILDCARD_BUILD_RULE_SUFFIX = "...";
   private static final String BUILD_RULE_SEPARATOR = ":";
 
-  @Nullable
   private final String baseName;
 
-  private final BuildTargetParser buildTargetParser;
-
-  private BuildTargetPatternParser(BuildTargetParser targetParser, String baseName) {
-    this.baseName = baseName;
-    this.buildTargetParser = targetParser;
+  protected BuildTargetPatternParser(String baseName) {
+    this.baseName = Preconditions.checkNotNull(baseName);
   }
 
-  @Nullable
   public String getBaseName() {
     return baseName;
-  }
-
-  @Nullable
-  public String getBaseNameWithSlash() {
-    return UnflavoredBuildTarget.getBaseNameWithSlash(baseName);
   }
 
   protected boolean isPublicVisibilityAllowed() {
@@ -73,13 +61,12 @@ public abstract class BuildTargetPatternParser {
    * 2. //src/com/facebook/buck/cli: will match all in the same directory.
    * 3. //src/com/facebook/buck/cli/... will match all in or under that directory.
    * For case 2 and 3, parseContext is expected to be
-   * {@link BuildTargetPatternParser#forVisibilityArgument(BuildTargetParser)}.
+   * {@link BuildTargetPatternParser#forVisibilityArgument()}.
    */
-  public final BuildTargetPattern parse(String buildTargetPattern)
-      throws NoSuchBuildTargetException {
+  public final T parse(String buildTargetPattern) {
     if (VISIBILITY_PUBLIC.equals(buildTargetPattern)) {
       if (isPublicVisibilityAllowed()) {
-        return BuildTargetPattern.MATCH_ALL;
+        return createForAll();
       } else {
         throw new BuildTargetParseException(
             String.format("%s not supported in the parse context", VISIBILITY_PUBLIC));
@@ -90,7 +77,8 @@ public abstract class BuildTargetPatternParser {
         buildTargetPattern.startsWith(BUILD_RULE_PREFIX),
         String.format("'%s' must start with '//'", buildTargetPattern));
 
-    if (buildTargetPattern.endsWith(WILDCARD_BUILD_RULE_SUFFIX)) {
+    if (buildTargetPattern.equals(WILDCARD_BUILD_RULE_SUFFIX) ||
+        buildTargetPattern.endsWith("/" + WILDCARD_BUILD_RULE_SUFFIX)) {
       if (isWildCardAllowed()) {
         if (buildTargetPattern.contains(BUILD_RULE_SEPARATOR)) {
           throw new BuildTargetParseException(
@@ -100,18 +88,18 @@ public abstract class BuildTargetPatternParser {
         String basePathWithSlash = buildTargetPattern.substring(
             BUILD_RULE_PREFIX.length(),
             buildTargetPattern.length() - WILDCARD_BUILD_RULE_SUFFIX.length());
-        return new SubdirectoryBuildTargetPattern(basePathWithSlash);
+        return createForDescendants(basePathWithSlash);
       } else {
         throw new BuildTargetParseException(
             String.format("'%s' cannot end with '...'", buildTargetPattern));
       }
     }
 
-    BuildTarget target = buildTargetParser.parse(buildTargetPattern, this);
+    BuildTarget target = BuildTargetParser.INSTANCE.parse(buildTargetPattern, this);
     if (target.getShortNameAndFlavorPostfix().isEmpty()) {
-      return new ImmediateDirectoryBuildTargetPattern(target.getBasePathWithSlash());
+      return createForChildren(target.getBasePathWithSlash());
     } else {
-      return new SingletonBuildTargetPattern(target.getFullyQualifiedName());
+      return createForSingleton(target);
     }
   }
 
@@ -119,25 +107,23 @@ public abstract class BuildTargetPatternParser {
    * Used when parsing target names relative to another target, such as in a build file.
    * @param baseName name such as {@code //first-party/orca}
    */
-  public static BuildTargetPatternParser forBaseName(
-      BuildTargetParser targetParser,
-      String baseName) {
+  public static BuildTargetPatternParser<BuildTargetPattern> forBaseName(String baseName) {
     Preconditions.checkNotNull(Strings.emptyToNull(baseName));
-    return new BuildFileContext(targetParser, baseName);
+    return new BuildFileContext(baseName);
   }
 
   /**
    * Used when parsing target names in the {@code visibility} argument to a build rule.
    */
-  public static BuildTargetPatternParser forVisibilityArgument(BuildTargetParser targetParser) {
-    return new VisibilityContext(targetParser);
+  public static BuildTargetPatternParser<BuildTargetPattern> forVisibilityArgument() {
+    return new VisibilityContext();
   }
 
   /**
    * Used when parsing fully-qualified target names only, such as from the command line.
    */
-  public static BuildTargetPatternParser fullyQualified(BuildTargetParser targetParser) {
-    return new FullyQualifiedContext(targetParser);
+  public static BuildTargetPatternParser<BuildTargetPattern> fullyQualified() {
+    return new FullyQualifiedContext();
   }
 
   /**
@@ -147,18 +133,46 @@ public abstract class BuildTargetPatternParser {
    */
   public abstract String makeTargetDescription(String buildTargetName, String buildFileName);
 
-  private static class BuildFileContext extends BuildTargetPatternParser {
+  protected abstract T createForAll();
+  protected abstract T createForDescendants(String basePathWithSlash);
+  protected abstract T createForChildren(String basePathWithSlash);
+  protected abstract T createForSingleton(BuildTarget target);
 
-    public BuildFileContext(BuildTargetParser targetParser, String basePath) {
-      super(targetParser, basePath);
+  private abstract static class BuildTargetPatternBaseParser
+      extends BuildTargetPatternParser<BuildTargetPattern> {
+    public BuildTargetPatternBaseParser(String baseName) {
+      super(baseName);
+    }
+    @Override
+    public BuildTargetPattern createForAll() {
+      return BuildTargetPattern.MATCH_ALL;
+    }
+    @Override
+    public BuildTargetPattern createForDescendants(String basePathWithSlash) {
+      return new SubdirectoryBuildTargetPattern(basePathWithSlash);
+    }
+    @Override
+    public BuildTargetPattern createForChildren(String basePathWithSlash) {
+      return new ImmediateDirectoryBuildTargetPattern(basePathWithSlash);
+    }
+    @Override
+    public BuildTargetPattern createForSingleton(BuildTarget target) {
+      return new SingletonBuildTargetPattern(target.getFullyQualifiedName());
+    }
+  }
+
+  private static class BuildFileContext extends BuildTargetPatternBaseParser {
+
+    public BuildFileContext(String basePath) {
+      super(basePath);
     }
 
     @Override
     public String makeTargetDescription(String buildTargetName, String buildFileName) {
       return String.format(
-          "%s in build file %s%s",
+          "%s in build file %s/%s",
           buildTargetName,
-          getBaseNameWithSlash(),
+          getBaseName(),
           buildFileName);
     }
   }
@@ -167,27 +181,29 @@ public abstract class BuildTargetPatternParser {
    * When parsing a build target for the visibility argument in a build file, targets must be
    * fully-qualified, but wildcards are allowed.
    */
-  private static class FullyQualifiedContext extends BuildTargetPatternParser {
-    public FullyQualifiedContext(BuildTargetParser targetParser) {
-      super(targetParser, "");
+  private static class FullyQualifiedContext extends BuildTargetPatternBaseParser {
+
+    public FullyQualifiedContext() {
+      super("");
     }
 
     @Override
     public String makeTargetDescription(String buildTargetName, String buildFileName) {
       return String.format("%s in fully qualified context.", buildTargetName);
     }
+
   }
 
-  private static class VisibilityContext extends BuildTargetPatternParser {
-    public VisibilityContext(BuildTargetParser targetParser) {
-      super(targetParser, "");
+  private static class VisibilityContext extends BuildTargetPatternBaseParser {
+
+    public VisibilityContext() {
+      super("");
     }
 
     @Override
     public String makeTargetDescription(String buildTargetName, String buildFileName) {
       return String.format("%s in context visibility", buildTargetName);
     }
-
 
     @Override
     protected boolean isPublicVisibilityAllowed() {
@@ -198,5 +214,7 @@ public abstract class BuildTargetPatternParser {
     protected boolean isWildCardAllowed() {
       return true;
     }
+
   }
+
 }

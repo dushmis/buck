@@ -17,10 +17,11 @@
 package com.facebook.buck.cli;
 
 import com.facebook.buck.graph.AbstractBottomUpTraversal;
-import com.facebook.buck.log.Logger;
 import com.facebook.buck.json.BuildFileParseException;
+import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetException;
+import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.parser.BuildTargetPatternParser;
 import com.facebook.buck.parser.ParserConfig;
 import com.facebook.buck.rules.TargetGraph;
@@ -31,51 +32,70 @@ import com.google.common.base.Function;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
+
+import org.kohsuke.args4j.Argument;
+import org.kohsuke.args4j.Option;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
-public class AuditInputCommand extends AbstractCommandRunner<AuditCommandOptions> {
+public class AuditInputCommand extends AbstractCommand {
 
   private static final Logger LOG = Logger.get(AuditInputCommand.class);
 
-  public AuditInputCommand(CommandRunnerParams params) {
-    super(params);
+  @Option(name = "--json",
+      usage = "Output in JSON format")
+  private boolean generateJsonOutput;
+
+  public boolean shouldGenerateJsonOutput() {
+    return generateJsonOutput;
+  }
+
+  @Argument
+  private List<String> arguments = Lists.newArrayList();
+
+  public List<String> getArguments() {
+    return arguments;
+  }
+
+  @VisibleForTesting
+  void setArguments(List<String> arguments) {
+    this.arguments = arguments;
+  }
+
+  public List<String> getArgumentsFormattedAsBuildTargets(BuckConfig buckConfig) {
+    return getCommandLineBuildTargetNormalizer(buckConfig).normalizeAll(getArguments());
   }
 
   @Override
-  AuditCommandOptions createOptions(BuckConfig buckConfig) {
-    return new AuditCommandOptions(buckConfig);
-  }
-
-  @Override
-  int runCommandWithOptionsInternal(AuditCommandOptions options)
+  public int runWithoutHelp(final CommandRunnerParams params)
       throws IOException, InterruptedException {
     // Create a TargetGraph that is composed of the transitive closure of all of the dependent
     // TargetNodes for the specified BuildTargets.
     final ImmutableSet<String> fullyQualifiedBuildTargets = ImmutableSet.copyOf(
-        options.getArgumentsFormattedAsBuildTargets());
+        getArgumentsFormattedAsBuildTargets(params.getBuckConfig()));
 
     if (fullyQualifiedBuildTargets.isEmpty()) {
-      console.printBuildFailure("Please specify at least one build target.");
+      params.getConsole().printBuildFailure("Please specify at least one build target.");
       return 1;
     }
 
     ImmutableSet<BuildTarget> targets = FluentIterable
-        .from(options.getArgumentsFormattedAsBuildTargets())
+        .from(getArgumentsFormattedAsBuildTargets(params.getBuckConfig()))
         .transform(new Function<String, BuildTarget>() {
                      @Override
                      public BuildTarget apply(String input) {
-                       return getParser().getBuildTargetParser().parse(
+                       return BuildTargetParser.INSTANCE.parse(
                            input,
-                           BuildTargetPatternParser.fullyQualified(
-                               getParser().getBuildTargetParser()));
+                           BuildTargetPatternParser.fullyQualified());
                      }
                    })
         .toSet();
@@ -84,26 +104,31 @@ public class AuditInputCommand extends AbstractCommandRunner<AuditCommandOptions
 
     TargetGraph graph;
     try {
-      graph = getParser().buildTargetGraphForBuildTargets(
+      graph = params.getParser().buildTargetGraphForBuildTargets(
           targets,
-          new ParserConfig(options.getBuckConfig()),
-          getBuckEventBus(),
-          console,
-          environment,
-          options.getEnableProfiling());
+          new ParserConfig(params.getBuckConfig()),
+          params.getBuckEventBus(),
+          params.getConsole(),
+          params.getEnvironment(),
+          getEnableProfiling());
     } catch (BuildTargetException | BuildFileParseException e) {
-      console.printBuildFailureWithoutStacktrace(e);
+      params.getConsole().printBuildFailureWithoutStacktrace(e);
       return 1;
     }
 
-    if (options.shouldGenerateJsonOutput()) {
-      return printJsonInputs(graph);
+    if (shouldGenerateJsonOutput()) {
+      return printJsonInputs(params, graph);
     }
-    return printInputs(graph);
+    return printInputs(params, graph);
+  }
+
+  @Override
+  public boolean isReadOnly() {
+    return true;
   }
 
   @VisibleForTesting
-  int printJsonInputs(TargetGraph graph) throws IOException {
+  int printJsonInputs(final CommandRunnerParams params, TargetGraph graph) throws IOException {
     final SortedMap<String, ImmutableSortedSet<Path>> targetToInputs =
         new TreeMap<>();
 
@@ -119,11 +144,11 @@ public class AuditInputCommand extends AbstractCommandRunner<AuditCommandOptions
         for (Path input : node.getInputs()) {
           LOG.debug("Walking input %s", input);
           try {
-            if (!getProjectFilesystem().exists(input)) {
+            if (!params.getRepository().getFilesystem().exists(input)) {
               throw new HumanReadableException(
                   "Target %s refers to non-existent input file: %s", node, input);
             }
-            targetInputs.addAll(getProjectFilesystem().getFilesUnderPath(input));
+            targetInputs.addAll(params.getRepository().getFilesystem().getFilesUnderPath(input));
           } catch (IOException e) {
             throw new RuntimeException(e);
           }
@@ -135,19 +160,19 @@ public class AuditInputCommand extends AbstractCommandRunner<AuditCommandOptions
 
       @Override
       public Void getResult() {
-       return null;
+        return null;
       }
 
     }.traverse();
 
-    getObjectMapper().writeValue(
-        console.getStdOut(),
+    params.getObjectMapper().writeValue(
+        params.getConsole().getStdOut(),
         targetToInputs);
 
     return 0;
   }
 
-  private int printInputs(TargetGraph graph) {
+  private int printInputs(final CommandRunnerParams params, TargetGraph graph) {
     // Traverse the TargetGraph and print out all of the inputs used to produce each TargetNode.
     // Keep track of the inputs that have been displayed to ensure that they are not displayed more
     // than once.
@@ -160,14 +185,14 @@ public class AuditInputCommand extends AbstractCommandRunner<AuditCommandOptions
         for (Path input : node.getInputs()) {
           LOG.debug("Walking input %s", input);
           try {
-            if (!getProjectFilesystem().exists(input)) {
+            if (!params.getRepository().getFilesystem().exists(input)) {
               throw new HumanReadableException(
                   "Target %s refers to non-existent input file: %s",
                   node,
                   input);
             }
             ImmutableSortedSet<Path> nodeContents = ImmutableSortedSet.copyOf(
-                getProjectFilesystem().getFilesUnderPath(input));
+                params.getRepository().getFilesystem().getFilesUnderPath(input));
             for (Path path : nodeContents) {
               putInput(path);
             }
@@ -180,7 +205,7 @@ public class AuditInputCommand extends AbstractCommandRunner<AuditCommandOptions
       private void putInput(Path input) {
         boolean isNewInput = inputs.add(input);
         if (isNewInput) {
-          getStdOut().println(input);
+          params.getConsole().getStdOut().println(input);
         }
       }
 
@@ -195,7 +220,7 @@ public class AuditInputCommand extends AbstractCommandRunner<AuditCommandOptions
   }
 
   @Override
-  String getUsageIntro() {
+  public String getShortDescription() {
     return "provides facilities to audit build targets' input files";
   }
 

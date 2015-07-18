@@ -17,16 +17,15 @@
 package com.facebook.buck.thrift;
 
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MkdirStep;
 import com.facebook.buck.step.fs.RmStep;
 import com.facebook.buck.zip.ZipStep;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
@@ -34,7 +33,9 @@ import java.nio.file.Path;
 
 public class SrcZip extends AbstractBuildRule {
 
+  @AddToRuleKey(stringify = true)
   private final Path sourceZip;
+  @AddToRuleKey(stringify = true)
   private final Path sourceDirectory;
 
   public SrcZip(
@@ -48,20 +49,8 @@ public class SrcZip extends AbstractBuildRule {
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return sourceZip;
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder
-        .setReflectively("sourceZip", sourceZip.toString())
-        .setReflectively("sourceDirectory", sourceDirectory.toString());
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableList.of();
   }
 
   @Override

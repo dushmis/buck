@@ -36,7 +36,7 @@ import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.TestSourcePath;
-import com.facebook.buck.rules.coercer.Either;
+import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
@@ -51,7 +51,8 @@ public class PythonTestDescriptionTest {
 
   private static final Path PEX_PATH = Paths.get("pex");
   private static final Path PEX_EXECUTER_PATH = MorePathsForTests.rootRelativePath("/not/python2");
-  private static final Optional<Path> TEST_MAIN = Optional.of(Paths.get("main"));
+  private static final String PEX_EXTENSION = ".pex";
+  private static final Path TEST_MAIN = Paths.get("main");
   private static final ProjectFilesystem PROJECT_FILESYSTEM = new FakeProjectFilesystem();
   private static final CxxPlatform CXX_PLATFORM = DefaultCxxPlatforms.build(
       new CxxBuckConfig(new FakeBuckConfig()));
@@ -68,20 +69,22 @@ public class PythonTestDescriptionTest {
         PROJECT_FILESYSTEM,
         PEX_PATH,
         PEX_EXECUTER_PATH,
+        PEX_EXTENSION,
         TEST_MAIN,
-        new PythonEnvironment(Paths.get("fake_python"), ImmutablePythonVersion.of("Python 2.7")),
+        new PythonEnvironment(Paths.get("fake_python"), PythonVersion.of("Python 2.7")),
         CXX_PLATFORM,
         CXX_PLATFORMS);
     PythonTestDescription.Arg arg = desc.createUnpopulatedConstructorArg();
     arg.deps = Optional.of(ImmutableSortedSet.<BuildTarget>of());
     arg.srcs = Optional.of(
-        Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofLeft(
+        SourceList.ofUnnamedSources(
             ImmutableSortedSet.<SourcePath>of(new TestSourcePath("blah.py"))));
     arg.resources = Optional.absent();
     arg.baseModule = Optional.absent();
     arg.contacts = Optional.absent();
     arg.labels = Optional.absent();
     arg.sourceUnderTest = Optional.absent();
+    arg.zipSafe = Optional.absent();
     PythonTest testRule = desc.createBuildRule(params, resolver, arg);
 
     PythonBinary binRule = (PythonBinary) resolver.getRule(
@@ -109,8 +112,9 @@ public class PythonTestDescriptionTest {
         PROJECT_FILESYSTEM,
         PEX_PATH,
         PEX_EXECUTER_PATH,
+        PEX_EXTENSION,
         TEST_MAIN,
-        new PythonEnvironment(Paths.get("python"), ImmutablePythonVersion.of("2.5")),
+        new PythonEnvironment(Paths.get("python"), PythonVersion.of("2.5")),
         CXX_PLATFORM,
         CXX_PLATFORMS);
     PythonTestDescription.Arg arg = desc.createUnpopulatedConstructorArg();
@@ -119,9 +123,8 @@ public class PythonTestDescriptionTest {
     arg.contacts = Optional.absent();
     arg.labels = Optional.absent();
     arg.sourceUnderTest = Optional.absent();
-    arg.srcs = Optional.of(
-        Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofLeft(
-            ImmutableSortedSet.of(source)));
+    arg.srcs = Optional.of(SourceList.ofUnnamedSources(ImmutableSortedSet.of(source)));
+    arg.zipSafe = Optional.absent();
 
     // Run without a base module set and verify it defaults to using the build target
     // base name.
@@ -141,8 +144,9 @@ public class PythonTestDescriptionTest {
     PythonBinary baseModuleRule = (PythonBinary) resolver.getRule(
         desc.getBinaryBuildTarget(target));
     assertNotNull(baseModuleRule);
-    assertTrue(baseModuleRule.getComponents().getModules().containsKey(
-        Paths.get(arg.baseModule.get()).resolve(sourceName)));
+    assertTrue(
+        baseModuleRule.getComponents().getModules().containsKey(
+            Paths.get(arg.baseModule.get()).resolve(sourceName)));
   }
 
 }

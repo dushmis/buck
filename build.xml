@@ -10,12 +10,16 @@
   <property name="testrunner.classes.dir" value="${build.dir}/testrunner/classes" />
   <property name="bootstrapper.src.dir" value="com/facebook/buck/cli/bootstrapper/" />
   <property name="bootstrapper.classes.dir" value="${build.dir}/bootstrapper/classes" />
-  <property name="buck.path_to_compile_asset_catalogs_py" value="${basedir}/src/com/facebook/buck/apple/compile_asset_catalogs.py" />
+  <property name="bootstrapper.jar" value="${build.dir}/bootstrapper/bootstrapper.jar" />
+  <property name="tracing-api.src.dir" value="com/facebook/buck/event/api/" />
+  <property name="tracing-api.classes.dir" value="${build.dir}/tracing-api/classes" />
+  <property name="tracing-api.jar" value="${build.dir}/tracing-api/tracing-api.jar"/>
   <property name="buck.path_to_compile_asset_catalogs_build_phase_sh" value="${basedir}/src/com/facebook/buck/apple/compile_asset_catalogs_build_phase.sh" />
+  <property name="buck.path_to_pex" value="${basedir}/src/com/facebook/buck/python/pex.py" />
+  <property name="buck.path_to_python_test_main" value="${basedir}/src/com/facebook/buck/python/__test_main__.py" />
   <property name="buck.path_to_sh_binary_template" value="${basedir}/src/com/facebook/buck/shell/sh_binary_template" />
   <property name="buck.logging_config_file" value="${basedir}/config/logging.properties" />
   <property name="buck.test_logging_config_file" value="${basedir}/config/logging.test.properties" />
-  <property name="buck.log4j_config_file" value="${basedir}/config/log4j.properties" />
   <property name="classes.dir" value="${build.dir}/classes" />
   <property name="testclasses.dir" value="${build.dir}/testclasses" />
   <property name="javadoc.dir" value="${build.dir}/javadoc" />
@@ -23,9 +27,10 @@
   <property name="javadoc-all.dir" value="${build.dir}/javadoc-all" />
   <property name="client.dir" value="third-party/nailgun" />
   <property name="test.class" value="Test" />
+  <property name="test.debug_port" value="8787" />
   <property name="lint.outputpath" value="${build.dir}/lint.output" />
 
-  <property name="dx.base.dir" value="${basedir}/third-party/java/dx-from-kitkat" />
+  <property name="dx.base.dir" value="${basedir}/third-party/java/dx" />
   <property name="dx.src.dir" value="${dx.base.dir}/src" />
   <property name="dx.test.dir" value="${dx.base.dir}/tests" />
   <property name="dx.etc.dir" value="${dx.base.dir}/etc" />
@@ -36,7 +41,7 @@
   <property name="pathlib.dir" value="${third-party.dir}/py/pathlib" />
   <property name="unittest2.dir" value="${third-party.dir}/py/unittest2" />
 
-  <property name="immutables-value-standalone.jar" value="${third-party.dir}/java/immutables/value-standalone-1.1.2.jar" />
+  <property name="immutables-value-standalone.jar" value="${third-party.dir}/java/immutables/value-2.0.11.jar" />
   <property name="immutables.gensrc.dir" value="${build.dir}/immutables" />
   <property name="immutables.gensrc.test.dir" value="${build.dir}/immutables-tests" />
 
@@ -56,21 +61,9 @@
 
   <fileset dir="${third-party.dir}/java" id="third-party.jars">
     <include name="asm/asm-debug-all-5.0.3.jar" />
-    <include name="auto-service/auto-service-1.0-rc1.jar" />
     <include name="aopalliance/aopalliance.jar" />
-    <include name="astyanax/astyanax-cassandra-1.56.38.jar" />
-    <include name="astyanax/astyanax-cassandra-1.56.38-javadoc.jar" />
-    <include name="astyanax/astyanax-cassandra-1.56.38-sources.jar" />
-    <include name="astyanax/astyanax-core-1.56.38.jar" />
-    <include name="astyanax/astyanax-thrift-1.56.38.jar" />
-    <include name="astyanax/cassandra-1.2.3.jar" />
-    <include name="astyanax/cassandra-thrift-1.2.3.jar" />
-    <include name="astyanax/high-scale-lib-1.1.2.jar" />
     <include name="closure-templates/soy-excluding-deps.jar" />
-    <include name="commons-cli/commons-cli-1.1.jar" />
-    <include name="commons-codec/commons-codec-1.2.jar" />
     <include name="commons-compress/commons-compress-1.8.1.jar" />
-    <include name="commons-lang/commons-lang-2.6.jar" />
     <include name="dd-plist/dd-plist.jar" />
     <include name="eclipse/org.eclipse.core.contenttype_3.4.200.v20140207-1251.jar"/>
     <include name="eclipse/org.eclipse.core.jobs_3.6.1.v20141014-1248.jar"/>
@@ -85,23 +78,19 @@
     <include name="guice/guice-multibindings-3.0.jar" />
     <include name="gson/gson-2.2.4.jar" />
     <include name="icu4j/icu4j-54.1.1.jar" />
-    <include name="immutables/value-1.1.2.jar" />
+    <include name="immutables/value-2.0.11.jar" />
     <include name="infer-annotations/infer-annotations-1.5.jar" />
-    <include name="jacoco/org.jacoco.core-0.7.2.201409121644.jar" />
-    <include name="jacoco/org.jacoco.report-0.7.2.201409121644.jar" />
+    <include name="jacoco/org.jacoco.core-0.7.5.201505241946.jar" />
+    <include name="jacoco/org.jacoco.report-0.7.5.201505241946.jar" />
     <include name="jetty/jetty-all-9.2.10.v20150310.jar" />
-    <include name="joda-time/joda-time-2.2.jar" />
+    <include name="jimfs/jimfs-1.0.jar" />
     <include name="jsr/javax.inject-1.jar" />
-    <include name="log4j/log4j-1.2.16.jar" />
     <include name="okhttp/okhttp-2.2.0.jar" />
     <include name="okio/okio-1.2.0.jar" />
-    <include name="parboiled/parboiled-core-1.1.6.jar" />
-    <include name="parboiled/parboiled-java-1.1.6.jar" />
     <include name="servlet-api/javax.servlet-api-3.1.0.jar" />
     <include name="slf4j/slf4j-api-1.7.2.jar" />
     <include name="slf4j/slf4j-log4j12-1.7.2.jar" />
     <include name="stringtemplate/ST-4.0.8.jar" />
-    <include name="thrift/libthrift-0.7.0.jar" />
     <include name="xz-java-1.3/xz-1.3.jar" />
   </fileset>
 
@@ -110,6 +99,7 @@
     <fileset refid="third-party.jars" />
     <pathelement location="${classes.dir}" />
     <pathelement location="${dx.classes.dir}" />
+    <pathelement location="${bootstrapper.jar}" />
   </path>
 
   <path id="classpath">
@@ -126,8 +116,8 @@
 
   <path id="junit">
     <pathelement location="${third-party.dir}/java/junit/junit-4.11.jar" />
-    <pathelement location="${third-party.dir}/java/hamcrest/hamcrest-core-1.3.jar" />
-    <pathelement location="${third-party.dir}/java/hamcrest/hamcrest-library-1.3.jar" />
+    <pathelement location="${third-party.dir}/java/hamcrest/hamcrest-junit-2.0.0.0.jar" />
+    <pathelement location="${third-party.dir}/java/hamcrest/java-hamcrest-2.0.0.0.jar" />
     <pathelement location="${third-party.dir}/java/testng/testng-6.8.jar" />
   </path>
 
@@ -160,13 +150,47 @@
     </javac>
   </target>
 
-  <target name="compile-bootstrapper" depends="checkversion">
+  <path id="bootstrapper-classpath">
+    <!-- Do not add dependencies. The bootstrapper is intended to keep the system ClassLoader free
+         of classes that might conflict with those used by compiler plugins and annotation
+         processors. As such it cannot depend on third-party libraries, directly or indirectly. -->
+  </path>
+
+  <target name="bootstrapper" depends="checkversion, tracing-api">
     <mkdir dir="${bootstrapper.classes.dir}" />
-    <ecj destdir="${bootstrapper.classes.dir}">
+    <ecj destdir="${bootstrapper.classes.dir}" classpathref="bootstrapper-classpath">
       <javac-params>
         <include name="${bootstrapper.src.dir}/**/*.java" />
       </javac-params>
     </ecj>
+    <jar destfile="${bootstrapper.jar}">
+      <fileset dir="${bootstrapper.classes.dir}" />
+
+      <!-- Be very careful what is added here, and leave comments justifying each addition. See the
+      comment in bootstrapper-classpath above for more details on why. -->
+      
+      <!-- The Tracing API jar must be accessible to both Buck and compiler plugins, so we put it
+      in the bootstrapper. Compiler plugins will have their own copy linked in, but the ClassLoaders
+      will end up loading this one instead when they are run inside Buck. -->
+      <zipfileset src="${tracing-api.jar}" />
+    </jar>
+  </target>
+
+  <path id="tracing-api.classpath">
+    <!-- The Tracing API is a very light JAR meant to be included in compiler plugins that may
+    be run outside of Buck. As such, it can take no dependencies. -->
+  </path>
+
+  <target name="tracing-api" depends="checkversion">
+    <mkdir dir="${tracing-api.classes.dir}" />
+    <ecj destdir="${tracing-api.classes.dir}" classpathref="tracing-api.classpath">
+      <javac-params>
+        <include name="${tracing-api.src.dir}/**/*.java"/>
+      </javac-params>
+    </ecj>
+    <jar destfile="${tracing-api.jar}">
+      <fileset dir="${tracing-api.classes.dir}"/>
+    </jar>
   </target>
 
   <path id="immutables-classpath">
@@ -226,10 +250,9 @@
            classpathref="classpath-generate-immutables"
            includeAntRuntime="no"
            includes="${immutables-srcs-flattened}">
+      <compilerarg value="-Werror" />
       <compilerarg value="-processorpath" />
       <compilerarg value="${immutables-value-standalone.jar}" />
-      <compilerarg value="-processor" />
-      <compilerarg value="org.immutables.value.internal.processor.Processor" />
       <compilerarg value="-proc:only" />
       <compilerarg value="-s" />
       <compilerarg value="${immutables.gensrc.dir}" />
@@ -290,86 +313,10 @@
   </macrodef>
 
   <target name="compile"
-          depends="compile-testrunner, compile-bootstrapper, dx, generate-immutables"
+          depends="compile-testrunner, bootstrapper, tracing-api, dx, generate-immutables"
           description="compile Java source code">
     <mkdir dir="${classes.dir}" />
 
-    <ecj>
-      <javac-params>
-        <!-- //src/com/facebook/buck/io:io -->
-        <include name="com/facebook/buck/io/PathListing.java" />
-
-        <!-- //src/com/facebook/buck/log:log -->
-        <include name="com/facebook/buck/log/CommandThreadAssociation.java" />
-        <include name="com/facebook/buck/log/CommandThreadFactory.java" />
-        <include name="com/facebook/buck/log/ConsoleHandler.java" />
-        <include name="com/facebook/buck/log/GlobalState.java" />
-        <include name="com/facebook/buck/log/LogConfig.java" />
-        <include name="com/facebook/buck/log/LogConfigPaths.java" />
-        <include name="com/facebook/buck/log/LogFormatter.java" />
-        <include name="com/facebook/buck/log/Logger.java" />
-
-        <!-- //src/com/facebook/buck/util:concurrent -->
-        <include name="com/facebook/buck/util/concurrent/MoreExecutors.java" />
-        <include name="com/facebook/buck/util/concurrent/MoreFutures.java" />
-        <include name="com/facebook/buck/util/concurrent/TimeSpan.java" />
-
-        <!-- //src/com/facebook/buck/util:escaper -->
-        <include name="com/facebook/buck/util/Escaper.java" />
-        <include name="com/facebook/buck/util/WindowsCreateProcessEscape.java" />
-
-        <!-- //src/com/facebook/buck/util:exceptions -->
-        <include name="com/facebook/buck/util/ExceptionWithHumanReadableMessage.java" />
-        <include name="com/facebook/buck/util/HumanReadableException.java" />
-        <include name="com/facebook/buck/util/WatchmanWatcherException.java" />
-
-        <!-- //src/com/facebook/buck/util:io -->
-        <include name="com/facebook/buck/util/Ansi.java" />
-        <include name="com/facebook/buck/util/AnsiEnvironmentChecking.java" />
-        <include name="com/facebook/buck/util/Console.java" />
-        <include name="com/facebook/buck/util/CapturingPrintStream.java" />
-        <include name="com/facebook/buck/util/DefaultDirectoryTraverser.java" />
-        <include name="com/facebook/buck/util/DirectoryTraverser.java" />
-        <include name="com/facebook/buck/util/DirectoryTraversal.java" />
-        <include name="com/facebook/buck/util/DirtyPrintStreamDecorator.java" />
-        <include name="com/facebook/buck/util/ImmutableProcessExecutorParams.java" />
-        <include name="com/facebook/buck/util/InputStreamConsumer.java" />
-        <include name="com/facebook/buck/util/MoreFiles.java" />
-        <include name="com/facebook/buck/util/MorePaths.java" />
-        <include name="com/facebook/buck/util/MorePosixFilePermissions.java" />
-        <include name="com/facebook/buck/util/PkillProcessManager.java" />
-        <include name="com/facebook/buck/util/ProcessExecutor.java" />
-        <include name="com/facebook/buck/util/ProcessExecutorParams.java" />
-        <include name="com/facebook/buck/util/ProcessManager.java" />
-        <include name="com/facebook/buck/util/ProjectFilesystem.java" />
-        <include name="com/facebook/buck/util/Threads.java" />
-        <include name="com/facebook/buck/util/Verbosity.java" />
-
-        <!-- //src/com/facebook/buck/util:constants -->
-        <include name="com/facebook/buck/util/BuckConstant.java" />
-
-        <!-- //src/com/facebook/buck/util/environment:platform -->
-        <include name="com/facebook/buck/util/environment/Platform.java" />
-
-        <!-- //src/com/facebook/buck/util/immutables:immutables -->
-        <include name="com/facebook/buck/util/immutables/BuckStyleImmutable.java" />
-
-        <!-- //src/com/facebook/buck/zip:stream -->
-        <include name="com/facebook/buck/zip/AppendingZipOutputStream.java" />
-        <include name="com/facebook/buck/zip/ByteIo.java" />
-        <include name="com/facebook/buck/zip/CentralDirectory.java" />
-        <include name="com/facebook/buck/zip/CustomZipOutputStream.java" />
-        <include name="com/facebook/buck/zip/CustomZipEntry.java" />
-        <include name="com/facebook/buck/zip/EntryAccounting.java" />
-        <include name="com/facebook/buck/zip/OverwritingZipOutputStream.java" />
-        <include name="com/facebook/buck/zip/ZipOutputStreams.java" />
-
-        <!-- //src/com/facebook/buck/timing:timing -->
-        <include name="com/facebook/buck/timing/*.java" />
-
-        <src path="${immutables.gensrc.dir}" />
-      </javac-params>
-    </ecj>
     <!-- Copy in scripts we need at run time when using an unpacked buck -->
     <copy file="src/com/facebook/buck/json/buck.py" todir="${classes.dir}/com/facebook/buck/json"/>
 
@@ -390,10 +337,6 @@
       <compilerarg value="-Xlint:serial" />
     </javac>
 
-    <!--
-      Note that the inputs to this <ecj> task overlap with those from the previous
-      <ecj> task. It's too much work to exclude them here.
-    -->
     <ecj>
       <javac-params>
         <!--
@@ -403,6 +346,7 @@
         <exclude name="com/facebook/buck/android/support/**" />
         <exclude name="com/facebook/buck/cli/bootstrapper/**" />
         <exclude name="com/facebook/buck/cli/quickstart/**" />
+        <exclude name="com/facebook/buck/event/api/**" />
         <exclude name="com/facebook/buck/junit/**" />
         <!-- Excluded since the maven functionality is bolted on later -->
         <exclude name="com/facebook/buck/maven/**" />
@@ -497,14 +441,14 @@
 
   <target name="report-generator-jar" depends="compile">
     <jar destfile="${build.dir}/report-generator.jar">
-      <zipfileset excludes="**/*SF **/*RSA" src="${third-party.dir}/java/jacoco/org.jacoco.core-0.7.2.201409121644.jar"/>
-      <zipfileset excludes="**/*SF **/*RSA" src="${third-party.dir}/java/jacoco/org.jacoco.report-0.7.2.201409121644.jar"/>
+      <zipfileset excludes="**/*SF **/*RSA" src="${third-party.dir}/java/jacoco/org.jacoco.core-0.7.5.201505241946.jar"/>
+      <zipfileset excludes="**/*SF **/*RSA" src="${third-party.dir}/java/jacoco/org.jacoco.report-0.7.5.201505241946.jar"/>
       <zipfileset excludes="**/*SF **/*RSA" src="${third-party.dir}/java/asm/asm-debug-all-5.0.3.jar"/>
       <fileset dir="${classes.dir}">
-          <include name="com/facebook/buck/java/ReportGenerator.class"/>
+          <include name="com/facebook/buck/java/coverage/ReportGenerator.class"/>
       </fileset>
       <manifest>
-        <attribute name="Main-Class" value="com.facebook.buck.java.ReportGenerator" />
+        <attribute name="Main-Class" value="com.facebook.buck.java.coverage.ReportGenerator" />
       </manifest>
     </jar>
   </target>
@@ -514,8 +458,8 @@
     <fileset dir="${third-party.dir}/java">
       <include name="cglib/cglib-nodep-2.2.jar" />
       <include name="easymock/easymock-3.3.1.jar" />
-      <include name="hamcrest/hamcrest-core-1.3.jar" />
-      <include name="hamcrest/hamcrest-library-1.3.jar" />
+      <include name="hamcrest/hamcrest-junit-2.0.0.0.jar" />
+      <include name="hamcrest/java-hamcrest-2.0.0.0.jar" />
       <include name="junit/junit-4.11.jar" />
       <include name="objenesis/objenesis-1.2.jar" />
     </fileset>
@@ -565,10 +509,9 @@
            includes="${immutables-test-srcs-flattened}"
            classpathref="tests.classpath"
            includeAntRuntime="no">
+      <compilerarg value="-Werror" />
       <compilerarg value="-processorpath" />
       <compilerarg value="${immutables-value-standalone.jar}" />
-      <compilerarg value="-processor" />
-      <compilerarg value="org.immutables.value.internal.processor.Processor" />
       <compilerarg value="-proc:only" />
       <compilerarg value="-s" />
       <compilerarg value="${immutables.gensrc.test.dir}" />
@@ -595,33 +538,81 @@
           depends="compile-tests"
           description="runs the Java tests"
           >
+    <condition property="jvmArgs"
+               value="-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=${test.debug_port}"
+               else="-ea">
+      <istrue value="${debugTest}"/>
+    </condition>
+
     <junit failureproperty="hasFailingTests"
            showoutput="true"
            forkmode="perBatch"
            haltonerror="on">
       <sysproperty key="buck.path_to_compile_asset_catalogs_py" value="${buck.path_to_compile_asset_catalogs_py}" />
       <sysproperty key="buck.path_to_compile_asset_catalogs_build_phase_sh" value="${buck.path_to_compile_asset_catalogs_build_phase_sh}" />
+      <sysproperty key="buck.path_to_pex" value="${buck.path_to_pex}" />
+      <sysproperty key="buck.path_to_python_test_main" value="${buck.path_to_python_test_main}" />
       <sysproperty key="buck.logging_config_file" value="${buck.test_logging_config_file}" />
-      <sysproperty key="log4j.configuration" value="file:${buck.log4j_config_file}" />
       <sysproperty key="java.util.logging.config.class" value="com.facebook.buck.log.LogConfig" />
       <sysproperty key="org.eclipse.jetty.util.log.class" value="org.eclipse.jetty.util.log.JavaUtilLog" />
 
       <!-- See DEFS for details on why this property is needed. -->
       <sysproperty key="sun.zip.disableMemoryMapping" value="true" />
 
+      <jvmarg value="${jvmArgs}" />
+
       <formatter type="plain" usefile="false" />
 
+      <!-- Java and android -->
+      <batchtest fork="yes">
+        <fileset dir="${test.dir}">
+          <include name="com/facebook/buck/java/**/*${test.class}.java" />
+          <include name="com/facebook/buck/android/**/*${test.class}.java" />
+          <include name="com/facebook/buck/dalvik/**/*${test.class}.java" />
+
+          <exclude name="**/testdata/**" />
+        </fileset>
+      </batchtest>
+
+      <!-- iOS -->
+      <batchtest fork="yes">
+        <fileset dir="${test.dir}">
+          <include name="com/facebook/buck/apple/**/*${test.class}.java" />
+          <include name="com/facebook/buck/ddplist/**/*${test.class}.java" />
+
+          <exclude name="**/testdata/**" />
+        </fileset>
+      </batchtest>
+
+      <!-- C++ and it's ilk -->
+      <batchtest fork="yes">
+        <fileset dir="${test.dir}">
+          <include name="com/facebook/buck/cxx/**/*${test.class}.java" />
+
+          <exclude name="**/testdata/**" />
+        </fileset>
+      </batchtest>
+
+      <!-- Catch-all test group -->
       <batchtest fork="yes">
         <fileset dir="${test.dir}">
           <!--
-            Do not exclude tests that start with "Abstract", as there are some tests for abstract
-            classes.
+          Do not exclude tests that start with "Abstract", as there are some tests for abstract
+          classes.
           -->
           <include name="**/*${test.class}.java" />
+
           <exclude name="**/testdata/**" />
           <exclude name="com/facebook/buck/maven/**" />
+          <exclude name="com/facebook/buck/java/**" />
+          <exclude name="com/facebook/buck/android/**" />
+          <exclude name="com/facebook/buck/dalvik/**" />
+          <exclude name="com/facebook/buck/apple/**" />
+          <exclude name="com/facebook/buck/ddplist/**" />
+          <exclude name="com/facebook/buck/cxx/**" />
         </fileset>
       </batchtest>
+
       <classpath refid="tests.classpath" />
     </junit>
     <fail if="hasFailingTests" />
@@ -750,7 +741,7 @@
   <target name="checkstyle">
     <taskdef resource="checkstyletask.properties"
            classpathref="checkstyle-classpath"/>
-    <checkstyle config="checkstyle.xml">
+    <checkstyle config="checkstyle.xml" maxWarnings="0">
       <fileset dir="${src.dir}">
         <include name="**/*.java"/>
       </fileset>
@@ -760,6 +751,24 @@
       </fileset>
       <formatter type="plain"/>
     </checkstyle>
+  </target>
+
+  <taskdef name="forbiddenapis" classname="de.thetaphi.forbiddenapis.AntTask" classpath="third-party/java/forbiddenapis/forbiddenapis-1.8.jar"/>
+
+  <target name="forbidden-checks" depends="compile">
+    <forbiddenapis internalRuntimeForbidden="true" classpathref="classpath" dir="${classes.dir}">
+      <bundledsignatures name="jdk-unsafe-1.7"/>
+      <bundledsignatures name="jdk-deprecated-1.7"/>
+      <signaturesFileset file="config/forbiddenapis.txt"/>
+    </forbiddenapis>
+  </target>
+
+  <target name="forbidden-checks-tests" depends="compile-tests">
+    <forbiddenapis internalRuntimeForbidden="true" classpathref="tests.classpath" dir="${testclasses.dir}">
+      <bundledsignatures name="jdk-unsafe-1.7"/>
+      <bundledsignatures name="jdk-deprecated-1.7"/>
+      <signaturesFileset file="config/forbiddenapis.txt"/>
+    </forbiddenapis>
   </target>
 
   <target name="lint" depends="pmd, checkstyle" />
@@ -873,7 +882,7 @@
     </exec>
   </target>
 
-  <target name="travis" depends="test, verify-javadoc" />
+  <target name="travis" depends="test, verify-javadoc, lint" />
 
   <target name="client" description="install nailgun buckd c client (non Windows only)">
     <mkdir dir="${build.dir}" />

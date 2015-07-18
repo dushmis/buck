@@ -29,6 +29,7 @@ java_test(
     '//src/com/facebook/buck/step/fs:fs',
     '//src/com/facebook/buck/timing:timing',
     '//src/com/facebook/buck/util:constants',
+    '//src/com/facebook/buck/util:escaper',
     '//src/com/facebook/buck/util:exceptions',
     '//src/com/facebook/buck/util:io',
     '//src/com/facebook/buck/util:util',
@@ -45,8 +46,7 @@ java_test(
     '//third-party/java/easymock:easymock',
     '//third-party/java/guava:guava',
     '//third-party/java/junit:junit',
-    '//third-party/java/hamcrest:hamcrest-core',
-    '//third-party/java/hamcrest:hamcrest-library',
+    '//third-party/java/hamcrest:hamcrest',
   ],
 )
 

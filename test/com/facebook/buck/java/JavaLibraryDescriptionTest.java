@@ -17,27 +17,34 @@
 package com.facebook.buck.java;
 
 import static com.facebook.buck.java.BuiltInJavac.DEFAULT;
+import static org.hamcrest.junit.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.model.BuildTargetPattern;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.parser.NoSuchBuildTargetException;
+import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleFactoryParams;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.ConstructorArgMarshalException;
 import com.facebook.buck.rules.ConstructorArgMarshaller;
+import com.facebook.buck.rules.FakeBuildRule;
+import com.facebook.buck.rules.FakeExportDependenciesRule;
 import com.facebook.buck.rules.NonCheckingBuildRuleFactoryParams;
 import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.util.FakeProcess;
 import com.facebook.buck.util.FakeProcessExecutor;
-import com.facebook.buck.util.ImmutableProcessExecutorParams;
+import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.ProcessExecutorParams;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
@@ -45,6 +52,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
+import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -60,7 +68,7 @@ public class JavaLibraryDescriptionTest {
 
   @Before
   public void createHelpers() {
-    defaults = ImmutableJavacOptions.builder()
+    defaults = JavacOptions.builder()
         .setSourceLevel("8")
         .setTargetLevel("8")
         .build();
@@ -69,23 +77,86 @@ public class JavaLibraryDescriptionTest {
     populateWithDefaultValues(arg);
 
     ruleResolver = new BuildRuleResolver();
-
     resolver = new SourcePathResolver(ruleResolver);
   }
 
   @Test
+  public void javaVersionSetsBothSourceAndTargetLevels() {
+    JavaLibraryDescription.Arg arg =
+        new JavaLibraryDescription(defaults).createUnpopulatedConstructorArg();
+    populateWithDefaultValues(arg);
+
+    arg.source = Optional.absent();
+    arg.target = Optional.absent();
+    arg.javaVersion = Optional.of("1.4");  // Set in the past, so if we ever bump the default....
+
+    JavacOptions options = JavaLibraryDescription.getJavacOptions(
+        resolver,
+        arg,
+        defaults).build();
+
+    assertEquals("1.4", options.getSourceLevel());
+    assertEquals("1.4", options.getTargetLevel());
+  }
+
+  @Test
+  public void settingJavaVersionAndSourceLevelIsAnError() {
+    JavaLibraryDescription.Arg arg =
+        new JavaLibraryDescription(defaults).createUnpopulatedConstructorArg();
+    populateWithDefaultValues(arg);
+
+    arg.source = Optional.of("1.4");
+    arg.target = Optional.absent();
+    arg.javaVersion = Optional.of("1.4");
+
+    try {
+      JavaLibraryDescription.getJavacOptions(
+          resolver,
+          arg,
+          defaults).build();
+      fail();
+    } catch (HumanReadableException e) {
+      assertTrue(
+          e.getMessage(),
+          e.getHumanReadableErrorMessage().contains("either source and target or java_version"));
+    }
+  }
+
+  @Test
+  public void settingJavaVersionAndTargetLevelIsAnError() {
+    JavaLibraryDescription.Arg arg =
+        new JavaLibraryDescription(defaults).createUnpopulatedConstructorArg();
+    populateWithDefaultValues(arg);
+
+    arg.source = Optional.absent();
+    arg.target = Optional.of("1.4");
+    arg.javaVersion = Optional.of("1.4");
+
+    try {
+      JavaLibraryDescription.getJavacOptions(
+          resolver,
+          arg,
+          defaults).build();
+      fail();
+    } catch (HumanReadableException e) {
+      assertTrue(
+          e.getMessage(),
+          e.getHumanReadableErrorMessage().contains("either source and target or java_version"));
+    }
+  }
+
+  @Test
   public void compilerArgWithDefaultValueReturnsJsr199Javac() {
-    Either<BuiltInJavac, Either<BuildTarget, Path>> either = Either.ofLeft(DEFAULT);
+    Either<BuiltInJavac, SourcePath> either = Either.ofLeft(DEFAULT);
     arg.compiler = Optional.of(either);
     JavacOptions options = JavaLibraryDescription.getJavacOptions(
-        ruleResolver,
         resolver,
         arg,
         defaults).build();
 
     Javac javac = options.getJavac();
 
-    assertEquals(Optional.<Path>absent(), options.getJavacJarPath());
+    assertEquals(Optional.<SourcePath>absent(), options.getJavacJarPath());
     assertEquals(Optional.<Path>absent(), options.getJavacPath());
     assertTrue(javac.getClass().getName(), javac instanceof Jsr199Javac);
   }
@@ -97,19 +168,18 @@ public class JavaLibraryDescriptionTest {
     PrebuiltJarBuilder.createBuilder(target)
         .setBinaryJar(javacJarPath)
         .build(ruleResolver);
-    Either<BuiltInJavac, Either<BuildTarget, Path>> either =
-        Either.ofRight(Either.<BuildTarget, Path>ofLeft(target));
+    SourcePath sourcePath = new BuildTargetSourcePath(target);
+    Either<BuiltInJavac, SourcePath> either = Either.ofRight(sourcePath);
 
     arg.compiler = Optional.of(either);
     JavacOptions options = JavaLibraryDescription.getJavacOptions(
-        ruleResolver,
         resolver,
         arg,
         defaults).build();
 
     Javac javac = options.getJavac();
 
-    assertEquals(Optional.of(javacJarPath), options.getJavacJarPath());
+    assertEquals(Optional.of(sourcePath), options.getJavacJarPath());
     assertEquals(Optional.<Path>absent(), options.getJavacPath());
     assertTrue(javac.getClass().getName(), javac instanceof Jsr199Javac);
   }
@@ -117,28 +187,27 @@ public class JavaLibraryDescriptionTest {
   @Test
   public void compilerArgWithPathReturnsExternalJavac() {
     Path externalJavac = Paths.get("/foo/bar/javac.exe");
-    Either<BuiltInJavac, Either<BuildTarget, Path>> either =
-        Either.ofRight(Either.<BuildTarget, Path>ofRight(externalJavac));
+    Either<BuiltInJavac, SourcePath> either =
+        Either.ofRight((SourcePath) new TestSourcePath(externalJavac.toString()));
 
-    ProcessExecutorParams version = ImmutableProcessExecutorParams.builder()
+    ProcessExecutorParams version = ProcessExecutorParams.builder()
         .setCommand(ImmutableList.of(externalJavac.toString(), "-version"))
         .build();
     FakeProcess process = new FakeProcess(0, "", "1.2.3");
     FakeProcessExecutor executor = new FakeProcessExecutor(ImmutableMap.of(version, process));
-    ImmutableJavacOptions newDefaults = ImmutableJavacOptions.builder(defaults)
+    JavacOptions newDefaults = JavacOptions.builder(defaults)
         .setProcessExecutor(executor)
         .build();
 
     arg.compiler = Optional.of(either);
     JavacOptions options = JavaLibraryDescription.getJavacOptions(
-        ruleResolver,
         resolver,
         arg,
         newDefaults).build();
 
     Javac javac = options.getJavac();
 
-    assertEquals(Optional.<Path>absent(), options.getJavacJarPath());
+    assertEquals(Optional.<SourcePath>absent(), options.getJavacJarPath());
     assertEquals(Optional.of(externalJavac), options.getJavacPath());
     assertTrue(javac.getClass().getName(), javac instanceof ExternalJavac);
   }
@@ -146,30 +215,28 @@ public class JavaLibraryDescriptionTest {
   @Test
   public void compilerArgTakesPrecedenceOverJavacPathArg() {
     Path externalJavac = Paths.get("/foo/bar/javac.exe");
-    Either<BuiltInJavac, Either<BuildTarget, Path>> either =
-        Either.ofRight(Either.<BuildTarget, Path>ofRight(externalJavac));
+    SourcePath sourcePath = new TestSourcePath(externalJavac.toString());
+    Either<BuiltInJavac, SourcePath> either = Either.ofRight(sourcePath);
 
-    ProcessExecutorParams version = ImmutableProcessExecutorParams.builder()
+    ProcessExecutorParams version = ProcessExecutorParams.builder()
         .setCommand(ImmutableList.of(externalJavac.toString(), "-version"))
         .build();
     FakeProcess process = new FakeProcess(0, "", "1.2.3");
     FakeProcessExecutor executor = new FakeProcessExecutor(ImmutableMap.of(version, process));
-    ImmutableJavacOptions newDefaults = ImmutableJavacOptions.builder(defaults)
+    JavacOptions newDefaults = JavacOptions.builder(defaults)
         .setProcessExecutor(executor)
         .build();
 
     arg.compiler = Optional.of(either);
-    arg.javac = Optional.<SourcePath>of(
-        new PathSourcePath(new FakeProjectFilesystem(), Paths.get("does-not-exist")));
+    arg.javac = Optional.of(Paths.get("does-not-exist"));
     JavacOptions options = JavaLibraryDescription.getJavacOptions(
-        ruleResolver,
         resolver,
         arg,
         newDefaults).build();
 
     Javac javac = options.getJavac();
 
-    assertEquals(Optional.<Path>absent(), options.getJavacJarPath());
+    assertEquals(Optional.<SourcePath>absent(), options.getJavacJarPath());
     assertEquals(Optional.of(externalJavac), options.getJavacPath());
     assertTrue(javac.getClass().getName(), javac instanceof ExternalJavac);
   }
@@ -181,49 +248,85 @@ public class JavaLibraryDescriptionTest {
     PrebuiltJarBuilder.createBuilder(target)
         .setBinaryJar(javacJarPath)
         .build(ruleResolver);
-    Either<BuiltInJavac, Either<BuildTarget, Path>> either =
-        Either.ofRight(Either.<BuildTarget, Path>ofLeft(target));
+    SourcePath sourcePath = new BuildTargetSourcePath(target);
+    Either<BuiltInJavac, SourcePath> either = Either.ofRight(sourcePath);
 
     arg.compiler = Optional.of(either);
     arg.javacJar = Optional.<SourcePath>of(
         new PathSourcePath(new FakeProjectFilesystem(), Paths.get("does-not-exist")));
     JavacOptions options = JavaLibraryDescription.getJavacOptions(
-        ruleResolver,
         resolver,
         arg,
         defaults).build();
 
     Javac javac = options.getJavac();
 
-    assertEquals(Optional.of(javacJarPath), options.getJavacJarPath());
+    assertEquals(Optional.of(sourcePath), options.getJavacJarPath());
     assertEquals(Optional.<Path>absent(), options.getJavacPath());
     assertTrue(javac.getClass().getName(), javac instanceof Jsr199Javac);
   }
 
   @Test
   public void omittingTheCompilerArgMeansThatExistingBehaviourIsMaintained() {
+    ProjectFilesystem filesystem = new FakeProjectFilesystem();
     Path expected = Paths.get("does-not-exist");
 
     arg.compiler = Optional.absent();
     arg.javacJar = Optional.<SourcePath>of(
         new PathSourcePath(new FakeProjectFilesystem(), expected));
     JavacOptions options = JavaLibraryDescription.getJavacOptions(
-        ruleResolver,
         resolver,
         arg,
         defaults).build();
 
     Javac javac = options.getJavac();
 
-    assertEquals(Optional.of(expected), options.getJavacJarPath());
+    assertEquals(Optional.of(new PathSourcePath(filesystem, expected)), options.getJavacJarPath());
     assertEquals(Optional.<Path>absent(), options.getJavacPath());
     assertTrue(javac.getClass().getName(), javac instanceof Jsr199Javac);
+  }
+
+  @Test
+  public void rulesExportedFromDepsBecomeFirstOrderDeps() {
+    BuildRuleResolver resolver = new BuildRuleResolver();
+    SourcePathResolver pathResolver = new SourcePathResolver(resolver);
+
+    FakeBuildRule exportedRule =
+        resolver.addToIndex(new FakeBuildRule("//:exported_rule", pathResolver));
+    FakeExportDependenciesRule exportingRule =
+        resolver.addToIndex(
+            new FakeExportDependenciesRule("//:exporting_rule", pathResolver, exportedRule));
+
+    BuildTarget target = BuildTargetFactory.newInstance("//:rule");
+    BuildRule javaLibrary = new JavaLibraryBuilder(target)
+        .addDep(exportingRule.getBuildTarget())
+        .build(resolver);
+
+    assertThat(javaLibrary.getDeps(), Matchers.<BuildRule>hasItem(exportedRule));
+  }
+
+  @Test
+  public void rulesExportedFromProvidedDepsBecomeFirstOrderDeps() {
+    BuildRuleResolver resolver = new BuildRuleResolver();
+    SourcePathResolver pathResolver = new SourcePathResolver(resolver);
+
+    FakeBuildRule exportedRule =
+        resolver.addToIndex(new FakeBuildRule("//:exported_rule", pathResolver));
+    FakeExportDependenciesRule exportingRule =
+        resolver.addToIndex(
+            new FakeExportDependenciesRule("//:exporting_rule", pathResolver, exportedRule));
+
+    BuildTarget target = BuildTargetFactory.newInstance("//:rule");
+    BuildRule javaLibrary = new JavaLibraryBuilder(target)
+        .addProvidedDep(exportingRule.getBuildTarget())
+        .build(resolver);
+
+    assertThat(javaLibrary.getDeps(), Matchers.<BuildRule>hasItem(exportedRule));
   }
 
   private void populateWithDefaultValues(Object arg) {
     BuildRuleFactoryParams factoryParams =
         NonCheckingBuildRuleFactoryParams.createNonCheckingBuildRuleFactoryParams(
-            new BuildTargetParser(),
             BuildTargetFactory.newInstance("//example:target"));
 
     try {

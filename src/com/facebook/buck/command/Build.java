@@ -29,8 +29,8 @@ import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildDependencies;
 import com.facebook.buck.rules.BuildEngine;
 import com.facebook.buck.rules.BuildEvent;
+import com.facebook.buck.rules.BuildResult;
 import com.facebook.buck.rules.BuildRule;
-import com.facebook.buck.rules.BuildRuleSuccess;
 import com.facebook.buck.rules.ImmutableBuildContext;
 import com.facebook.buck.step.DefaultStepRunner;
 import com.facebook.buck.step.ExecutionContext;
@@ -40,6 +40,7 @@ import com.facebook.buck.timing.Clock;
 import com.facebook.buck.util.Console;
 import com.facebook.buck.util.ExceptionWithHumanReadableMessage;
 import com.facebook.buck.util.HumanReadableException;
+import com.facebook.buck.util.concurrent.ConcurrencyLimit;
 import com.facebook.buck.util.environment.Platform;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Charsets;
@@ -58,7 +59,6 @@ import com.google.common.collect.Sets;
 import com.google.common.io.Files;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.ListeningExecutorService;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -73,11 +73,11 @@ import javax.annotation.Nullable;
 
 public class Build implements Closeable {
 
-  private static final Predicate<Optional<BuildRuleSuccess>> RULES_FAILED_PREDICATE =
-      new Predicate<Optional<BuildRuleSuccess>>() {
+  private static final Predicate<Optional<BuildResult>> RULES_FAILED_PREDICATE =
+      new Predicate<Optional<BuildResult>>() {
         @Override
-        public boolean apply(Optional<BuildRuleSuccess> input) {
-          return !input.isPresent();
+        public boolean apply(Optional<BuildResult> input) {
+          return !input.isPresent() || input.get().getSuccess() == null;
         }
       };
 
@@ -111,7 +111,6 @@ public class Build implements Closeable {
       Supplier<AndroidPlatformTarget> androidPlatformTargetSupplier,
       BuildEngine buildEngine,
       ArtifactCache artifactCache,
-      ListeningExecutorService service,
       JavaPackageFinder javaPackageFinder,
       Console console,
       long defaultTestTimeoutMillis,
@@ -122,7 +121,8 @@ public class Build implements Closeable {
       Platform platform,
       ImmutableMap<String, String> environment,
       ObjectMapper objectMapper,
-      Clock clock) {
+      Clock clock,
+      ConcurrencyLimit concurrencyLimit) {
     this.actionGraph = actionGraph;
 
     this.executionContext = ExecutionContext.builder()
@@ -138,10 +138,11 @@ public class Build implements Closeable {
         .setEnvironment(environment)
         .setJavaPackageFinder(javaPackageFinder)
         .setObjectMapper(objectMapper)
+        .setConcurrencyLimit(concurrencyLimit)
         .build();
     this.artifactCache = artifactCache;
     this.buildEngine = buildEngine;
-    this.stepRunner = new DefaultStepRunner(executionContext, service);
+    this.stepRunner = new DefaultStepRunner(executionContext);
     this.javaPackageFinder = javaPackageFinder;
     this.buildDependencies = buildDependencies;
     this.clock = clock;
@@ -170,7 +171,7 @@ public class Build implements Closeable {
    * @param targetish The targets to build. All targets in this iterable must be unique.
    */
   @SuppressWarnings("PMD.EmptyCatchBlock")
-  public LinkedHashMap<BuildRule, Optional<BuildRuleSuccess>> executeBuild(
+  public LinkedHashMap<BuildRule, Optional<BuildResult>> executeBuild(
       Iterable<? extends HasBuildTarget> targetish,
       boolean isKeepGoing)
       throws IOException, StepFailedException, ExecutionException, InterruptedException {
@@ -215,25 +216,25 @@ public class Build implements Closeable {
             targetsToBuild,
             numRules));
 
-
-    List<ListenableFuture<BuildRuleSuccess>> futures = FluentIterable.from(rulesToBuild)
+    final BuildContext currentBuildContext = buildContext;
+    List<ListenableFuture<BuildResult>> futures = FluentIterable.from(rulesToBuild)
         .transform(
-        new Function<BuildRule, ListenableFuture<BuildRuleSuccess>>() {
+        new Function<BuildRule, ListenableFuture<BuildResult>>() {
           @Override
-          public ListenableFuture<BuildRuleSuccess> apply(BuildRule rule) {
-            return buildEngine.build(buildContext, rule);
+          public ListenableFuture<BuildResult> apply(BuildRule rule) {
+            return buildEngine.build(currentBuildContext, rule);
           }
         }).toList();
 
     // Get the Future representing the build and then block until everything is built.
-    ListenableFuture<List<BuildRuleSuccess>> buildFuture;
+    ListenableFuture<List<BuildResult>> buildFuture;
     if (isKeepGoing) {
       buildFuture = Futures.successfulAsList(futures);
     } else {
       buildFuture = Futures.allAsList(futures);
     }
 
-    List<BuildRuleSuccess> results;
+    List<BuildResult> results;
     try {
       results = buildFuture.get();
     } catch (InterruptedException e) {
@@ -247,13 +248,12 @@ public class Build implements Closeable {
     }
 
     // Insertion order matters
-    LinkedHashMap<BuildRule, Optional<BuildRuleSuccess>> resultBuilder = new LinkedHashMap<>();
+    LinkedHashMap<BuildRule, Optional<BuildResult>> resultBuilder = new LinkedHashMap<>();
 
     Preconditions.checkState(rulesToBuild.size() == results.size());
     for (int i = 0, len = rulesToBuild.size(); i < len; i++) {
       BuildRule rule = rulesToBuild.get(i);
-      BuildRuleSuccess success = results.get(i);
-      resultBuilder.put(rule, Optional.fromNullable(success));
+      resultBuilder.put(rule, Optional.fromNullable(results.get(i)));
     }
 
     return resultBuilder;
@@ -267,7 +267,7 @@ public class Build implements Closeable {
     int exitCode;
 
     try {
-      LinkedHashMap<BuildRule, Optional<BuildRuleSuccess>> ruleToResult = executeBuild(
+      LinkedHashMap<BuildRule, Optional<BuildResult>> ruleToResult = executeBuild(
           targetsish,
           isKeepGoing);
 

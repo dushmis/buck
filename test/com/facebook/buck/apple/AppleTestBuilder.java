@@ -69,7 +69,12 @@ public final class AppleTestBuilder
     return this;
   }
 
+  public AppleTestBuilder setTestHostApp(Optional<BuildTarget> testHostApp) {
+    arg.testHostApp = testHostApp;
+    return this;
+  }
+
   private static AppleTestDescription createDescription() {
-    return new AppleTestDescription(FakeAppleRuleDescriptions.LIBRARY_DESCRIPTION);
+    return FakeAppleRuleDescriptions.TEST_DESCRIPTION;
   }
 }

@@ -16,17 +16,19 @@
 
 package com.facebook.buck.java;
 
-import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BinaryBuildRule;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildDependencies;
 import com.facebook.buck.rules.BuildRuleParams;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.CommandTool;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.Tool;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.facebook.buck.step.fs.MkdirStep;
@@ -35,7 +37,6 @@ import com.facebook.buck.step.fs.WriteFileStep;
 import com.facebook.buck.zip.ZipStep;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -61,7 +62,9 @@ public class JarFattener extends AbstractBuildRule implements BinaryBuildRule {
   public static final String FAT_JAR_MAIN_SRC_RESOURCE = "com/facebook/buck/java/FatJarMain.java";
 
   private final JavacOptions javacOptions;
+  @AddToRuleKey
   private final SourcePath innerJar;
+  @AddToRuleKey
   private final ImmutableMap<String, SourcePath> nativeLibraries;
   private final Path output;
 
@@ -77,19 +80,6 @@ public class JarFattener extends AbstractBuildRule implements BinaryBuildRule {
     this.nativeLibraries = nativeLibraries;
     this.output = BuildTargets.getScratchPath(getBuildTarget(), "%s")
         .resolve(getBuildTarget().getShortName() + ".jar");
-  }
-
-  @Override
-  protected ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return getResolver().filterInputsToCompareToOutput(ImmutableList.of(innerJar));
-  }
-
-  @Override
-  protected RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    for (Map.Entry<String, SourcePath> entry : nativeLibraries.entrySet()) {
-      builder.setReflectively("nativelib:" + entry.getKey(), entry.getValue());
-    }
-    return builder;
   }
 
   @Override
@@ -138,7 +128,8 @@ public class JarFattener extends AbstractBuildRule implements BinaryBuildRule {
             javacOptions,
             getBuildTarget(),
             BuildDependencies.FIRST_ORDER_ONLY,
-            Optional.<JavacStep.SuggestBuildRules>absent()));
+            Optional.<JavacStep.SuggestBuildRules>absent(),
+            getResolver()));
 
     // Symlink the inner JAR into it's place in the fat JAR.
     steps.add(new MkdirStep(fatJarDir.resolve(FAT_JAR_INNER_JAR).getParent()));
@@ -209,13 +200,17 @@ public class JarFattener extends AbstractBuildRule implements BinaryBuildRule {
   }
 
   @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return getOutputPath();
   }
 
   @Override
-  public ImmutableList<String> getExecutableCommand(ProjectFilesystem projectFilesystem) {
-    return ImmutableList.of("java", "-jar", projectFilesystem.resolve(getOutputPath()).toString());
+  public Tool getExecutableCommand() {
+    return new CommandTool.Builder()
+        .addArg("java")
+        .addArg("-jar")
+        .addArg(new BuildTargetSourcePath(getBuildTarget()))
+        .build();
   }
 
 }

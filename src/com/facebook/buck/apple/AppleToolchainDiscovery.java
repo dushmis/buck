@@ -17,9 +17,14 @@
 package com.facebook.buck.apple;
 
 import com.dd.plist.NSDictionary;
+import com.dd.plist.NSObject;
 import com.dd.plist.PropertyListParser;
 import com.facebook.buck.log.Logger;
+import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 
 import java.io.BufferedInputStream;
 import java.io.FileNotFoundException;
@@ -46,32 +51,45 @@ public class AppleToolchainDiscovery {
    * toolchains and builds a map of (identifier: path) pairs of the
    * toolchains inside.
    */
-  public static ImmutableMap<String, Path> discoverAppleToolchainPaths(Path xcodeDir)
-      throws IOException {
-    LOG.debug("Searching for Xcode toolchains under %s", xcodeDir);
+  public static ImmutableMap<String, AppleToolchain> discoverAppleToolchains(
+      Optional<Path> developerDir,
+      ImmutableList<Path> extraDirs) throws IOException {
+    ImmutableMap.Builder<String, AppleToolchain> toolchainIdentifiersToToolchainsBuilder =
+        ImmutableMap.builder();
 
-    ImmutableMap.Builder<String, Path> toolchainIdentifiersToPathsBuilder = ImmutableMap.builder();
-    Path toolchains = xcodeDir.resolve("Toolchains");
-
-    if (!Files.exists(toolchains)) {
-      return toolchainIdentifiersToPathsBuilder.build();
+    Iterable<Path> toolchainPaths = extraDirs;
+    if (developerDir.isPresent()) {
+      Path toolchainsDir = developerDir.get().resolve("Toolchains");
+      LOG.debug("Searching for Xcode toolchains under %s", toolchainsDir);
+      toolchainPaths = Iterables.concat(
+        ImmutableSet.of(toolchainsDir), toolchainPaths);
     }
 
-    try (DirectoryStream<Path> toolchainStream = Files.newDirectoryStream(
-             toolchains,
-             "*.xctoolchain")) {
-      for (Path toolchainDir : toolchainStream) {
-        LOG.debug("Getting identifier for for Xcode toolchain under %s", toolchainDir);
-        addIdentiferForToolchain(toolchainDir, toolchainIdentifiersToPathsBuilder);
+    for (Path toolchains : toolchainPaths) {
+      if (!Files.exists(toolchains)) {
+        LOG.debug("Skipping toolchain search path %s that does not exist", toolchains);
+        continue;
+      }
+
+      LOG.debug("Searching for Xcode toolchains in %s", toolchains);
+
+      try (DirectoryStream<Path> toolchainStream = Files.newDirectoryStream(
+               toolchains,
+               "*.xctoolchain")) {
+        for (Path toolchainPath : toolchainStream) {
+          LOG.debug("Getting identifier for for Xcode toolchain under %s", toolchainPath);
+          addIdentiferForToolchain(toolchainPath, toolchainIdentifiersToToolchainsBuilder);
+        }
       }
     }
 
-    return toolchainIdentifiersToPathsBuilder.build();
+    return toolchainIdentifiersToToolchainsBuilder.build();
   }
 
   private static void addIdentiferForToolchain(
         Path toolchainDir,
-        ImmutableMap.Builder<String, Path> toolchainBuilder) throws IOException {
+        ImmutableMap.Builder<String, AppleToolchain> identifierToToolchainBuilder)
+        throws IOException {
     try (InputStream toolchainInfoPlist = Files.newInputStream(
              toolchainDir.resolve("ToolchainInfo.plist"));
          BufferedInputStream bufferedToolchainInfoPlist = new BufferedInputStream(
@@ -83,10 +101,24 @@ public class AppleToolchainDiscovery {
       } catch (Exception e) {
         throw new IOException(e);
       }
-      String identifier = parsedToolchainInfoPlist.objectForKey("Identifier")
-          .toString();
+      NSObject identifierObject = parsedToolchainInfoPlist.objectForKey("Identifier");
+      NSObject versionObject = parsedToolchainInfoPlist.objectForKey("DTSDKBuild");
+      if (identifierObject == null || versionObject == null) {
+        LOG.error("Identifier, version not found for toolchain path %s, ignoring", toolchainDir);
+        return;
+      }
+
+      String identifier = identifierObject.toString();
+      String version = versionObject.toString();
       LOG.debug("Mapped SDK identifier %s to path %s", identifier, toolchainDir);
-      toolchainBuilder.put(identifier, toolchainDir);
+
+      AppleToolchain.Builder toolchainBuilder = AppleToolchain.builder();
+      toolchainBuilder.setIdentifier(identifier);
+      toolchainBuilder.setVersion(version);
+      toolchainBuilder.setPath(toolchainDir);
+
+      AppleToolchain toolchain = toolchainBuilder.build();
+      identifierToToolchainBuilder.put(identifier, toolchain);
     } catch (FileNotFoundException | NoSuchFileException e) {
       LOG.error(e, "No ToolchainInfo.plist found under toolchain path %s, ignoring", toolchainDir);
     }

@@ -2,9 +2,7 @@ Buck
 ====
 
 Buck is a build tool. To see what Buck can do for you,
-check out the documentation at <http://facebook.github.io/buck/>.
-
-[![Build Status](https://travis-ci.org/facebook/buck.svg)](https://travis-ci.org/facebook/buck)
+check out the documentation at <http://buckbuild.com/>.
 
 Installation
 ------------

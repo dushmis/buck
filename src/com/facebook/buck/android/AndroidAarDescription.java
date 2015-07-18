@@ -16,8 +16,6 @@
 
 package com.facebook.buck.android;
 
-import com.facebook.buck.io.ProjectFilesystem;
-import com.facebook.buck.java.JavaBinaryDescription;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.model.Flavor;
@@ -33,7 +31,6 @@ import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
-import com.google.common.base.Optional;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
@@ -65,17 +62,11 @@ public class AndroidAarDescription implements Description<AndroidAarDescription.
       ImmutableFlavor.of("aar_assemble_assets");
   private static final Flavor AAR_ANDROID_RESOURCE_FLAVOR =
       ImmutableFlavor.of("aar_android_resource");
-  private static final Flavor AAR_JAVA_BINARY_FLAVOR =
-      ImmutableFlavor.of("aar_java_binary");
 
   private final AndroidManifestDescription androidManifestDescription;
-  private final JavaBinaryDescription javaBinaryDescription;
 
-  public AndroidAarDescription(
-      AndroidManifestDescription androidManifestDescription,
-      JavaBinaryDescription javaBinaryDescription) {
+  public AndroidAarDescription(AndroidManifestDescription androidManifestDescription) {
     this.androidManifestDescription = androidManifestDescription;
-    this.javaBinaryDescription = javaBinaryDescription;
   }
 
   @Override
@@ -97,7 +88,8 @@ public class AndroidAarDescription implements Description<AndroidAarDescription.
     UnflavoredBuildTarget originalBuildTarget =
         originalBuildRuleParams.getBuildTarget().checkUnflavored();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
-    ImmutableList.Builder<BuildRule> depRules = ImmutableList.builder();
+    ImmutableList.Builder<BuildRule> aarExtraDepsBuilder = ImmutableList.<BuildRule>builder()
+        .addAll(originalBuildRuleParams.getExtraDeps());
 
     /* android_manifest */
     AndroidManifestDescription.Arg androidManifestArgs =
@@ -106,7 +98,6 @@ public class AndroidAarDescription implements Description<AndroidAarDescription.
     androidManifestArgs.deps = args.deps;
 
     BuildRuleParams androidManifestParams = originalBuildRuleParams.copyWithChanges(
-        AndroidManifestDescription.TYPE,
         BuildTargets.createFlavoredBuildTarget(originalBuildTarget, AAR_ANDROID_MANIFEST_FLAVOR),
         Suppliers.ofInstance(originalBuildRuleParams.getDeclaredDeps()),
         Suppliers.ofInstance(originalBuildRuleParams.getExtraDeps()));
@@ -115,17 +106,17 @@ public class AndroidAarDescription implements Description<AndroidAarDescription.
         androidManifestParams,
         resolver,
         androidManifestArgs);
-    depRules.add(resolver.addToIndex(manifest));
+    aarExtraDepsBuilder.add(resolver.addToIndex(manifest));
 
     /* assemble dirs */
     AndroidPackageableCollector collector =
         new AndroidPackageableCollector(
             originalBuildRuleParams.getBuildTarget(),
-            ImmutableSet.<BuildTarget>of(),
-            ImmutableSet.<BuildTarget>of());
+            /* buildTargetsToExcludeFromDex */ ImmutableSet.<BuildTarget>of(),
+            /* resourcesToExclude */ ImmutableSet.<BuildTarget>of());
     collector.addPackageables(AndroidPackageableCollector.getPackageableRules(
             originalBuildRuleParams.getDeps()));
-    ImmutableAndroidPackageableCollection packageableCollection = collector.build();
+    AndroidPackageableCollection packageableCollection = collector.build();
 
     ImmutableSortedSet<BuildRule> androidResourceDeclaredDeps =
         AndroidResourceHelper.androidResOnly(originalBuildRuleParams.getDeclaredDeps());
@@ -133,38 +124,31 @@ public class AndroidAarDescription implements Description<AndroidAarDescription.
         AndroidResourceHelper.androidResOnly(originalBuildRuleParams.getExtraDeps());
 
     BuildRuleParams assembleAssetsParams = originalBuildRuleParams.copyWithChanges(
-        originalBuildRuleParams.getBuildRuleType(),
         BuildTargets.createFlavoredBuildTarget(originalBuildTarget, AAR_ASSEMBLE_ASSETS_FLAVOR),
         Suppliers.ofInstance(androidResourceDeclaredDeps),
         Suppliers.ofInstance(androidResourceExtraDeps));
-    ImmutableCollection<SourcePath> assetsDirectories = getSourcePathForDirectories(
-        assembleAssetsParams.getProjectFilesystem(),
-        assembleAssetsParams.getBuildTarget(),
-        packageableCollection.getAssetsDirectories());
+    ImmutableCollection<SourcePath> assetsDirectories =
+        packageableCollection.getAssetsDirectories();
     AssembleDirectories assembleAssetsDirectories = new AssembleDirectories(
         assembleAssetsParams,
         pathResolver,
         assetsDirectories);
-    depRules.add(resolver.addToIndex(assembleAssetsDirectories));
+    aarExtraDepsBuilder.add(resolver.addToIndex(assembleAssetsDirectories));
 
     BuildRuleParams assembleResourceParams = originalBuildRuleParams.copyWithChanges(
-        originalBuildRuleParams.getBuildRuleType(),
         BuildTargets.createFlavoredBuildTarget(originalBuildTarget, AAR_ASSEMBLE_RESOURCE_FLAVOR),
         Suppliers.ofInstance(androidResourceDeclaredDeps),
         Suppliers.ofInstance(androidResourceExtraDeps));
-    ImmutableCollection<SourcePath> resDirectories = getSourcePathForDirectories(
-        assembleResourceParams.getProjectFilesystem(),
-        assembleResourceParams.getBuildTarget(),
-        packageableCollection.getResourceDetails().getResourceDirectories());
+    ImmutableCollection<SourcePath> resDirectories =
+        packageableCollection.getResourceDetails().getResourceDirectories();
     AssembleDirectories assembleResourceDirectories = new AssembleDirectories(
         assembleResourceParams,
         pathResolver,
         resDirectories);
-    depRules.add(resolver.addToIndex(assembleResourceDirectories));
+    aarExtraDepsBuilder.add(resolver.addToIndex(assembleResourceDirectories));
 
     /* android_resource */
     BuildRuleParams androidResourceParams = originalBuildRuleParams.copyWithChanges(
-        AndroidLibraryDescription.TYPE,
         BuildTargets.createFlavoredBuildTarget(originalBuildTarget, AAR_ANDROID_RESOURCE_FLAVOR),
         Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of(
                 manifest,
@@ -175,57 +159,34 @@ public class AndroidAarDescription implements Description<AndroidAarDescription.
     AndroidResource androidResource = new AndroidResource(
         androidResourceParams,
         pathResolver,
-        /* deps */ ImmutableSortedSet.copyOf(depRules.build()),
-        assembleResourceDirectories.getPathToOutputFile(),
+        /* deps */ ImmutableSortedSet.<BuildRule>naturalOrder()
+            .add(assembleAssetsDirectories)
+            .add(assembleResourceDirectories)
+            .addAll(originalBuildRuleParams.getDeclaredDeps())
+            .build(),
+        new BuildTargetSourcePath(assembleResourceDirectories.getBuildTarget()),
         /* resSrcs */ ImmutableSortedSet.<Path>of(),
         /* rDotJavaPackage */ null,
-        assembleAssetsDirectories.getPathToOutputFile(),
+        new BuildTargetSourcePath(assembleAssetsDirectories.getBuildTarget()),
         /* assetsSrcs */ ImmutableSortedSet.<Path>of(),
-        new BuildTargetSourcePath(manifest.getProjectFilesystem(), manifest.getBuildTarget()),
+        new BuildTargetSourcePath(manifest.getBuildTarget()),
         /* hasWhitelistedStrings */ false);
-    depRules.add(resolver.addToIndex(androidResource));
-
-    /* java_binary */
-    JavaBinaryDescription.Args javaBinaryArgs =
-        javaBinaryDescription.createUnpopulatedConstructorArg();
-    javaBinaryArgs.deps = args.deps;
-    javaBinaryArgs.mainClass = Optional.absent();
-    javaBinaryArgs.manifestFile = Optional.absent();
-    javaBinaryArgs.mergeManifests = Optional.absent();
-    javaBinaryArgs.metaInfDirectory = Optional.absent();
-    javaBinaryArgs.blacklist = Optional.absent();
-
-    BuildRuleParams javaBinaryParams = originalBuildRuleParams.copyWithChanges(
-        JavaBinaryDescription.TYPE,
-        BuildTargets.createFlavoredBuildTarget(originalBuildTarget, AAR_JAVA_BINARY_FLAVOR),
-        Suppliers.ofInstance(originalBuildRuleParams.getDeclaredDeps()),
-        Suppliers.ofInstance(originalBuildRuleParams.getExtraDeps()));
-
-    BuildRule javaBinary = javaBinaryDescription.createBuildRule(
-        javaBinaryParams,
-        resolver,
-        javaBinaryArgs);
-    depRules.add(resolver.addToIndex(javaBinary));
+    aarExtraDepsBuilder.add(resolver.addToIndex(androidResource));
 
     /* android_aar */
-    depRules.addAll(
+    aarExtraDepsBuilder.addAll(
         getTargetsAsRules(
             packageableCollection.getNativeLibsTargets(),
             BuildTarget.of(originalBuildTarget),
             resolver));
 
-    BuildRuleParams androidAarParams = originalBuildRuleParams.copyWithChanges(
-        TYPE,
-        BuildTarget.of(originalBuildTarget),
-        Suppliers.ofInstance(ImmutableSortedSet.copyOf(depRules.build())),
-        Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()));
-
+    BuildRuleParams androidAarParams = originalBuildRuleParams.copyWithExtraDeps(
+        Suppliers.ofInstance(ImmutableSortedSet.copyOf(aarExtraDepsBuilder.build())));
     return new AndroidAar(
         androidAarParams,
         pathResolver,
         manifest,
         androidResource,
-        javaBinary,
         assembleResourceDirectories,
         assembleAssetsDirectories,
         packageableCollection.getNativeLibAssetsDirectories(),
@@ -239,19 +200,7 @@ public class AndroidAarDescription implements Description<AndroidAarDescription.
     return BuildRules.toBuildRulesFor(
         originalBuildTarget,
         ruleResolver,
-        buildTargets,
-        /* allowNonExistentRules */ false);
-  }
-
-  private ImmutableList<SourcePath> getSourcePathForDirectories(
-      ProjectFilesystem projectFilesystem,
-      BuildTarget buildTarget,
-      ImmutableCollection<Path> directories) {
-    ImmutableList.Builder<SourcePath> builder = ImmutableList.builder();
-    for (Path directory : directories) {
-      builder.add(new BuildTargetSourcePath(projectFilesystem, buildTarget, directory));
-    }
-    return builder.build();
+        buildTargets);
   }
 
   @SuppressFieldNotInitialized

@@ -27,7 +27,6 @@ import static org.junit.Assume.assumeTrue;
 import com.facebook.buck.cli.BuckConfig;
 import com.facebook.buck.cli.BuckConfigTestUtils;
 import com.facebook.buck.io.ProjectFilesystem;
-import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.facebook.buck.util.FakeProcessExecutor;
 import com.facebook.buck.util.HumanReadableException;
@@ -115,7 +114,9 @@ public class JavaBuckConfigTest {
       config.getJavacJarPath();
       fail("Should throw exception as javac file does not exist.");
     } catch (HumanReadableException e) {
-      assertEquals(e.getHumanReadableErrorMessage(), "Javac JAR does not exist: " + invalidPath);
+      assertEquals(
+          "Overridden tools:javac_jar path not found: " + invalidPath,
+          e.getHumanReadableErrorMessage());
     }
   }
 
@@ -180,11 +181,9 @@ public class JavaBuckConfigTest {
   private JavaBuckConfig createWithDefaultFilesystem(Reader reader)
       throws IOException {
     ProjectFilesystem filesystem = new ProjectFilesystem(temporaryFolder.getRootPath());
-    BuildTargetParser parser = new BuildTargetParser();
     BuckConfig raw = BuckConfigTestUtils.createFromReader(
         reader,
         filesystem,
-        parser,
         Platform.detect(),
         ImmutableMap.copyOf(System.getenv()));
     return new JavaBuckConfig(raw);

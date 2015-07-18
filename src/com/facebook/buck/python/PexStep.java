@@ -20,11 +20,11 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.shell.ShellStep;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.zip.Unzip;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -32,8 +32,6 @@ import java.nio.file.Path;
 
 public class PexStep extends ShellStep {
   private static final String SRC_ZIP = ".src.zip";
-
-  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   // Path to the tool to generate the pex file.
   private final Path pathToPex;
@@ -55,6 +53,11 @@ public class PexStep extends ShellStep {
   // The map of native libraries to include in the PEX.
   private final ImmutableMap<Path, Path> nativeLibraries;
 
+  // The list of prebuilt python libraries to add to the PEX.
+  private final ImmutableSet<Path> prebuiltLibraries;
+
+  private final boolean zipSafe;
+
   public PexStep(
       Path pathToPex,
       Path pythonPath,
@@ -63,7 +66,9 @@ public class PexStep extends ShellStep {
       String entry,
       ImmutableMap<Path, Path> modules,
       ImmutableMap<Path, Path> resources,
-      ImmutableMap<Path, Path> nativeLibraries) {
+      ImmutableMap<Path, Path> nativeLibraries,
+      ImmutableSet<Path> prebuiltLibraries,
+      boolean zipSafe) {
     this.pathToPex = pathToPex;
     this.pythonPath = pythonPath;
     this.tempDir = tempDir;
@@ -72,6 +77,8 @@ public class PexStep extends ShellStep {
     this.modules = modules;
     this.resources = resources;
     this.nativeLibraries = nativeLibraries;
+    this.prebuiltLibraries = prebuiltLibraries;
+    this.zipSafe = zipSafe;
   }
 
   @Override
@@ -106,11 +113,18 @@ public class PexStep extends ShellStep {
     for (ImmutableMap.Entry<Path, Path> ent : nativeLibraries.entrySet()) {
       nativeLibrariesBuilder.put(ent.getKey().toString(), ent.getValue().toString());
     }
+    ImmutableList.Builder<String> prebuiltLibrariesBuilder = ImmutableList.builder();
+    for (Path req : prebuiltLibraries) {
+      prebuiltLibrariesBuilder.add(req.toString());
+    }
     try {
-      return Optional.of(MAPPER.writeValueAsString(ImmutableMap.of(
-          "modules", modulesBuilder.build(),
-          "resources", resourcesBuilder.build(),
-          "nativeLibraries", nativeLibrariesBuilder.build())));
+      return Optional.of(
+          context.getObjectMapper().writeValueAsString(
+              ImmutableMap.of(
+                  "modules", modulesBuilder.build(),
+                  "resources", resourcesBuilder.build(),
+                  "nativeLibraries", nativeLibrariesBuilder.build(),
+                  "prebuiltLibraries", prebuiltLibrariesBuilder.build())));
     } catch (IOException e) {
       throw Throwables.propagate(e);
     }
@@ -118,12 +132,20 @@ public class PexStep extends ShellStep {
 
   @Override
   protected ImmutableList<String> getShellCommandInternal(ExecutionContext context) {
-    return ImmutableList.of(
-        pythonPath.toString(),
-        pathToPex.toString(),
-        "--python", pythonPath.toString(),
-        "--entry-point", entry,
-        destination.toString());
+    ImmutableList.Builder<String> builder = ImmutableList.builder();
+    builder.add(pythonPath.toString());
+    builder.add(pathToPex.toString());
+    builder.add("--python");
+    builder.add(pythonPath.toString());
+    builder.add("--entry-point");
+    builder.add(entry);
+
+    if (!zipSafe) {
+      builder.add("--no-zip-safe");
+    }
+
+    builder.add(destination.toString());
+    return builder.build();
   }
 
   private ImmutableMap<Path, Path> getExpandedSourcePaths(
@@ -141,7 +163,7 @@ public class PexStep extends ShellStep {
         ImmutableList<Path> zipPaths = Unzip.extractZipFile(
             projectFilesystem.resolve(ent.getValue()),
             destinationDirectory,
-            /* overwriteExistingFiles */ true);
+            Unzip.ExistingFileMode.OVERWRITE);
         for (Path path : zipPaths) {
           Path modulePath = destinationDirectory.relativize(path);
           sources.put(modulePath, path);

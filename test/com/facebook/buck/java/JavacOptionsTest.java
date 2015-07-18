@@ -20,8 +20,13 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
+import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.SourcePath;
+import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.testutil.IdentityPathAbsolutifier;
 import com.facebook.buck.testutil.TestConsole;
 import com.facebook.buck.util.ProcessExecutor;
@@ -34,6 +39,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 
+import org.hamcrest.Matchers;
 import org.junit.Assume;
 import org.junit.Test;
 
@@ -211,7 +217,7 @@ public class JavacOptionsTest {
     // We could use the "-n" syntax, but that doesn't work on all variants of echo. Play it safe.
     Files.write(tempPath, "echo \"cover-version\" 1>&2".getBytes(UTF_8));
 
-    ImmutableJavacOptions options = createStandardBuilder()
+    JavacOptions options = createStandardBuilder()
         .setJavacPath(tempPath)
         .setProcessExecutor(new ProcessExecutor(new TestConsole()))
         .build();
@@ -220,7 +226,23 @@ public class JavacOptionsTest {
     assertTrue(javac instanceof ExternalJavac);
 
     JavacVersion seen = javac.getVersion();
-    assertEquals(ImmutableJavacVersion.of("cover-version\n"), seen);
+    assertEquals(JavacVersion.of("cover-version\n"), seen);
+  }
+
+  @Test
+  public void getInputs() {
+    Path javacPath = Paths.get("javac");
+    TestSourcePath javacJarPath = new TestSourcePath("javac_jar");
+
+    JavacOptions options = createStandardBuilder()
+        .setJavacPath(javacPath)
+        .setJavacJarPath(javacJarPath)
+        .setProcessExecutor(new ProcessExecutor(new TestConsole()))
+        .build();
+
+    assertThat(
+        options.getInputs(new SourcePathResolver(new BuildRuleResolver())),
+        Matchers.<SourcePath>containsInAnyOrder(javacJarPath));
   }
 
   private void assertOptionsContains(JavacOptions options, String param) {
@@ -248,7 +270,7 @@ public class JavacOptionsTest {
     return " " + Joiner.on(" ").join(params) + " ";
   }
 
-  private ImmutableJavacOptions.Builder createStandardBuilder() {
+  private JavacOptions.Builder createStandardBuilder() {
     return JavacOptions.builderForUseInJavaBuckConfig()
         .setSourceLevel("5")
         .setTargetLevel("5");

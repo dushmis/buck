@@ -25,11 +25,15 @@ import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
+import com.facebook.buck.rules.BuildRules;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.FlavorableDescription;
+import com.facebook.buck.rules.Hint;
 import com.facebook.buck.rules.RuleKeyBuilderFactory;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.SourcePaths;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.util.HumanReadableException;
@@ -40,6 +44,7 @@ import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Iterables;
 
 import java.nio.file.Path;
 
@@ -85,27 +90,36 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
       return new JavaSourceJar(params, pathResolver, args.srcs.get());
     }
 
-    ImmutableJavacOptions.Builder javacOptions = JavaLibraryDescription.getJavacOptions(
-        resolver,
-        pathResolver,
-        args,
-        defaultOptions);
-
+    JavacOptions.Builder javacOptionsBuilder =
+        JavaLibraryDescription.getJavacOptions(
+            pathResolver,
+            args,
+            defaultOptions);
     AnnotationProcessingParams annotationParams =
         args.buildAnnotationProcessingParams(target, params.getProjectFilesystem(), resolver);
-    javacOptions.setAnnotationProcessingParams(annotationParams);
+    javacOptionsBuilder.setAnnotationProcessingParams(annotationParams);
+    JavacOptions javacOptions = javacOptionsBuilder.build();
 
+    ImmutableSortedSet<BuildRule> exportedDeps = resolver.getAllRules(args.exportedDeps.get());
     return new DefaultJavaLibrary(
-        params,
+        params.appendExtraDeps(
+            Iterables.concat(
+                BuildRules.getExportedRules(
+                    Iterables.concat(
+                        params.getDeclaredDeps(),
+                        exportedDeps,
+                        resolver.getAllRules(args.providedDeps.get()))),
+                pathResolver.filterBuildRuleInputs(
+                    javacOptions.getInputs(pathResolver)))),
         pathResolver,
         args.srcs.get(),
         validateResources(pathResolver, args, params.getProjectFilesystem()),
-        args.proguardConfig,
+        args.proguardConfig.transform(SourcePaths.toSourcePath(params.getProjectFilesystem())),
         args.postprocessClassesCommands.get(),
-        resolver.getAllRules(args.exportedDeps.get()),
+        exportedDeps,
         resolver.getAllRules(args.providedDeps.get()),
         /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
-        javacOptions.build(),
+        javacOptions,
         args.resourcesRoot);
   }
 
@@ -127,12 +141,20 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
     return arg.resources.get();
   }
 
-  public static ImmutableJavacOptions.Builder getJavacOptions(
-      BuildRuleResolver ruleResolver,
+  public static JavacOptions.Builder getJavacOptions(
       SourcePathResolver resolver,
       Arg args,
       JavacOptions defaultOptions) {
-    ImmutableJavacOptions.Builder builder = JavacOptions.builder(defaultOptions);
+    if ((args.source.isPresent() || args.target.isPresent()) && args.javaVersion.isPresent()) {
+      throw new HumanReadableException("Please set either source and target or java_version.");
+    }
+
+    JavacOptions.Builder builder = JavacOptions.builder(defaultOptions);
+
+    if (args.javaVersion.isPresent()) {
+      builder.setSourceLevel(args.javaVersion.get());
+      builder.setTargetLevel(args.javaVersion.get());
+    }
 
     if (args.source.isPresent()) {
       builder.setSourceLevel(args.source.get());
@@ -147,19 +169,22 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
     }
 
     if (args.compiler.isPresent()) {
-      Either<BuiltInJavac, Either<BuildTarget, Path>> left = args.compiler.get();
-      // Until we have more than one value for BuiltInJavac, left has nothing to do.
+      Either<BuiltInJavac, SourcePath> left = args.compiler.get();
+
       if (left.isRight()) {
-        Either<BuildTarget, Path> right = left.getRight();
-        if (right.isLeft()) {
-          BuildRule rule = ruleResolver.getRule(right.getLeft());
+        SourcePath right = left.getRight();
+
+        Optional<BuildRule> possibleRule = resolver.getRule(right);
+        if (possibleRule.isPresent()) {
+          BuildRule rule = possibleRule.get();
           if (rule instanceof PrebuiltJar) {
-            builder.setJavacJarPath(rule.getPathToOutputFile());
+            builder.setJavacJarPath(
+                new BuildTargetSourcePath(rule.getBuildTarget()));
           } else {
             throw new HumanReadableException("Only prebuilt_jar targets can be used as a javac");
           }
         } else {
-          builder.setJavacPath(right.getRight());
+          builder.setJavacPath(resolver.getPath(right));
         }
       }
     } else {
@@ -167,8 +192,8 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
         if (args.javac.isPresent() && args.javacJar.isPresent()) {
           throw new HumanReadableException("Cannot set both javac and javacjar");
         }
-        builder.setJavacPath(args.javac.transform(resolver.getPathFunction()));
-        builder.setJavacJarPath(args.javacJar.transform(resolver.getPathFunction()));
+        builder.setJavacPath(args.javac);
+        builder.setJavacJarPath(args.javacJar);
       }
     }
 
@@ -244,7 +269,6 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
             /* inferredDeps */ Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
             projectFilesystem,
             ruleKeyBuilderFactory,
-            BuildRuleType.GWT_MODULE,
             targetGraph),
         resolver,
         filesForGwtModule);
@@ -257,10 +281,11 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
     public Optional<ImmutableSortedSet<SourcePath>> resources;
     public Optional<String> source;
     public Optional<String> target;
-    public Optional<SourcePath> javac;
+    public Optional<String> javaVersion;
+    public Optional<Path> javac;
     public Optional<SourcePath> javacJar;
     // I am not proud of this.
-    public Optional<Either<BuiltInJavac, Either<BuildTarget, Path>>> compiler;
+    public Optional<Either<BuiltInJavac, SourcePath>> compiler;
     public Optional<ImmutableList<String>> extraArguments;
     public Optional<Path> proguardConfig;
     public Optional<ImmutableSortedSet<BuildTarget>> annotationProcessorDeps;
@@ -268,6 +293,7 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
     public Optional<ImmutableSet<String>> annotationProcessors;
     public Optional<Boolean> annotationProcessorOnly;
     public Optional<ImmutableList<String>> postprocessClassesCommands;
+    @Hint(isInput = false)
     public Optional<Path> resourcesRoot;
 
     public Optional<ImmutableSortedSet<BuildTarget>> providedDeps;

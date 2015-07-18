@@ -47,7 +47,7 @@ public class CxxPythonExtensionDescription implements
     Description<CxxPythonExtensionDescription.Arg>,
     ImplicitDepsInferringDescription<CxxPythonExtensionDescription.Arg> {
 
-  private static enum Type {
+  private enum Type {
     EXTENSION,
   }
 
@@ -87,7 +87,7 @@ public class CxxPythonExtensionDescription implements
 
   @VisibleForTesting
   protected Path getExtensionPath(BuildTarget target, Flavor platform) {
-    return BuildTargets.getScratchPath(getExtensionTarget(target, platform), "%s")
+    return BuildTargets.getGenPath(getExtensionTarget(target, platform), "%s")
         .resolve(getExtensionName(target));
   }
 
@@ -100,12 +100,12 @@ public class CxxPythonExtensionDescription implements
 
     // Extract all C/C++ sources from the constructor arg.
     ImmutableMap<String, CxxSource> srcs =
-        CxxDescriptionEnhancer.parseCxxSources(params, ruleResolver, args);
+        CxxDescriptionEnhancer.parseCxxSources(params, ruleResolver, cxxPlatform, args);
     ImmutableMap<Path, SourcePath> headers =
         CxxDescriptionEnhancer.parseHeaders(
             params,
             ruleResolver,
-            args);
+            cxxPlatform, args);
     ImmutableMap<String, SourcePath> lexSrcs =
         CxxDescriptionEnhancer.parseLexSources(params, ruleResolver, args);
     ImmutableMap<String, SourcePath> yaccSrcs =
@@ -132,18 +132,22 @@ public class CxxPythonExtensionDescription implements
         lexSrcs,
         yaccSrcs,
         headers,
-        CxxDescriptionEnhancer.HeaderVisibility.PRIVATE);
-    CxxPreprocessorInput cxxPreprocessorInput = CxxDescriptionEnhancer.combineCxxPreprocessorInput(
-        params,
-        cxxPlatform,
-        CxxFlags.getLanguageFlags(
-            args.preprocessorFlags,
-            args.platformPreprocessorFlags,
-            args.langPreprocessorFlags,
-            cxxPlatform.getFlavor()),
-        args.prefixHeaders.get(),
-        ImmutableList.of(headerSymlinkTree),
-        ImmutableList.<Path>of());
+        HeaderVisibility.PRIVATE);
+    ImmutableList<CxxPreprocessorInput> cxxPreprocessorInput =
+        CxxDescriptionEnhancer.collectCxxPreprocessorInput(
+            params,
+            cxxPlatform,
+            CxxFlags.getLanguageFlags(
+                args.preprocessorFlags,
+                args.platformPreprocessorFlags,
+                args.langPreprocessorFlags,
+                cxxPlatform),
+            args.prefixHeaders.get(),
+            ImmutableList.of(headerSymlinkTree),
+            ImmutableSet.<Path>of(),
+            CxxPreprocessables.getTransitiveCxxPreprocessorInput(
+                cxxPlatform,
+                params.getDeps()));
 
     ImmutableMap<String, CxxSource> allSources =
         ImmutableMap.<String, CxxSource>builder()
@@ -152,8 +156,8 @@ public class CxxPythonExtensionDescription implements
             .build();
 
     // Generate rule to build the object files.
-    ImmutableList<SourcePath> picObjects =
-        CxxSourceRuleFactory.createPreprocessAndCompileRules(
+    ImmutableMap<CxxPreprocessAndCompile, SourcePath> picObjects =
+        CxxSourceRuleFactory.requirePreprocessAndCompileRules(
             params,
             ruleResolver,
             pathResolver,
@@ -162,8 +166,8 @@ public class CxxPythonExtensionDescription implements
             CxxFlags.getFlags(
                 args.compilerFlags,
                 args.platformCompilerFlags,
-                cxxPlatform.getFlavor()),
-            CxxSourceRuleFactory.Strategy.SEPARATE_PREPROCESS_AND_COMPILE,
+                cxxPlatform),
+            cxxBuckConfig.getPreprocessMode(),
             allSources,
             CxxSourceRuleFactory.PicType.PIC);
 
@@ -178,14 +182,16 @@ public class CxxPythonExtensionDescription implements
         /* extraLdFlags */ CxxFlags.getFlags(
             args.linkerFlags,
             args.platformLinkerFlags,
-            cxxPlatform.getFlavor()),
+            cxxPlatform),
         getExtensionTarget(params.getBuildTarget(), cxxPlatform.getFlavor()),
         Linker.LinkType.SHARED,
         Optional.of(extensionName),
         extensionPath,
-        picObjects,
+        picObjects.values(),
         Linker.LinkableDepType.SHARED,
-        params.getDeps());
+        params.getDeps(),
+        args.cxxRuntimeType,
+        Optional.<SourcePath>absent());
   }
 
   @Override

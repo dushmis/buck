@@ -27,7 +27,6 @@ import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.shell.AbstractGenruleStep.CommandString;
@@ -38,6 +37,7 @@ import com.facebook.buck.step.fs.MkdirAndSymlinkFileStep;
 import com.facebook.buck.step.fs.MkdirStep;
 import com.facebook.buck.step.fs.RmStep;
 import com.facebook.buck.util.BuckConstant;
+import com.facebook.buck.util.HumanReadableException;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
@@ -46,7 +46,6 @@ import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 
 import java.io.File;
@@ -163,6 +162,12 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
         BuckConstant.GEN_DIR,
         target.getBasePathWithSlash());
     this.pathToOutFile = this.pathToOutDirectory.resolve(out);
+    if (!pathToOutFile.startsWith(pathToOutDirectory) || pathToOutFile.equals(pathToOutDirectory)) {
+      throw new HumanReadableException(
+          "The 'out' parameter of genrule %s is '%s', which is not a valid file name.",
+          params.getBuildTarget(),
+          out);
+    }
 
     this.pathToTmpDirectory = Paths.get(
         BuckConstant.GEN_DIR,
@@ -183,7 +188,7 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
 
   /** @return the absolute path to the output file */
   public String getAbsoluteOutputFilePath() {
-    return relativeToAbsolutePathFunction.apply(getPathToOutputFile()).toString();
+    return relativeToAbsolutePathFunction.apply(getPathToOutput()).toString();
   }
 
   @VisibleForTesting
@@ -192,18 +197,8 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
   }
 
   @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return ImmutableSet.of();
-  }
-
-  @Override
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     return pathToOutFile;
-  }
-
-  @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder;
   }
 
   protected void addEnvironmentVariables(ExecutionContext context,
@@ -248,7 +243,7 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
     }
     processedBuildRules.add(rule);
 
-    Path output = rule.getPathToOutputFile();
+    Path output = rule.getPathToOutput();
     if (output != null) {
       // TODO(user): This is a giant hack and we should do away with $DEPS altogether.
       // There can be a lot of paths here and the filesystem location can be arbitrarily long.
@@ -302,7 +297,11 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
     ImmutableList.Builder<Step> commands = ImmutableList.builder();
 
     // Delete the old output for this rule, if it exists.
-    commands.add(new RmStep(getPathToOutputFile(), true /* shouldForceDeletion */));
+    commands.add(
+        new RmStep(
+            getPathToOutput(),
+            /* shouldForceDeletion */ true,
+            /* shouldRecurse */ true));
 
     // Make sure that the directory to contain the output file exists. Rules get output to a
     // directory named after the base path, so we don't want to nuke the entire directory.
@@ -329,7 +328,7 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
 
     // Symlink all sources into the temp directory so that they can be used in the genrule.
     for (Map.Entry<Path, Path> entry : srcsToAbsolutePaths.entrySet()) {
-      String localPath = entry.getKey().toString();
+      String localPath = MorePaths.pathWithUnixSeparators(entry.getKey());
 
       Path canonicalPath;
       canonicalPath = MorePaths.absolutify(entry.getValue());

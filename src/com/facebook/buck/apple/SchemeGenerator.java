@@ -73,6 +73,9 @@ class SchemeGenerator {
   private final ImmutableSet<PBXTarget> orderedRunTestTargets;
   private final String schemeName;
   private final Path outputDirectory;
+  private final boolean primaryTargetIsBuildWithBuck;
+  private final Optional<String> runnablePath;
+  private final Optional<String> remoteRunnablePath;
   private final ImmutableMap<SchemeActionType, String> actionConfigNames;
   private final ImmutableMap<PBXTarget, Path> targetToProjectPathMap;
   private Optional<XCScheme> outputScheme = Optional.absent();
@@ -85,6 +88,9 @@ class SchemeGenerator {
       Iterable<PBXTarget> orderedRunTestTargets,
       String schemeName,
       Path outputDirectory,
+      boolean primaryTargetIsBuildWithBuck,
+      Optional<String> runnablePath,
+      Optional<String> remoteRunnablePath,
       Map<SchemeActionType, String> actionConfigNames,
       Map<PBXTarget, Path> targetToProjectPathMap) {
     this.projectFilesystem = projectFilesystem;
@@ -94,6 +100,9 @@ class SchemeGenerator {
     this.orderedRunTestTargets = ImmutableSet.copyOf(orderedRunTestTargets);
     this.schemeName = schemeName;
     this.outputDirectory = outputDirectory;
+    this.primaryTargetIsBuildWithBuck = primaryTargetIsBuildWithBuck;
+    this.runnablePath = runnablePath;
+    this.remoteRunnablePath = remoteRunnablePath;
     this.actionConfigNames = ImmutableMap.copyOf(actionConfigNames);
     this.targetToProjectPathMap = ImmutableMap.copyOf(targetToProjectPathMap);
 
@@ -122,8 +131,10 @@ class SchemeGenerator {
           outputDirectory.getParent().relativize(
               targetToProjectPathMap.get(target)
           ).toString(),
-          target.getGlobalID(),
-          Preconditions.checkNotNull(target.getProductReference()).getName(),
+          Preconditions.checkNotNull(target.getGlobalID()),
+          target.getProductReference() != null
+              ? target.getProductReference().getName()
+              : Preconditions.checkNotNull(target.getProductName()),
           blueprintName);
       buildTargetToBuildableReferenceMap.put(target , buildableReference);
     }
@@ -134,7 +145,11 @@ class SchemeGenerator {
     for (PBXTarget target : orderedBuildTargets) {
       addBuildActionForBuildTarget(
           buildTargetToBuildableReferenceMap.get(target),
-          XCScheme.BuildActionEntry.BuildFor.DEFAULT,
+          !primaryTargetIsBuildWithBuck ||
+              !primaryTarget.isPresent() ||
+              target.equals(primaryTarget.get())
+              ? XCScheme.BuildActionEntry.BuildFor.DEFAULT
+              : XCScheme.BuildActionEntry.BuildFor.INDEXING,
           buildAction);
     }
 
@@ -146,7 +161,7 @@ class SchemeGenerator {
     }
 
     XCScheme.TestAction testAction = new XCScheme.TestAction(
-        actionConfigNames.get(SchemeActionType.TEST));
+        Preconditions.checkNotNull(actionConfigNames.get(SchemeActionType.TEST)));
     for (PBXTarget target : orderedRunTestTargets) {
       XCScheme.BuildableReference buildableReference =
           buildTargetToBuildableReferenceMap.get(target);
@@ -162,18 +177,22 @@ class SchemeGenerator {
       XCScheme.BuildableReference primaryBuildableReference =
         buildTargetToBuildableReferenceMap.get(primaryTarget.get());
       if (primaryBuildableReference != null) {
-        launchAction = Optional.of(new XCScheme.LaunchAction(
-            primaryBuildableReference,
-            actionConfigNames.get(SchemeActionType.LAUNCH)));
-        profileAction = Optional.of(new XCScheme.ProfileAction(
-            primaryBuildableReference,
-            actionConfigNames.get(SchemeActionType.PROFILE)));
+        launchAction = Optional.of(
+            new XCScheme.LaunchAction(
+                primaryBuildableReference,
+                Preconditions.checkNotNull(actionConfigNames.get(SchemeActionType.LAUNCH)),
+                runnablePath,
+                remoteRunnablePath));
+        profileAction = Optional.of(
+            new XCScheme.ProfileAction(
+                primaryBuildableReference,
+                Preconditions.checkNotNull(actionConfigNames.get(SchemeActionType.PROFILE))));
       }
     }
     XCScheme.AnalyzeAction analyzeAction = new XCScheme.AnalyzeAction(
-        actionConfigNames.get(SchemeActionType.ANALYZE));
+        Preconditions.checkNotNull(actionConfigNames.get(SchemeActionType.ANALYZE)));
     XCScheme.ArchiveAction archiveAction = new XCScheme.ArchiveAction(
-        actionConfigNames.get(SchemeActionType.ARCHIVE));
+        Preconditions.checkNotNull(actionConfigNames.get(SchemeActionType.ARCHIVE)));
 
     XCScheme scheme = new XCScheme(
         schemeName,
@@ -278,11 +297,30 @@ class SchemeGenerator {
   public static Element serializeLaunchAction(Document doc, XCScheme.LaunchAction launchAction) {
     Element launchActionElem = doc.createElement("LaunchAction");
 
-    Element productRunnableElem = doc.createElement("BuildableProductRunnable");
-    launchActionElem.appendChild(productRunnableElem);
+    Optional<String> runnablePath = launchAction.getRunnablePath();
+    Optional<String> remoteRunnablePath = launchAction.getRemoteRunnablePath();
+    if (remoteRunnablePath.isPresent()) {
+      Element remoteRunnableElem = doc.createElement("RemoteRunnable");
+      remoteRunnableElem.setAttribute("runnableDebuggingMode", "2");
+      remoteRunnableElem.setAttribute("BundleIdentifier", "com.apple.springboard");
+      remoteRunnableElem.setAttribute("RemotePath", remoteRunnablePath.get());
+      launchActionElem.appendChild(remoteRunnableElem);
+      Element refElem = serializeBuildableReference(doc, launchAction.getBuildableReference());
+      remoteRunnableElem.appendChild(refElem);
 
-    Element refElem = serializeBuildableReference(doc, launchAction.getBuildableReference());
-    productRunnableElem.appendChild(refElem);
+      // Yes, this appears to be duplicated in Xcode as well..
+      Element refElem2 = serializeBuildableReference(doc, launchAction.getBuildableReference());
+      launchActionElem.appendChild(refElem2);
+    } else if (runnablePath.isPresent()) {
+      Element pathRunnableElem = doc.createElement("PathRunnable");
+      launchActionElem.appendChild(pathRunnableElem);
+      pathRunnableElem.setAttribute("FilePath", runnablePath.get());
+    } else {
+      Element productRunnableElem = doc.createElement("BuildableProductRunnable");
+      launchActionElem.appendChild(productRunnableElem);
+      Element refElem = serializeBuildableReference(doc, launchAction.getBuildableReference());
+      productRunnableElem.appendChild(refElem);
+    }
 
     return launchActionElem;
   }

@@ -19,7 +19,6 @@ package com.facebook.buck.cxx;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
-import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.google.common.base.Suppliers;
@@ -35,8 +34,6 @@ public class Archives {
 
   private Archives() {}
 
-  private static final BuildRuleType ARCHIVE_TYPE = BuildRuleType.of("archive");
-
   /**
    * Construct an {@link com.facebook.buck.cxx.Archive} from a
    * {@link com.facebook.buck.rules.BuildRuleParams} object representing a target
@@ -47,20 +44,19 @@ public class Archives {
       SourcePathResolver resolver,
       BuildTarget target,
       BuildRuleParams originalParams,
-      Tool archiver,
+      Archiver archiver,
       Path output,
       ImmutableList<SourcePath> inputs) {
 
     // Convert the input build params into ones specialized for this archive build rule.
     // In particular, we only depend on BuildRules directly from the input file SourcePaths.
     BuildRuleParams archiveParams = originalParams.copyWithChanges(
-        ARCHIVE_TYPE,
         target,
         Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
         Suppliers.ofInstance(
                 ImmutableSortedSet.<BuildRule>naturalOrder()
                     .addAll(resolver.filterBuildRuleInputs(inputs))
-                    .addAll(archiver.getBuildRules(resolver))
+                    .addAll(resolver.filterBuildRuleInputs(archiver.getInputs()))
                     .build()));
 
     return new Archive(

@@ -16,12 +16,17 @@
 
 package com.facebook.buck.rules;
 
+import com.facebook.buck.graph.AbstractBreadthFirstTraversal;
 import com.facebook.buck.io.DirectoryTraverser;
 import com.facebook.buck.io.DirectoryTraversers;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.util.HumanReadableException;
 import com.google.common.base.Optional;
+import com.google.common.base.Predicate;
+import com.google.common.collect.FluentIterable;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Iterables;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -38,15 +43,14 @@ public class BuildRules {
   public static ImmutableSortedSet<BuildRule> toBuildRulesFor(
       BuildTarget invokingBuildTarget,
       BuildRuleResolver ruleResolver,
-      Iterable<BuildTarget> buildTargets,
-      boolean allowNonExistentRule) {
+      Iterable<BuildTarget> buildTargets) {
     ImmutableSortedSet.Builder<BuildRule> buildRules = ImmutableSortedSet.naturalOrder();
 
     for (BuildTarget target : buildTargets) {
       Optional<BuildRule> buildRule = ruleResolver.getRuleOptional(target);
       if (buildRule.isPresent()) {
         buildRules.add(buildRule.get());
-      } else if (!allowNonExistentRule) {
+      } else {
         throw new HumanReadableException("No rule for %s found when processing %s",
             target, invokingBuildTarget.getFullyQualifiedName());
       }
@@ -75,4 +79,37 @@ public class BuildRules {
 
     inputsToConsiderForCachingPurposes.addAll(files);
   }
+
+  public static Predicate<BuildRule> isBuildRuleWithTarget(final BuildTarget target) {
+    return new Predicate<BuildRule>() {
+      @Override
+      public boolean apply(BuildRule input) {
+        return input.getBuildTarget().equals(target);
+      }
+    };
+  }
+
+  /**
+   * @return the set of {@code BuildRule}s exported by {@code ExportDependencies} from the given
+   *     rules.
+   */
+  public static ImmutableSortedSet<BuildRule> getExportedRules(
+      Iterable<? extends BuildRule> rules) {
+    final ImmutableSortedSet.Builder<BuildRule> exportedRules = ImmutableSortedSet.naturalOrder();
+    AbstractBreadthFirstTraversal<ExportDependencies> visitor =
+        new AbstractBreadthFirstTraversal<ExportDependencies>(
+            Iterables.filter(rules, ExportDependencies.class)) {
+          @Override
+          public ImmutableSet<ExportDependencies> visit(ExportDependencies exporter) {
+            Iterable<BuildRule> exported = exporter.getExportedDeps();
+            exportedRules.addAll(exported);
+            return FluentIterable.from(exported)
+                .filter(ExportDependencies.class)
+                .toSet();
+          }
+        };
+    visitor.start();
+    return exportedRules.build();
+  }
+
 }

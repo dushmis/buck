@@ -21,11 +21,12 @@ import static com.facebook.buck.rules.BuildableProperties.Kind.LIBRARY;
 
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.AbstractBuildRule;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.BuildableProperties;
-import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.AbstractExecutionStep;
@@ -38,7 +39,6 @@ import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 
@@ -67,6 +67,7 @@ public class NdkLibrary extends AbstractBuildRule
   private static final BuildableProperties PROPERTIES = new BuildableProperties(ANDROID, LIBRARY);
 
   /** @see NativeLibraryBuildRule#isAsset() */
+  @AddToRuleKey
   private final boolean isAsset;
 
   /** The directory containing the Android.mk file to use. This value includes a trailing slash. */
@@ -76,8 +77,13 @@ public class NdkLibrary extends AbstractBuildRule
   private final Path buildArtifactsDirectory;
   private final Path genDirectory;
 
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey
   private final ImmutableSortedSet<SourcePath> sources;
+  @AddToRuleKey
   private final ImmutableList<String> flags;
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey
   private final Optional<String> ndkVersion;
   private final Function<String, String> macroExpander;
 
@@ -121,7 +127,7 @@ public class NdkLibrary extends AbstractBuildRule
 
   @Override
   @Nullable
-  public Path getPathToOutputFile() {
+  public Path getPathToOutput() {
     // An ndk_library() does not have a "primary output" at this time.
     return null;
   }
@@ -148,7 +154,7 @@ public class NdkLibrary extends AbstractBuildRule
         genDirectory,
         CopyStep.DirectoryMode.CONTENTS_ONLY);
 
-    buildableContext.recordArtifactsInDirectory(genDirectory);
+    buildableContext.recordArtifact(genDirectory);
     // Some tools need to inspect .so files whose symbols haven't been stripped, so cache these too.
     // However, the intermediate object files are huge and we have no interest in them, so filter
     // them out.
@@ -196,19 +202,6 @@ public class NdkLibrary extends AbstractBuildRule
   }
 
   @Override
-  public RuleKey.Builder appendDetailsToRuleKey(RuleKey.Builder builder) {
-    return builder
-        .setReflectively("ndk_version", ndkVersion.or("NONE"))
-        .setReflectively("flags", flags)
-        .setReflectively("is_asset", isAsset());
-  }
-
-  @Override
-  public ImmutableCollection<Path> getInputsToCompareToOutput() {
-    return getResolver().filterInputsToCompareToOutput(sources);
-  }
-
-  @Override
   public Iterable<AndroidPackageable> getRequiredPackageables() {
     return AndroidPackageableCollector.getPackageableRules(getDeps());
   }
@@ -216,9 +209,13 @@ public class NdkLibrary extends AbstractBuildRule
   @Override
   public void addToCollector(AndroidPackageableCollector collector) {
     if (isAsset) {
-      collector.addNativeLibAssetsDirectory(getLibraryPath());
+      collector.addNativeLibAssetsDirectory(
+          getBuildTarget(),
+          new PathSourcePath(getProjectFilesystem(), getLibraryPath()));
     } else {
-      collector.addNativeLibsDirectory(getBuildTarget(), getLibraryPath());
+      collector.addNativeLibsDirectory(
+          getBuildTarget(),
+          new PathSourcePath(getProjectFilesystem(), getLibraryPath()));
     }
   }
 }

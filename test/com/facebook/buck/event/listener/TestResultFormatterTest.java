@@ -25,6 +25,7 @@ import com.facebook.buck.test.TestResults;
 import com.facebook.buck.test.result.type.ResultType;
 import com.facebook.buck.test.selectors.TestSelectorList;
 import com.facebook.buck.util.Ansi;
+import com.facebook.buck.util.Verbosity;
 import com.google.common.base.Joiner;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -42,9 +43,7 @@ public class TestResultFormatterTest {
 
   @Before
   public void createFormatter() {
-    formatter = new TestResultFormatter(
-        new Ansi(false),
-        /* isAnAssumptionViolationAnError) */ false);
+    formatter = new TestResultFormatter(new Ansi(false), Verbosity.COMMANDS);
   }
 
   @Before
@@ -81,7 +80,8 @@ public class TestResultFormatterTest {
         false,
         TestSelectorList.empty(),
         false,
-        ImmutableSet.of("//:example", "//foo:bar"));
+        ImmutableSet.of("//:example", "//foo:bar"),
+        TestResultFormatter.FormatMode.BEFORE_TEST_RUN);
 
     assertEquals("TESTING //:example //foo:bar", toString(builder));
   }
@@ -96,7 +96,13 @@ public class TestResultFormatterTest {
 
     ImmutableSet<String> targetNames = ImmutableSet.of("//:example", "//foo:bar");
 
-    formatter.runStarted(builder, false, testSelectorList, false, targetNames);
+    formatter.runStarted(
+        builder,
+        false,
+        testSelectorList,
+        false,
+        targetNames,
+        TestResultFormatter.FormatMode.BEFORE_TEST_RUN);
 
     assertEquals("TESTING SELECTED TESTS", toString(builder));
   }
@@ -112,7 +118,13 @@ public class TestResultFormatterTest {
     ImmutableSet<String> targetNames = ImmutableSet.of("//:example", "//foo:bar");
     boolean shouldExplain = true;
 
-    formatter.runStarted(builder, false, testSelectorList, shouldExplain, targetNames);
+    formatter.runStarted(
+        builder,
+        false,
+        testSelectorList,
+        shouldExplain,
+        targetNames,
+        TestResultFormatter.FormatMode.BEFORE_TEST_RUN);
 
     String expected = "TESTING SELECTED TESTS\n" +
         "include class:com.example.clown.Car$ method:<any>\n" +
@@ -128,9 +140,31 @@ public class TestResultFormatterTest {
     ImmutableList.Builder<String> builder = ImmutableList.builder();
     ImmutableSet<String> targetNames = ImmutableSet.of("//:example", "//foo:bar");
 
-    formatter.runStarted(builder, true, TestSelectorList.empty(), false, targetNames);
+    formatter.runStarted(
+        builder,
+        true,
+        TestSelectorList.empty(),
+        false,
+        targetNames,
+        TestResultFormatter.FormatMode.BEFORE_TEST_RUN);
 
     assertEquals("TESTING ALL TESTS", toString(builder));
+  }
+
+  @Test
+  public void shouldShowThatAllTestAreBeingRunWhenRunIsStartedWithFormatModeAfterTestRun() {
+    ImmutableList.Builder<String> builder = ImmutableList.builder();
+    ImmutableSet<String> targetNames = ImmutableSet.of("//:example", "//foo:bar");
+
+    formatter.runStarted(
+        builder,
+        true,
+        TestSelectorList.empty(),
+        false,
+        targetNames,
+        TestResultFormatter.FormatMode.AFTER_TEST_RUN);
+
+    assertEquals("RESULTS FOR ALL TESTS", toString(builder));
   }
 
   @Test
@@ -168,7 +202,39 @@ public class TestResultFormatterTest {
     formatter.runComplete(builder, ImmutableList.of(results));
 
     String expectedOutput = Joiner.on('\n').join(
-        "TESTS FAILED: 1 Failures",
+        "TESTS FAILED: 1 FAILURE",
+        "Failed target: //foo:bar",
+        "FAIL com.example.FooTest");
+    assertEquals(expectedOutput, toString(builder));
+  }
+
+  @Test
+  public void shouldReportTheNumberOfFailingTestsWithMoreThanOneTest() {
+    TestCaseSummary summary = new TestCaseSummary(
+        "com.example.FooTest",
+        ImmutableList.of(
+            successTest,
+            failingTest,
+            new TestResultSummary(
+                "com.example.FooTest",
+                "anotherFail",
+                ResultType.FAILURE,
+                200,
+                "Unexpected fnord found",
+                null,
+                null,
+                null)));
+    TestResults results = new TestResults(
+        BuildTargetFactory.newInstance("//foo:bar"),
+        ImmutableList.of(summary),
+        /* contacts */ ImmutableSet.<String>of(),
+        /* labels */ ImmutableSet.<String>of());
+    ImmutableList.Builder<String> builder = ImmutableList.builder();
+
+    formatter.runComplete(builder, ImmutableList.of(results));
+
+    String expectedOutput = Joiner.on('\n').join(
+        "TESTS FAILED: 2 FAILURES",
         "Failed target: //foo:bar",
         "FAIL com.example.FooTest");
     assertEquals(expectedOutput, toString(builder));
@@ -198,12 +264,13 @@ public class TestResultFormatterTest {
 
     String expected = String.format(Joiner.on('\n').join(
         "FAIL     200ms  0 Passed   0 Skipped   1 Failed   com.example.FooTest",
-        "FAILURE %s: %s",
+        "FAILURE %s %s: %s",
         "%s",
         "====STANDARD OUT====",
         "%s",
         "====STANDARD ERR====",
         "%s"),
+        failingTest.getTestCaseName(),
         failingTest.getTestName(),
         failingTest.getMessage(),
         stackTrace,

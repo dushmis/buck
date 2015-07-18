@@ -26,6 +26,7 @@ import com.facebook.buck.step.Step;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.KeystoreProperties;
 import com.google.common.base.Joiner;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
@@ -108,7 +109,7 @@ public class ApkBuilderStep implements Step {
   }
 
   @Override
-  public int execute(ExecutionContext context) {
+  public int execute(ExecutionContext context) throws IOException {
     PrintStream output = null;
     if (context.getVerbosity().shouldUseVerbosityFlagIfAvailable()) {
       output = context.getStdOut();
@@ -153,6 +154,7 @@ public class ApkBuilderStep implements Step {
         | SealedApkException
         | UnrecoverableKeyException e) {
       context.logError(e, "Error when creating APK at: %s.", pathToOutputApkFile);
+      Throwables.propagateIfInstanceOf(e, IOException.class);
       return 1;
     } catch (DuplicateFileException e) {
       throw new HumanReadableException(
@@ -176,7 +178,11 @@ public class ApkBuilderStep implements Step {
     KeyStore keystore = KeyStore.getInstance(JARSIGNER_KEY_STORE_TYPE);
     InputStream inputStream = projectFilesystem.getInputStreamForRelativePath(pathToKeystore);
     char[] keystorePassword = keystoreProperties.getStorepass().toCharArray();
-    keystore.load(inputStream, keystorePassword);
+    try {
+      keystore.load(inputStream, keystorePassword);
+    } catch (IOException | NoSuchAlgorithmException | CertificateException e) {
+      throw new HumanReadableException(e, "%s is an invalid keystore.", pathToKeystore);
+    }
 
     String alias = keystoreProperties.getAlias();
     char[] keyPassword = keystoreProperties.getKeypass().toCharArray();

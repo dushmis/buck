@@ -16,12 +16,13 @@
 
 package com.facebook.buck.apple;
 
+import com.facebook.buck.cxx.CxxSource;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.AbstractNodeBuilder;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.SourcePath;
-import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.rules.coercer.FrameworkPath;
+import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
@@ -56,6 +57,12 @@ public abstract class AbstractAppleNativeTargetBuilder<
     return getThis();
   }
 
+  public BUILDER setLangPreprocessorFlags(
+      Optional<ImmutableMap<CxxSource.Type, ImmutableList<String>>> langPreprocessorFlags) {
+    arg.langPreprocessorFlags = langPreprocessorFlags;
+    return getThis();
+  }
+
   public BUILDER setExportedPreprocessorFlags(
       Optional<ImmutableList<String>> exportedPreprocessorFlags) {
     arg.exportedPreprocessorFlags = exportedPreprocessorFlags;
@@ -64,6 +71,11 @@ public abstract class AbstractAppleNativeTargetBuilder<
 
   public BUILDER setLinkerFlags(Optional<ImmutableList<String>> linkerFlags) {
     arg.linkerFlags = linkerFlags;
+    return getThis();
+  }
+
+  public BUILDER setExportedLinkerFlags(Optional<ImmutableList<String>> exportedLinkerFlags) {
+    arg.exportedLinkerFlags = exportedLinkerFlags;
     return getThis();
   }
 
@@ -77,48 +89,30 @@ public abstract class AbstractAppleNativeTargetBuilder<
     return getThis();
   }
 
-  public BUILDER setHeaders(
-      Optional<Either<
-          ImmutableSortedSet<SourcePath>,
-          ImmutableMap<String, SourcePath>>> headers) {
+  public BUILDER setHeaders(Optional<SourceList> headers) {
     arg.headers = headers;
     return getThis();
   }
 
   public BUILDER setHeaders(ImmutableSortedSet<SourcePath> headers) {
-    return setHeaders(
-        Optional.of(
-            Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofLeft(
-                headers)));
+    return setHeaders(Optional.of(SourceList.ofUnnamedSources(headers)));
   }
 
   public BUILDER setHeaders(ImmutableMap<String, SourcePath> headers) {
-    return setHeaders(
-        Optional.of(
-            Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofRight(
-                headers)));
+    return setHeaders(Optional.of(SourceList.ofNamedSources(headers)));
   }
 
-  public BUILDER setExportedHeaders(
-      Optional<Either<
-          ImmutableSortedSet<SourcePath>,
-          ImmutableMap<String, SourcePath>>> exportedHeaders) {
+  public BUILDER setExportedHeaders(Optional<SourceList> exportedHeaders) {
     arg.exportedHeaders = exportedHeaders;
     return getThis();
   }
 
   public BUILDER setExportedHeaders(ImmutableSortedSet<SourcePath> exportedHeaders) {
-    return setExportedHeaders(
-        Optional.of(
-            Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofLeft(
-                exportedHeaders)));
+    return setExportedHeaders(Optional.of(SourceList.ofUnnamedSources(exportedHeaders)));
   }
 
   public BUILDER setExportedHeaders(ImmutableMap<String, SourcePath> exportedHeaders) {
-    return setExportedHeaders(
-        Optional.of(
-            Either.<ImmutableSortedSet<SourcePath>, ImmutableMap<String, SourcePath>>ofRight(
-                exportedHeaders)));
+    return setExportedHeaders(Optional.of(SourceList.ofNamedSources(exportedHeaders)));
   }
 
   public BUILDER setFrameworks(Optional<ImmutableSortedSet<FrameworkPath>> frameworks) {
