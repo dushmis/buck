@@ -14,7 +14,7 @@
  * under the License.
  */
 
-package com.facebook.buck.util;
+package com.facebook.buck.util.network;
 
 import com.google.common.util.concurrent.ListenableFuture;
 

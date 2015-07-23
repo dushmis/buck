@@ -37,6 +37,12 @@ public interface Linker extends Tool {
   Iterable<String> soname(String soname);
 
   /**
+   * @return the placeholder used by the dynamic loader for the directory containing the top-level
+   *     executable.
+   */
+  String origin();
+
+  /**
    * The various ways to link an output file.
    */
   enum LinkType {
@@ -61,6 +67,10 @@ public interface Linker extends Tool {
     // Provide input suitable for statically linking this linkable (e.g. return references to
     // static libraries, libfoo.a).
     STATIC,
+
+    // Provide input suitable for statically linking this linkable using PIC-enabled binaries
+    // (e.g. return references to static libraries, libfoo_pic.a).
+    STATIC_PIC,
 
     // Provide input suitable for dynamically linking this linkable (e.g. return references to
     // shared libraries, libfoo.so).
