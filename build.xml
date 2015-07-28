@@ -30,6 +30,8 @@
   <property name="test.debug_port" value="8787" />
   <property name="lint.outputpath" value="${build.dir}/lint.output" />
 
+  <property name="bazel.src.dir" value="third-party/java/bazel/src" />
+
   <property name="dx.base.dir" value="${basedir}/third-party/java/dx" />
   <property name="dx.src.dir" value="${dx.base.dir}/src" />
   <property name="dx.test.dir" value="${dx.base.dir}/tests" />
@@ -44,6 +46,17 @@
   <property name="immutables-value-standalone.jar" value="${third-party.dir}/java/immutables/value-2.0.11.jar" />
   <property name="immutables.gensrc.dir" value="${build.dir}/immutables" />
   <property name="immutables.gensrc.test.dir" value="${build.dir}/immutables-tests" />
+
+  <!-- Javadoc in 1.8 became stricter about parsing the docs. This disables some of those checks -->
+  <available property="jdk1.8" classname="java.util.stream.Stream"/>
+  <condition
+          property="javadoc.doclint"
+          value="-Xdoclint:-reference"
+          else="">
+    <and>
+      <isset property="jdk1.8"/>
+    </and>
+  </condition>
 
   <fileset dir="${third-party.dir}/java" id="buck.jars">
     <include name="args4j/args4j-2.0.30.jar" />
@@ -91,6 +104,24 @@
     <include name="slf4j/slf4j-api-1.7.2.jar" />
     <include name="stringtemplate/ST-4.0.8.jar" />
     <include name="xz-java-1.3/xz-1.3.jar" />
+
+    <!-- maven interop -->
+    <include name="aether/aether-api-1.0.2.v20150114.jar" />
+    <include name="aether/aether-connector-basic-1.0.2.v20150114.jar" />
+    <include name="aether/aether-impl-1.0.0.v20140518.jar" />
+    <include name="aether/aether-spi-1.0.2.v20150114.jar" />
+    <include name="aether/aether-transport-http-1.0.2.v20150114.jar" />
+    <include name="aether/aether-util-1.0.2.v20150114.jar" />
+    <include name="httpcomponents/httpclient-4.2.6.jar" />
+    <include name="httpcomponents/httpcore-4.2.5.jar" />
+    <include name="maven/maven-aether-provider-3.2.5.jar" />
+    <include name="maven/maven-model-3.2.5.jar" />
+    <include name="maven/maven-model-builder-3.2.5.jar" />
+    <include name="maven/maven-repository-metadata-3.2.5.jar" />
+    <include name="plexus/plexus-utils-3.0.20.jar" />
+    <include name="plexus/plexus-interpolation-1.21.jar" />
+    <include name="slf4j/jcl-over-slf4j-1.6.2.jar" />
+    <include name="slf4j/slf4j-api-1.7.5.jar" />
   </fileset>
 
   <path id="classpath-no-src">
@@ -167,7 +198,7 @@
 
       <!-- Be very careful what is added here, and leave comments justifying each addition. See the
       comment in bootstrapper-classpath above for more details on why. -->
-      
+
       <!-- The Tracing API jar must be accessible to both Buck and compiler plugins, so we put it
       in the bootstrapper. Compiler plugins will have their own copy linked in, but the ClassLoaders
       will end up loading this one instead when they are run inside Buck. -->
@@ -320,6 +351,19 @@
     <copy file="src/com/facebook/buck/json/buck.py" todir="${classes.dir}/com/facebook/buck/json"/>
 
     <!--
+     Compile code from Bazel using the default compiler.
+     Using ecj spits out too many warnings that are not our responsibility to fix.
+   -->
+    <javac destdir="${classes.dir}"
+           classpathref="classpath"
+           debug="on"
+           deprecation="on"
+           includeAntRuntime="no"
+    >
+      <src path="${bazel.src.dir}" />
+    </javac>
+
+    <!--
       Compile code from AOSP using the default compiler.
       Using ecj spits out too many warnings that are not our responsibility to fix.
     -->
@@ -347,8 +391,6 @@
         <exclude name="com/facebook/buck/cli/quickstart/**" />
         <exclude name="com/facebook/buck/event/api/**" />
         <exclude name="com/facebook/buck/junit/**" />
-        <!-- Excluded since the maven functionality is bolted on later -->
-        <exclude name="com/facebook/buck/maven/**" />
         <src path="${immutables.gensrc.dir}" />
       </javac-params>
     </ecj>
@@ -528,7 +570,6 @@
          >
       <javac-params>
         <exclude name="**/testdata/**" />
-        <exclude name="com/facebook/buck/maven/**" />
       </javac-params>
     </ecj>
   </target>
@@ -546,6 +587,7 @@
     <junit failureproperty="hasFailingTests"
            showoutput="true"
            forkmode="perBatch"
+           haltonfailure="on"
            haltonerror="on">
       <sysproperty key="buck.path_to_compile_asset_catalogs_py" value="${buck.path_to_compile_asset_catalogs_py}" />
       <sysproperty key="buck.path_to_compile_asset_catalogs_build_phase_sh" value="${buck.path_to_compile_asset_catalogs_build_phase_sh}" />
@@ -602,7 +644,6 @@
           <include name="**/*${test.class}.java" />
 
           <exclude name="**/testdata/**" />
-          <exclude name="com/facebook/buck/maven/**" />
           <exclude name="com/facebook/buck/java/**" />
           <exclude name="com/facebook/buck/android/**" />
           <exclude name="com/facebook/buck/dalvik/**" />
@@ -783,15 +824,18 @@
       <delete dir="@{destdir}" />
       <mkdir dir="@{destdir}" />
       <record name="@{destdir}/javadoc.log" action="start" />
+
       <javadoc destdir="@{destdir}"
                access="@{access}"
                classpathref="@{classpathref}"
                windowtitle="Buck"
                failonerror="true"
+               additionalparam="${javadoc.doclint}"
                >
         <fileset dir="${src.dir}">
           <include name="**/*.java" />
           <exclude name="com/facebook/buck/cli/quickstart/**" />
+          <exclude name="com/facebook/buck/android/support/exopackage/**" />
         </fileset>
         <fileset dir="${immutables.gensrc.dir}" />
         <link href="http://docs.oracle.com/javase/7/docs/api/" />
@@ -813,16 +857,6 @@
     <!-- Buck test runner has references to JUnit and TestNG. -->
     <pathelement location="${third-party.dir}/java/junit/junit-4.11.jar" />
     <pathelement location="${third-party.dir}/java/testng/testng-6.8.jar" />
-
-    <!-- Include the jars required to document the maven interop pieces -->
-    <pathelement location="${third-party.dir}/java/aether/aether-api-1.0.2.v20150114.jar" />
-    <pathelement location="${third-party.dir}/java/aether/aether-connector-basic-1.0.2.v20150114.jar" />
-    <pathelement location="${third-party.dir}/java/aether/aether-impl-1.0.0.v20140518.jar" />
-    <pathelement location="${third-party.dir}/java/aether/aether-spi-1.0.2.v20150114.jar" />
-    <pathelement location="${third-party.dir}/java/aether/aether-transport-http-1.0.2.v20150114.jar" />
-    <pathelement location="${third-party.dir}/java/aether/aether-util-1.0.2.v20150114.jar" />
-    <pathelement location="${third-party.dir}/java/maven/maven-aether-provider-3.2.5.jar" />
-    <pathelement location="${third-party.dir}/java/slf4j/slf4j-api-1.7.5.jar" />
   </path>
 
   <target name="javadoc"

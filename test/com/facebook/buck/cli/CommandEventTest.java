@@ -17,33 +17,40 @@
 package com.facebook.buck.cli;
 
 import static com.facebook.buck.event.TestEventConfigerator.configureTestEvent;
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertThat;
 
 import com.google.common.collect.ImmutableList;
 
+import org.hamcrest.Matchers;
 import org.junit.Test;
 
 public class CommandEventTest {
   @Test
   public void testEquals() throws Exception {
-    CommandEvent startedDaemon = configureTestEvent(
+    CommandEvent.Started startedDaemon = configureTestEvent(
         CommandEvent.started("build", ImmutableList.of("sample-app"), true));
-    CommandEvent startedDaemonTwo = configureTestEvent(
+    CommandEvent.Started startedDaemonTwo = configureTestEvent(
         CommandEvent.started("build", ImmutableList.of("sample-app"), true));
-    CommandEvent startedNoDaemon = configureTestEvent(
+    CommandEvent.Started startedNoDaemon = configureTestEvent(
         CommandEvent.started("build", ImmutableList.of("sample-app"), false));
+    CommandEvent.Started startedDifferentName = configureTestEvent(
+        CommandEvent.started("test", ImmutableList.of("sample-app"), false));
     CommandEvent finishedDaemon = configureTestEvent(
-        CommandEvent.finished("build", ImmutableList.of("sample-app"), true, 0));
+        CommandEvent.finished(startedDaemon, 0));
     CommandEvent finishedDaemonFailed = configureTestEvent(
-        CommandEvent.finished("build", ImmutableList.of("sample-app"), true, 1));
+        CommandEvent.finished(startedDaemonTwo, 1));
     CommandEvent finishedDifferentName = configureTestEvent(
-        CommandEvent.finished("test", ImmutableList.of("sample-app"), true, 0));
+        CommandEvent.finished(startedDifferentName, 0));
 
-    assertEquals(startedDaemon, startedDaemonTwo);
+    assertNotEquals(startedDaemon, startedDaemonTwo);
     assertNotEquals(startedDaemon, startedNoDaemon);
+    assertNotEquals(startedDaemon, startedDifferentName);
     assertNotEquals(finishedDaemon, startedDaemon);
     assertNotEquals(finishedDaemon, finishedDaemonFailed);
     assertNotEquals(finishedDaemon, finishedDifferentName);
+    assertThat(startedDaemon.isRelatedTo(finishedDaemon), Matchers.is(true));
+    assertThat(finishedDaemon.isRelatedTo(startedDaemon), Matchers.is(true));
+    assertThat(startedDaemon.isRelatedTo(startedDaemonTwo), Matchers.is(false));
   }
 }

@@ -17,7 +17,7 @@
 package com.facebook.buck.step;
 
 import com.facebook.buck.event.AbstractBuckEvent;
-import com.facebook.buck.event.BuckEvent;
+import com.facebook.buck.event.EventKey;
 import com.facebook.buck.event.LeafEvent;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.base.Objects;
@@ -37,6 +37,7 @@ public abstract class StepEvent extends AbstractBuckEvent implements LeafEvent {
   private final UUID uuid;
 
   protected StepEvent(String shortName, String description, UUID uuid) {
+    super(EventKey.of("StepEvent", uuid));
     this.shortName = shortName;
     this.description = description;
     this.uuid = uuid;
@@ -65,17 +66,6 @@ public abstract class StepEvent extends AbstractBuckEvent implements LeafEvent {
   }
 
   @Override
-  public boolean isRelatedTo(BuckEvent event) {
-    if (!(event instanceof StepEvent)) {
-      return false;
-    }
-
-    StepEvent that = (StepEvent) event;
-
-    return Objects.equal(uuid, that.uuid);
-  }
-
-  @Override
   public int hashCode() {
     return uuid.hashCode();
   }
@@ -85,8 +75,8 @@ public abstract class StepEvent extends AbstractBuckEvent implements LeafEvent {
     return new Started(shortName, description, uuid);
   }
 
-  public static Finished finished(String shortName, String description, UUID uuid, int exitCode) {
-    return new Finished(shortName, description, uuid, exitCode);
+  public static Finished finished(Started started, int exitCode) {
+    return new Finished(started, exitCode);
   }
 
   public static class Started extends StepEvent {
@@ -103,8 +93,8 @@ public abstract class StepEvent extends AbstractBuckEvent implements LeafEvent {
   public static class Finished extends StepEvent {
     private final int exitCode;
 
-    protected Finished(String shortName, String description, UUID uuid, int exitCode) {
-      super(shortName, description, uuid);
+    protected Finished(Started started, int exitCode) {
+      super(started.getShortStepName(), started.getDescription(), started.getUuid());
       this.exitCode = exitCode;
     }
 

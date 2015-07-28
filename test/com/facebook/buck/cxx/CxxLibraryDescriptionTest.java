@@ -160,8 +160,8 @@ public class CxxLibraryDescriptionTest {
       }
 
       @Override
-      public Optional<Linker.LinkableDepType> getPreferredLinkage(CxxPlatform cxxPlatform) {
-        return Optional.absent();
+      public NativeLinkable.Linkage getPreferredLinkage(CxxPlatform cxxPlatform) {
+        return Linkage.ANY;
       }
 
       @Override
@@ -435,7 +435,7 @@ public class CxxLibraryDescriptionTest {
         -1,
         Collections.indexOfSubList(
             args,
-            ImmutableList.copyOf(CxxLinkableEnhancer.iXlinker(linker.soname(soname)))));
+            ImmutableList.copyOf(linker.soname(soname))));
   }
 
   @Test
@@ -566,8 +566,8 @@ public class CxxLibraryDescriptionTest {
       }
 
       @Override
-      public Optional<Linker.LinkableDepType> getPreferredLinkage(CxxPlatform cxxPlatform) {
-        return Optional.absent();
+      public NativeLinkable.Linkage getPreferredLinkage(CxxPlatform cxxPlatform) {
+        return Linkage.ANY;
       }
 
       @Override

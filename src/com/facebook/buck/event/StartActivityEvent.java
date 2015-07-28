@@ -51,18 +51,6 @@ public abstract class StartActivityEvent extends AbstractBuckEvent implements Le
   }
 
   @Override
-  public boolean isRelatedTo(BuckEvent event) {
-    if (!(event instanceof StartActivityEvent)) {
-      return false;
-    }
-
-    StartActivityEvent that = (StartActivityEvent) event;
-
-    return Objects.equal(getBuildTarget(), that.getBuildTarget()) &&
-        Objects.equal(getActivityName(), that.getActivityName());
-  }
-
-  @Override
   public int hashCode() {
     return Objects.hashCode(getActivityName(), getBuildTarget());
   }
@@ -71,8 +59,8 @@ public abstract class StartActivityEvent extends AbstractBuckEvent implements Le
     return new Started(buildTarget, activityName);
   }
 
-  public static Finished finished(BuildTarget buildTarget, String activityName, boolean success) {
-    return new Finished(buildTarget, activityName, success);
+  public static Finished finished(Started started, boolean success) {
+    return new Finished(started, success);
   }
 
   public static class Started extends StartActivityEvent {
@@ -89,9 +77,10 @@ public abstract class StartActivityEvent extends AbstractBuckEvent implements Le
   public static class Finished extends StartActivityEvent {
     private final boolean success;
 
-    protected Finished(BuildTarget buildTarget, String activityName, boolean success) {
-      super(buildTarget, activityName);
+    protected Finished(Started started, boolean success) {
+      super(started.getBuildTarget(), started.getActivityName());
       this.success = success;
+      chain(started);
     }
 
     public boolean isSuccess() {

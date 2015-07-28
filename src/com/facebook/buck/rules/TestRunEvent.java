@@ -17,21 +17,18 @@
 package com.facebook.buck.rules;
 
 import com.facebook.buck.event.AbstractBuckEvent;
-import com.facebook.buck.event.BuckEvent;
+import com.facebook.buck.event.EventKey;
 import com.facebook.buck.test.TestResults;
 import com.facebook.buck.test.selectors.TestSelectorList;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.collect.ImmutableSet;
 
 import java.util.List;
-import java.util.Objects;
 
 public abstract class TestRunEvent extends AbstractBuckEvent {
 
-  private final int secret;
-
   private TestRunEvent(int secret) {
-    this.secret = secret;
+    super(EventKey.of("TestRunEvent", secret));
   }
 
   public static Started started(
@@ -51,16 +48,6 @@ public abstract class TestRunEvent extends AbstractBuckEvent {
       ImmutableSet<String> targets,
       List<TestResults> completedResults) {
     return new Finished(targets.hashCode(), completedResults);
-  }
-
-  @Override
-  public boolean isRelatedTo(BuckEvent event) {
-    if (!(event instanceof TestRunEvent)) {
-      return false;
-    }
-
-    return this.secret == ((TestRunEvent) event).secret &&
-        !Objects.equals(getClass(), event.getClass());
   }
 
   public static class Started extends TestRunEvent {

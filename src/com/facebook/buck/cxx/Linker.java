@@ -16,7 +16,9 @@
 
 package com.facebook.buck.cxx;
 
+import com.facebook.buck.io.FileScrubber;
 import com.facebook.buck.rules.Tool;
+import com.google.common.collect.ImmutableList;
 
 /**
  * An object wrapping a linker, providing its source path and an interface to decorate
@@ -24,11 +26,13 @@ import com.facebook.buck.rules.Tool;
  */
 public interface Linker extends Tool {
 
+  ImmutableList<FileScrubber> getScrubbers();
+
   /**
    * @return the platform-specific way to specify that the library represented by the
    *     given argument should be linked whole.
    */
-  Iterable<String> linkWhole(String arg);
+  Iterable<String> linkWhole(String input);
 
   /**
    * @return the platform-specific way to specify that linker should use the given soname

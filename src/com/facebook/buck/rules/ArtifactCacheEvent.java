@@ -17,7 +17,6 @@
 package com.facebook.buck.rules;
 
 import com.facebook.buck.event.AbstractBuckEvent;
-import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.event.LeafEvent;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.base.CaseFormat;
@@ -66,18 +65,6 @@ public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements Le
   }
 
   @Override
-  public boolean isRelatedTo(BuckEvent event) {
-    if (!(event instanceof ArtifactCacheEvent)) {
-      return false;
-    }
-
-    ArtifactCacheEvent that = (ArtifactCacheEvent) event;
-
-    return Objects.equal(getOperation(), that.getOperation()) &&
-        Objects.equal(getRuleKeys(), that.getRuleKeys());
-  }
-
-  @Override
   public int hashCode() {
     return Objects.hashCode(getOperation(), getRuleKeys(), getThreadId());
   }
@@ -90,14 +77,12 @@ public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements Le
     return new Started(operation, ruleKeys);
   }
 
-  public static Finished finished(Operation operation, ImmutableSet<RuleKey> ruleKeys) {
-    return new Finished(operation, ruleKeys, Optional.<CacheResult>absent());
+  public static Finished finished(Started started) {
+    return new Finished(started, Optional.<CacheResult>absent());
   }
 
-  public static Finished finished(Operation operation,
-      ImmutableSet<RuleKey> ruleKey,
-      CacheResult cacheResult) {
-    return new Finished(operation, ruleKey, Optional.of(cacheResult));
+  public static Finished finished(Started started, CacheResult cacheResult) {
+    return new Finished(started, Optional.of(cacheResult));
   }
 
   public static class Started extends ArtifactCacheEvent {
@@ -121,16 +106,16 @@ public abstract class ArtifactCacheEvent extends AbstractBuckEvent implements Le
     }
 
     protected Finished(
-        Operation operation,
-        ImmutableSet<RuleKey> ruleKey,
+        Started started,
         Optional<CacheResult> cacheResult) {
-      super(operation, ruleKey);
+      super(started.getOperation(), started.getRuleKeys());
       Preconditions.checkArgument(
-          (operation.equals(Operation.FETCH) && cacheResult.isPresent()) ||
-          (!operation.equals(Operation.FETCH) && !cacheResult.isPresent()),
+          (started.getOperation().equals(Operation.FETCH) && cacheResult.isPresent()) ||
+          (!started.getOperation().equals(Operation.FETCH) && !cacheResult.isPresent()),
           "For FETCH operations, cacheResult must be non-null. " +
           "For non-FETCH operations, cacheResult must be null.");
       this.cacheResult = cacheResult;
+      chain(started);
     }
 
     public boolean isSuccess() {

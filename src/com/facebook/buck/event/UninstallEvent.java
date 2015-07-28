@@ -41,17 +41,6 @@ public abstract class UninstallEvent extends AbstractBuckEvent implements LeafEv
   }
 
   @Override
-  public boolean isRelatedTo(BuckEvent event) {
-    if (!(event instanceof UninstallEvent)) {
-      return false;
-    }
-
-    UninstallEvent that = (UninstallEvent) event;
-
-    return Objects.equal(getPackageName(), that.getPackageName());
-  }
-
-  @Override
   public int hashCode() {
     return Objects.hashCode(getPackageName());
   }
@@ -60,8 +49,8 @@ public abstract class UninstallEvent extends AbstractBuckEvent implements LeafEv
     return new Started(packageName);
   }
 
-  public static Finished finished(String packageName, boolean success) {
-    return new Finished(packageName, success);
+  public static Finished finished(Started started, boolean success) {
+    return new Finished(started, success);
   }
 
   public static class Started extends UninstallEvent {
@@ -78,10 +67,10 @@ public abstract class UninstallEvent extends AbstractBuckEvent implements LeafEv
   public static class Finished extends UninstallEvent {
     private final boolean success;
 
-    protected Finished(String packageName, boolean success) {
-      super(packageName);
-
+    protected Finished(Started started, boolean success) {
+      super(started.getPackageName());
       this.success = success;
+      chain(started);
     }
 
     public boolean isSuccess() {

@@ -42,7 +42,6 @@ import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.AbiRule;
 import com.facebook.buck.rules.ActionGraph;
 import com.facebook.buck.rules.BuildContext;
-import com.facebook.buck.rules.BuildDependencies;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
@@ -368,8 +367,6 @@ public class DefaultJavaLibraryTest {
         .build(ruleResolver);
 
     BuildContext buildContext = EasyMock.createMock(BuildContext.class);
-    expect(buildContext.getBuildDependencies()).andReturn(BuildDependencies.FIRST_ORDER_ONLY)
-        .times(2);
     JavaPackageFinder javaPackageFinder = EasyMock.createMock(JavaPackageFinder.class);
     expect(buildContext.getJavaPackageFinder()).andReturn(javaPackageFinder);
 
@@ -937,7 +934,8 @@ public class DefaultJavaLibraryTest {
         /* providedDeps */ ImmutableSortedSet.<BuildRule>of(),
         /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
         DEFAULT_JAVAC_OPTIONS,
-        /* resourcesRoot */ Optional.<Path>absent()) {
+        /* resourcesRoot */ Optional.<Path>absent(),
+        /* mavenCoords */ Optional.<String>absent()) {
       @Override
       public Sha1HashCode getAbiKey() {
         if (partialAbiHash == null) {
@@ -947,33 +945,6 @@ public class DefaultJavaLibraryTest {
         }
       }
     };
-  }
-
-  @Test
-  public void testEmptySuggestBuildFunction() {
-    BuildRuleResolver ruleResolver = new BuildRuleResolver();
-
-    BuildTarget libraryOneTarget = BuildTargetFactory.newInstance("//:libone");
-    JavaLibrary libraryOne = (JavaLibrary) JavaLibraryBuilder
-        .createBuilder(libraryOneTarget)
-        .addSrc(Paths.get("java/src/com/libone/bar.java"))
-        .build(ruleResolver);
-
-    BuildContext context = createSuggestContext(ruleResolver,
-        BuildDependencies.FIRST_ORDER_ONLY);
-
-    ImmutableSetMultimap<JavaLibrary, Path> classpathEntries =
-        libraryOne.getTransitiveClasspathEntries();
-
-    assertEquals(
-        Optional.<JavacStep.SuggestBuildRules>absent(),
-        ((DefaultJavaLibrary) libraryOne).createSuggestBuildFunction(
-            context,
-            classpathEntries,
-            classpathEntries,
-            createJarResolver(/* classToSymbols */ImmutableMap.<Path, String>of())));
-
-    EasyMock.verify(context);
   }
 
   @Test
@@ -1008,8 +979,7 @@ public class DefaultJavaLibraryTest {
         .addDep(parent.getBuildTarget())
         .build(ruleResolver);
 
-    BuildContext context = createSuggestContext(ruleResolver,
-        BuildDependencies.WARN_ON_TRANSITIVE);
+    BuildContext context = createSuggestContext(ruleResolver);
 
     ImmutableSetMultimap<JavaLibrary, Path> transitive =
         ((HasClasspathEntries) parent).getTransitiveClasspathEntries();
@@ -1117,7 +1087,6 @@ public class DefaultJavaLibraryTest {
         ImmutableSet.copyOf(buildable.getTransitiveClasspathEntries().values()),
         ImmutableSet.copyOf(buildable.getDeclaredClasspathEntries().values()),
         DEFAULT_JAVAC_OPTIONS,
-        BuildDependencies.FIRST_ORDER_ONLY,
         Optional.<JavacStep.SuggestBuildRules>absent(),
         stepsBuilder,
         libraryOneTarget);
@@ -1149,7 +1118,6 @@ public class DefaultJavaLibraryTest {
         ImmutableSet.copyOf(buildable.getTransitiveClasspathEntries().values()),
         ImmutableSet.copyOf(buildable.getDeclaredClasspathEntries().values()),
         buildable.getJavacOptions(),
-        BuildDependencies.FIRST_ORDER_ONLY,
         Optional.<JavacStep.SuggestBuildRules>absent(),
         stepsBuilder,
         libraryOneTarget);
@@ -1223,14 +1191,11 @@ public class DefaultJavaLibraryTest {
     };
   }
 
-  private BuildContext createSuggestContext(BuildRuleResolver ruleResolver,
-                                            BuildDependencies buildDependencies) {
+  private BuildContext createSuggestContext(BuildRuleResolver ruleResolver) {
     ActionGraph graph = RuleMap.createGraphFromBuildRules(ruleResolver);
 
     BuildContext context = EasyMock.createMock(BuildContext.class);
     expect(context.getActionGraph()).andReturn(graph).anyTimes();
-
-    expect(context.getBuildDependencies()).andReturn(buildDependencies).anyTimes();
 
     replay(context);
 
@@ -1261,7 +1226,6 @@ public class DefaultJavaLibraryTest {
         .setClock(new DefaultClock())
         .setBuildId(new BuildId())
         .setArtifactCache(new NoopArtifactCache())
-        .setBuildDependencies(BuildDependencies.TRANSITIVE)
         .setJavaPackageFinder(EasyMock.createMock(JavaPackageFinder.class))
         .setAndroidBootclasspathSupplier(
             BuildContext.createBootclasspathSupplier(Suppliers.ofInstance(platformTarget)))
@@ -1384,6 +1348,7 @@ public class DefaultJavaLibraryTest {
           /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
           options.build(),
           /* resourcesRoot */ Optional.<Path>absent(),
+          /* mavenCoords */ Optional.<String>absent(),
           /* manifestFile */ Optional.<SourcePath>absent(),
           /* isPrebuiltAar */ false);
     }

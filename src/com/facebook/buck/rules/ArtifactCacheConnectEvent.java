@@ -17,7 +17,6 @@
 package com.facebook.buck.rules;
 
 import com.facebook.buck.event.AbstractBuckEvent;
-import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.event.LeafEvent;
 
 /**
@@ -37,14 +36,6 @@ public abstract class ArtifactCacheConnectEvent extends AbstractBuckEvent implem
   }
 
   @Override
-  public boolean isRelatedTo(BuckEvent event) {
-    if (!(event instanceof ArtifactCacheConnectEvent)) {
-      return false;
-    }
-    return true;
-  }
-
-  @Override
   public int hashCode() {
     return super.hashCode();
   }
@@ -53,8 +44,8 @@ public abstract class ArtifactCacheConnectEvent extends AbstractBuckEvent implem
     return new Started();
   }
 
-  public static Finished finished() {
-    return new Finished();
+  public static Finished finished(Started started) {
+    return new Finished(started);
   }
 
   public static class Started extends ArtifactCacheConnectEvent {
@@ -65,6 +56,11 @@ public abstract class ArtifactCacheConnectEvent extends AbstractBuckEvent implem
   }
 
   public static class Finished extends ArtifactCacheConnectEvent {
+
+    public Finished(Started started) {
+      chain(started);
+    }
+
     @Override
     public String getEventName() {
       return "ArtifactCacheConnectFinished";

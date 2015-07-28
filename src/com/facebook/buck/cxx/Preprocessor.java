@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-present Facebook, Inc.
+ * Copyright 2015-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may
  * not use this file except in compliance with the License. You may obtain
@@ -14,15 +14,17 @@
  * under the License.
  */
 
-package com.facebook.buck.rules;
+package com.facebook.buck.cxx;
 
-public enum BuildDependencies {
-  FIRST_ORDER_ONLY,
-  WARN_ON_TRANSITIVE,
-  TRANSITIVE,
-  ;
+import com.facebook.buck.rules.Tool;
+import com.google.common.base.Function;
+import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableList;
 
-  public static final BuildDependencies getDefault() {
-    return BuildDependencies.FIRST_ORDER_ONLY;
-  }
+public interface Preprocessor extends Tool {
+
+  Optional<ImmutableList<String>> getExtraFlags();
+
+  Optional<Function<String, Iterable<String>>> getExtraLineProcessor();
+
 }

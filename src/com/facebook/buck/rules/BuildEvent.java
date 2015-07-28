@@ -17,7 +17,6 @@
 package com.facebook.buck.rules;
 
 import com.facebook.buck.event.AbstractBuckEvent;
-import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.model.BuildTarget;
 import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
@@ -33,8 +32,8 @@ public abstract class BuildEvent extends AbstractBuckEvent {
     return new Started(ImmutableSet.copyOf(buildArgs));
   }
 
-  public static Finished finished(Iterable<String> buildArgs, int exitCode) {
-    return new Finished(ImmutableSet.copyOf(buildArgs), exitCode);
+  public static Finished finished(Started started, int exitCode) {
+    return new Finished(started, exitCode);
   }
 
   public static RuleCountCalculated ruleCountCalculated(
@@ -66,19 +65,9 @@ public abstract class BuildEvent extends AbstractBuckEvent {
       return Objects.hashCode(buildArgs);
     }
 
-    @Override
-    public boolean isRelatedTo(BuckEvent event) {
-      if (!(event instanceof Started)) {
-        return false;
-      }
-      Started that = (Started) event;
-      return Objects.equal(buildArgs, that.buildArgs);
-    }
-
     public ImmutableSet<String> getBuildArgs() {
       return buildArgs;
     }
-
   }
 
   public static class Finished extends BuildEvent {
@@ -86,9 +75,10 @@ public abstract class BuildEvent extends AbstractBuckEvent {
     private final ImmutableSet<String> buildArgs;
     private final int exitCode;
 
-    protected Finished(ImmutableSet<String> buildArgs, int exitCode) {
-      this.buildArgs = buildArgs;
+    protected Finished(Started started, int exitCode) {
+      this.buildArgs = started.getBuildArgs();
       this.exitCode = exitCode;
+      chain(started);
     }
 
     public ImmutableSet<String> getBuildArgs() {
@@ -107,15 +97,6 @@ public abstract class BuildEvent extends AbstractBuckEvent {
     @Override
     protected String getValueString() {
       return String.format("exit code: %d", exitCode);
-    }
-
-    @Override
-    public boolean isRelatedTo(BuckEvent event) {
-      if (!(event instanceof Finished)) {
-        return false;
-      }
-      Finished that = (Finished) event;
-      return Objects.equal(exitCode, that.exitCode);
     }
 
     @Override
@@ -151,17 +132,6 @@ public abstract class BuildEvent extends AbstractBuckEvent {
     @Override
     protected String getValueString() {
       return Joiner.on(", ").join(buildRules);
-    }
-
-    @Override
-    public boolean isRelatedTo(BuckEvent event) {
-      if (!(event instanceof RuleCountCalculated)) {
-        return false;
-      }
-      RuleCountCalculated that = (RuleCountCalculated) event;
-      return
-          Objects.equal(buildRules, that.buildRules) &&
-          Objects.equal(numRules, that.numRules);
     }
 
     @Override

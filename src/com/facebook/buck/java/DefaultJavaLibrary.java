@@ -31,7 +31,6 @@ import com.facebook.buck.rules.AbiRule;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
-import com.facebook.buck.rules.BuildDependencies;
 import com.facebook.buck.rules.BuildOutputInitializer;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleDependencyVisitors;
@@ -112,6 +111,8 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   private final ImmutableSortedSet<SourcePath> resources;
   @AddToRuleKey(stringify = true)
   private final Optional<Path> resourcesRoot;
+  @AddToRuleKey
+  private final Optional<String> mavenCoords;
   private final Optional<Path> outputJar;
   @AddToRuleKey
   private final Optional<SourcePath> proguardConfig;
@@ -184,7 +185,8 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       ImmutableSortedSet<BuildRule> providedDeps,
       ImmutableSet<Path> additionalClasspathEntries,
       JavacOptions javacOptions,
-      Optional<Path> resourcesRoot) {
+      Optional<Path> resourcesRoot,
+      Optional<String> mavenCoords) {
     super(params, resolver);
 
     // Exported deps are meant to be forwarded onto the CLASSPATH for dependents,
@@ -207,6 +209,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
     this.additionalClasspathEntries = additionalClasspathEntries;
     this.javacOptions = javacOptions;
     this.resourcesRoot = resourcesRoot;
+    this.mavenCoords = mavenCoords;
 
     if (!srcs.isEmpty() || !resources.isEmpty()) {
       this.outputJar = Optional.of(getOutputJarPath(getBuildTarget()));
@@ -260,7 +263,6 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       ImmutableSet<Path> transitiveClasspathEntries,
       ImmutableSet<Path> declaredClasspathEntries,
       JavacOptions javacOptions,
-      BuildDependencies buildDependencies,
       Optional<JavacStep.SuggestBuildRules> suggestBuildRules,
       ImmutableList.Builder<Step> commands,
       BuildTarget target) {
@@ -283,11 +285,9 @@ public class DefaultJavaLibrary extends AbstractBuildRule
           workingDirectory,
           getJavaSrcs(),
           Optional.of(pathToSrcsList),
-          transitiveClasspathEntries,
           declaredClasspathEntries,
           javacOptions,
           target,
-          buildDependencies,
           suggestBuildRules,
           getResolver());
 
@@ -526,7 +526,6 @@ public class DefaultJavaLibrary extends AbstractBuildRule
         transitive,
         declared,
         javacOptions,
-        context.getBuildDependencies(),
         suggestBuildRule,
         steps,
         target);
@@ -630,10 +629,6 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       final ImmutableSetMultimap<JavaLibrary, Path> transitiveClasspathEntries,
       final ImmutableSetMultimap<JavaLibrary, Path> declaredClasspathEntries,
       final JarResolver jarResolver) {
-
-    if (context.getBuildDependencies() != BuildDependencies.WARN_ON_TRANSITIVE) {
-      return Optional.absent();
-    }
 
     final Supplier<ImmutableList<JavaLibrary>> sortedTransitiveNotDeclaredDeps =
         Suppliers.memoize(
@@ -745,6 +740,10 @@ public class DefaultJavaLibrary extends AbstractBuildRule
             Sets.difference(
                 Sets.union(getDeclaredDeps(), exportedDeps),
                 providedDeps)));
+  }
+
+  public Optional<String> getMavenCoords() {
+    return mavenCoords;
   }
 
   @Override

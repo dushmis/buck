@@ -17,7 +17,6 @@
 package com.facebook.buck.file;
 
 import com.facebook.buck.event.AbstractBuckEvent;
-import com.facebook.buck.event.BuckEvent;
 
 import java.net.URI;
 
@@ -34,20 +33,12 @@ public abstract class DownloadEvent extends AbstractBuckEvent {
     return uri.toString();
   }
 
-  @Override
-  public boolean isRelatedTo(BuckEvent event) {
-    if (!(event instanceof DownloadEvent)) {
-      return false;
-    }
-    return uri.equals(((DownloadEvent) event).uri);
-  }
-
   public static Started started(URI uri) {
     return new Started(uri);
   }
 
-  public static Finished finished(URI uri) {
-    return new Finished(uri);
+  public static Finished finished(Started started) {
+    return new Finished(started);
   }
 
   public static class Started extends DownloadEvent {
@@ -62,8 +53,9 @@ public abstract class DownloadEvent extends AbstractBuckEvent {
   }
 
   public static class Finished extends DownloadEvent {
-    public Finished(URI uri) {
-      super(uri);
+    public Finished(Started started) {
+      super(started.uri);
+      chain(started);
     }
 
     @Override

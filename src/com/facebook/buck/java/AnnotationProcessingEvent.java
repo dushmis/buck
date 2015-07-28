@@ -17,11 +17,9 @@
 package com.facebook.buck.java;
 
 import com.facebook.buck.event.AbstractBuckEvent;
-import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.event.LeafEvent;
 import com.facebook.buck.model.BuildTarget;
 import com.google.common.base.CaseFormat;
-import com.google.common.base.Objects;
 
 /**
  * Base class for events about Java annotation processing.
@@ -88,23 +86,6 @@ public abstract class AnnotationProcessingEvent extends AbstractBuckEvent implem
         CaseFormat.UPPER_UNDERSCORE.to(CaseFormat.LOWER_CAMEL, operation.toString());
   }
 
-  @Override
-  public boolean isRelatedTo(BuckEvent event) {
-    if (!(event instanceof AnnotationProcessingEvent)) {
-      return false;
-    }
-
-    AnnotationProcessingEvent that = (AnnotationProcessingEvent) event;
-
-    return Objects.equal(getBuildTarget(), that.getBuildTarget()) &&
-        Objects.equal(getAnnotationProcessorName(), that.getAnnotationProcessorName()) &&
-        Objects.equal(getOperation(), that.getOperation()) &&
-        getRound() == that.getRound();
-
-    // We don't include isLastRound in the comparison because it's a property of the round, and
-    // we already compare the round
-  }
-
   public static Started started(
       BuildTarget buildTarget,
       String annotationProcessorName,
@@ -114,13 +95,8 @@ public abstract class AnnotationProcessingEvent extends AbstractBuckEvent implem
     return new Started(buildTarget, annotationProcessorName, operation, round, isLastRound);
   }
 
-  public static Finished finished(
-      BuildTarget buildTarget,
-      String annotationProcessorName,
-      Operation operation,
-      int round,
-      boolean isLastRound) {
-    return new Finished(buildTarget, annotationProcessorName, operation, round, isLastRound);
+  public static Finished finished(Started started) {
+    return new Finished(started);
   }
 
   public static class Started extends AnnotationProcessingEvent {
@@ -143,13 +119,14 @@ public abstract class AnnotationProcessingEvent extends AbstractBuckEvent implem
   }
 
   public static class Finished extends AnnotationProcessingEvent {
-    public Finished(
-        BuildTarget buildTarget,
-        String annotationProcessorName,
-        Operation operation,
-        int round,
-        boolean isLastRound) {
-      super(buildTarget, annotationProcessorName, operation, round, isLastRound);
+    public Finished(Started started) {
+      super(
+          started.getBuildTarget(),
+          started.getAnnotationProcessorName(),
+          started.getOperation(),
+          started.getRound(),
+          started.isLastRound());
+      chain(started);
     }
 
     @Override

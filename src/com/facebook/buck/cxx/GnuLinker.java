@@ -16,6 +16,7 @@
 
 package com.facebook.buck.cxx;
 
+import com.facebook.buck.io.FileScrubber;
 import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -45,13 +46,18 @@ public class GnuLinker implements Linker {
   }
 
   @Override
-  public Iterable<String> linkWhole(String arg) {
-    return ImmutableList.of("--whole-archive", arg, "--no-whole-archive");
+  public ImmutableList<FileScrubber> getScrubbers() {
+    return ImmutableList.of();
+  }
+
+  @Override
+  public Iterable<String> linkWhole(String input) {
+    return ImmutableList.of("-Wl,--whole-archive", input, "-Wl,--no-whole-archive");
   }
 
   @Override
   public Iterable<String> soname(String arg) {
-    return ImmutableList.of("-soname", arg);
+    return Linkers.iXlinker("-soname", arg);
   }
 
   @Override

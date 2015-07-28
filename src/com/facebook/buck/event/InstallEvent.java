@@ -43,17 +43,6 @@ public abstract class InstallEvent extends AbstractBuckEvent implements LeafEven
   }
 
   @Override
-  public boolean isRelatedTo(BuckEvent event) {
-    if (!(event instanceof InstallEvent)) {
-      return false;
-    }
-
-    InstallEvent that = (InstallEvent) event;
-
-    return Objects.equal(getBuildTarget(), that.getBuildTarget());
-  }
-
-  @Override
   public int hashCode() {
     return getBuildTarget().hashCode();
   }
@@ -62,8 +51,8 @@ public abstract class InstallEvent extends AbstractBuckEvent implements LeafEven
     return new Started(buildTarget);
   }
 
-  public static Finished finished(BuildTarget buildTarget, boolean success, Optional<Long> pid) {
-    return new Finished(buildTarget, success, pid);
+  public static Finished finished(Started started, boolean success, Optional<Long> pid) {
+    return new Finished(started, success, pid);
   }
 
   public static class Started extends InstallEvent {
@@ -84,10 +73,11 @@ public abstract class InstallEvent extends AbstractBuckEvent implements LeafEven
     private final boolean success;
     private final long pid;
 
-    protected Finished(BuildTarget buildTarget, boolean success, Optional<Long> pid) {
-      super(buildTarget);
+    protected Finished(Started started, boolean success, Optional<Long> pid) {
+      super(started.getBuildTarget());
       this.success = success;
       this.pid = pid.or(invalidPid);
+      chain(started);
     }
 
     public boolean isSuccess() {

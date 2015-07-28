@@ -39,7 +39,7 @@ interface AbstractCxxPlatform {
   Tool getAs();
   List<String> getAsflags();
 
-  Tool getAspp();
+  Preprocessor getAspp();
   List<String> getAsppflags();
 
   Compiler getCc();
@@ -48,14 +48,11 @@ interface AbstractCxxPlatform {
   Compiler getCxx();
   List<String> getCxxflags();
 
-  Tool getCpp();
+  Preprocessor getCpp();
   List<String> getCppflags();
 
-  Tool getCxxpp();
+  Preprocessor getCxxpp();
   List<String> getCxxppflags();
-
-  Linker getCxxld();
-  List<String> getCxxldflags();
 
   Linker getLd();
   List<String> getLdflags();
