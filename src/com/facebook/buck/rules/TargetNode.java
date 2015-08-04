@@ -220,13 +220,28 @@ public class TargetNode<T> implements Comparable<TargetNode<?>>, HasBuildTarget 
       }
 
       Optional<Path> ancestor = buildFileTree.getBasePathOfAncestorTarget(path);
-      if (!ancestor.isPresent() || !ancestor.get().equals(basePath)) {
+      // It should not be possible for us to ever get an Optional.absent() for this because that
+      // would require one of two conditions:
+      // 1) The source path references parent directories, which we check for above.
+      // 2) You don't have a build file above this file, which is impossible if it is referenced in
+      //    a build file *unless* you happen to be referencing something that is ignored.
+      if (!ancestor.isPresent()) {
         throw new InvalidSourcePathInputException(
-            "'%s' in '%s' crosses a buck package boundary. Find the nearest BUCK file in the " +
-                "directory that contains this file and refer to the rule referencing the " +
-                "desired file.",
+            "'%s' in '%s' crosses a buck package boundary.  This is probably caused by " +
+                "specifying one of the folders in '%s' in your .buckconfig under `project.ignore`.",
             path,
-            getBuildTarget());
+            getBuildTarget(),
+            path);
+      }
+      if (!ancestor.get().equals(basePath)) {
+        throw new InvalidSourcePathInputException(
+            "'%s' in '%s' crosses a buck package boundary.  This file is owned by '%s'.  Find " +
+                "the owning rule that references '%s', and use a reference to that rule instead " +
+                "of referencing the desired file directly.",
+            path,
+            getBuildTarget(),
+            ancestor.get(),
+            path);
       }
     }
 

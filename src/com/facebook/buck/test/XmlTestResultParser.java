@@ -16,12 +16,12 @@
 
 package com.facebook.buck.test;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.facebook.buck.test.result.type.ResultType;
 import com.facebook.buck.util.XmlDomParser;
-import com.google.common.base.Charsets;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
-import com.google.common.io.Files;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -29,9 +29,10 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 public class XmlTestResultParser {
@@ -39,8 +40,50 @@ public class XmlTestResultParser {
   /** Utility Class:  Do not instantiate. */
   private XmlTestResultParser() {}
 
-  public static TestCaseSummary parse(File xmlFile) throws IOException {
-    String xmlFileContents = Files.toString(xmlFile, Charsets.UTF_8);
+  public static TestCaseSummary parseAndroid(Path xmlFile, String serialNumber)
+      throws IOException, SAXException {
+    String fileContents = new String(Files.readAllBytes(xmlFile), UTF_8);
+    Document doc = XmlDomParser.parse(new InputSource(new StringReader(fileContents)),
+        /* namespaceAware */ true);
+    Element root = doc.getDocumentElement();
+    Preconditions.checkState("testsuite".equals(root.getTagName()));
+    String testCaseName = root.getAttribute("name") + " (" + serialNumber + ")";
+
+    NodeList testElements = doc.getElementsByTagName("testcase");
+    List<TestResultSummary> testResults = Lists.newArrayListWithCapacity(testElements.getLength());
+    for (int i = 0; i < testElements.getLength(); i++) {
+      Element node = (Element) testElements.item(i);
+      String testName = node.getAttribute("name");
+      double time = Float.parseFloat(node.getAttribute("time"));
+
+      String message = null;
+      String stacktrace = null;
+      String stdOut = null;
+      String stdErr = null;
+      ResultType type = ResultType.SUCCESS;
+
+      NodeList failure = node.getElementsByTagName("failure");
+      if (failure.getLength() == 1) {
+        stdOut = failure.item(0).getTextContent();
+        type = ResultType.FAILURE;
+      }
+      TestResultSummary testResult = new TestResultSummary(
+          testCaseName,
+          testName,
+          type,
+          Math.round(time * 1000),
+          message,
+          stacktrace,
+          stdOut,
+          stdErr);
+      testResults.add(testResult);
+    }
+
+    return new TestCaseSummary(testCaseName, testResults);
+  }
+
+  public static TestCaseSummary parse(Path xmlFile) throws IOException {
+    String xmlFileContents = new String(Files.readAllBytes(xmlFile), UTF_8);
 
     try {
       return doParse(xmlFileContents);
@@ -108,9 +151,8 @@ public class XmlTestResultParser {
     return new TestCaseSummary(testCaseName, testResults);
   }
 
-  private static String createDetailedExceptionMessage(File xmlFile, String xmlFileContents) {
-    String message = "Error parsing test result data in " + xmlFile.getAbsolutePath() + ".\n" +
+  private static String createDetailedExceptionMessage(Path xmlFile, String xmlFileContents) {
+    return "Error parsing test result data in " + xmlFile.toAbsolutePath() + ".\n" +
         "File contents:\n" + xmlFileContents;
-    return message;
   }
 }

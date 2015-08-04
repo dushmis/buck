@@ -28,7 +28,6 @@ import com.facebook.buck.timing.Clock;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Charsets;
 import com.google.common.base.Function;
-import com.google.common.base.Functions;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -47,10 +46,10 @@ import com.google.common.io.ByteStreams;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonPrimitive;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -133,9 +132,6 @@ public class BuildInfoRecorder {
   private ImmutableMap<String, String> getBuildMetadata() throws IOException {
     return ImmutableMap.<String, String>builder()
         .put(
-            BuildInfo.METADATA_KEY_FOR_RECORDED_PATHS,
-            toJson(Iterables.transform(getRecordedPaths(), Functions.toStringFunction())))
-        .put(
             BuildInfo.METADATA_KEY_FOR_ADDITIONAL_INFO,
             formatAdditionalArtifactInfo(
                 ImmutableMap.<String, String>builder()
@@ -191,7 +187,7 @@ public class BuildInfoRecorder {
     addMetadata(key, toJson(value));
   }
 
-  private ImmutableSortedSet<Path> getRecordedPaths() throws IOException {
+  public ImmutableSortedSet<Path> getRecordedPaths() throws IOException {
     final ImmutableSortedSet.Builder<Path> paths = ImmutableSortedSet.naturalOrder();
 
     // Add metadata files.
@@ -269,12 +265,12 @@ public class BuildInfoRecorder {
         ruleKeys);
     eventBus.post(started);
 
-    File zip;
+    Path zip;
     ImmutableSet<Path> pathsToIncludeInZip = ImmutableSet.of();
     ImmutableMap<String, String> buildMetadata;
     try {
       pathsToIncludeInZip = getRecordedPaths();
-      zip = File.createTempFile(
+      zip = Files.createTempFile(
           "buck_artifact_" + MoreFiles.sanitize(buildTarget.getShortName()),
           ".zip");
       buildMetadata = getBuildMetadata();
@@ -291,7 +287,11 @@ public class BuildInfoRecorder {
 
     // Store the artifact, including any additional metadata.
     artifactCache.store(ruleKeys, buildMetadata, zip);
-    zip.delete();
+    try {
+      Files.delete(zip);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   /**
@@ -300,7 +300,7 @@ public class BuildInfoRecorder {
    */
   public CacheResult fetchArtifactForBuildable(
       RuleKey ruleKey,
-      File outputFile,
+      Path outputFile,
       ArtifactCache artifactCache)
       throws InterruptedException {
     return artifactCache.fetch(ruleKey, outputFile);

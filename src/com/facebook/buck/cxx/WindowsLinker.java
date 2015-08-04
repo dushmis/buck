@@ -17,12 +17,14 @@
 package com.facebook.buck.cxx;
 
 import com.facebook.buck.io.FileScrubber;
+import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.RuleKey;
-import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.Tool;
+import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSortedSet;
+
+import java.nio.file.Path;
 
 /**
  * A specialization of {@link Linker} containing information specific to the Windows implementation.
@@ -35,8 +37,8 @@ public class WindowsLinker implements Linker {
   }
 
   @Override
-  public ImmutableSortedSet<SourcePath> getInputs() {
-    return tool.getInputs();
+  public ImmutableCollection<BuildRule> getInputs(SourcePathResolver resolver) {
+    return tool.getInputs(resolver);
   }
 
   @Override
@@ -45,7 +47,7 @@ public class WindowsLinker implements Linker {
   }
 
   @Override
-  public ImmutableList<FileScrubber> getScrubbers() {
+  public ImmutableList<FileScrubber> getScrubbers(Path linkingDirectory) {
     return ImmutableList.of();
   }
 

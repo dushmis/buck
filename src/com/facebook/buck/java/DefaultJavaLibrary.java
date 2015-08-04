@@ -101,7 +101,7 @@ import javax.annotation.Nullable;
  */
 public class DefaultJavaLibrary extends AbstractBuildRule
     implements JavaLibrary, AbiRule, HasClasspathEntries, ExportDependencies,
-    InitializableFromDisk<JavaLibrary.Data>, AndroidPackageable {
+    InitializableFromDisk<JavaLibrary.Data>, AndroidPackageable, MavenPublishable {
 
   private static final BuildableProperties OUTPUT_TYPE = new BuildableProperties(LIBRARY);
 
@@ -153,7 +153,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
     public ImmutableSet<String> resolve(ProjectFilesystem filesystem, Path relativeClassPath) {
       ImmutableSet.Builder<String> topLevelSymbolsBuilder = ImmutableSet.builder();
       try {
-        Path classPath = filesystem.getFileForRelativePath(relativeClassPath).toPath();
+        Path classPath = filesystem.getPathForRelativePath(relativeClassPath);
         ClassLoader loader = URLClassLoader.newInstance(
             new URL[]{classPath.toUri().toURL()},
           /* parent */ null);
@@ -723,7 +723,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       List<String> postprocessClassesCommands,
       Path outputDirectory) {
     for (final String postprocessClassesCommand : postprocessClassesCommands) {
-      BashStep bashStep = new BashStep(postprocessClassesCommand + " " + outputDirectory);
+      BashStep bashStep = new BashStep(postprocessClassesCommand, outputDirectory.toString());
       commands.add(bashStep);
     }
   }
@@ -742,6 +742,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
                 providedDeps)));
   }
 
+  @Override
   public Optional<String> getMavenCoords() {
     return mavenCoords;
   }

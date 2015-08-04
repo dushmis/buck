@@ -79,13 +79,13 @@ public class CxxLink
         .setReflectively(
             "args",
             FluentIterable.from(args)
-                .transform(sanitizer.sanitize(Optional.<Path>absent(), /* expandPaths */ false))
+                .transform(sanitizer.sanitize(Optional.<Path>absent()))
                 .toList())
         .setReflectively(
             "frameworkRoots",
             FluentIterable.from(frameworkRoots)
                 .transform(Functions.toStringFunction())
-                .transform(sanitizer.sanitize(Optional.<Path>absent(), /* expandPaths */ false))
+                .transform(sanitizer.sanitize(Optional.<Path>absent()))
                 .toList());
   }
 
@@ -101,7 +101,7 @@ public class CxxLink
             output,
             args,
             frameworkRoots),
-        new FileScrubberStep(output, linker.getScrubbers()));
+        new FileScrubberStep(output, linker.getScrubbers(context.getProjectRoot())));
   }
 
   @Override

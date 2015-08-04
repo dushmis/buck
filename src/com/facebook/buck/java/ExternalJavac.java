@@ -19,6 +19,7 @@ package com.facebook.buck.java;
 
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.ExecutionContext;
@@ -38,8 +39,10 @@ import com.google.common.base.Strings;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.FluentIterable;
+import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -81,6 +84,16 @@ public class ExternalJavac implements Javac {
             }
           }
         });
+  }
+
+  @Override
+  public ImmutableCollection<BuildRule> getInputs(SourcePathResolver resolver) {
+    return ImmutableSortedSet.of();
+  }
+
+  @Override
+  public ImmutableList<String> getCommandPrefix(SourcePathResolver resolver) {
+    return ImmutableList.<String>builder().add(pathToJavac.toString()).build();
   }
 
   public static Javac createJavac(Path pathToJavac) {
@@ -220,9 +233,10 @@ public class ExternalJavac implements Javac {
     // Add sources file or sources list to command
     ImmutableList.Builder<Path> sources = ImmutableList.builder();
     for (Path path : javaSourceFilePaths) {
-      if (path.toString().endsWith(".java")) {
+      String pathString = path.toString();
+      if (pathString.endsWith(".java")) {
         sources.add(path);
-      } else if (path.toString().endsWith(SRC_ZIP)) {
+      } else if (pathString.endsWith(SRC_ZIP) || pathString.endsWith(SRC_JAR)) {
         if (!workingDirectory.isPresent()) {
           throw new HumanReadableException(
               "Attempting to compile target %s which specified a .src.zip input %s but no " +

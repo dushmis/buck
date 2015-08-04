@@ -22,23 +22,27 @@ import static org.junit.Assert.assertThat;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.io.CharStreams;
 
-import java.io.File;
+import org.hamcrest.Matchers;
+
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.file.Path;
 import java.util.Enumeration;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 public class ZipInspector {
 
-  private final File zipFile;
+  private final Path zipFile;
   private final ImmutableSet<String> zipFileEntries;
 
-  public ZipInspector(File zip) throws IOException {
+  public ZipInspector(Path zip) throws IOException {
     this.zipFile = Preconditions.checkNotNull(zip);
 
     final ImmutableSet.Builder<String> builder = ImmutableSet.builder();
-    try (ZipFile zipFile = new ZipFile(zip)) {
+    try (ZipFile zipFile = new ZipFile(zip.toFile())) {
       Enumeration<? extends ZipEntry> entries = zipFile.entries();
       while (entries.hasMoreElements()) {
         builder.add(entries.nextElement().getName());
@@ -61,12 +65,21 @@ public class ZipInspector {
     }
   }
 
+  public void assertFileContents(String pathRelativeToRoot, String expected) throws IOException {
+    try (ZipFile zipFile = new ZipFile(this.zipFile.toFile())) {
+      ZipEntry entry = zipFile.getEntry(pathRelativeToRoot);
+      assertThat(
+          CharStreams.toString(new InputStreamReader(zipFile.getInputStream(entry))),
+          Matchers.equalTo(expected));
+    }
+  }
+
   public ImmutableSet<String> getZipFileEntries() {
     return zipFileEntries;
   }
 
   public long getCrc(String pathRelativeToRoot) throws IOException {
-    try (ZipFile zipFile = new ZipFile(this.zipFile)) {
+    try (ZipFile zipFile = new ZipFile(this.zipFile.toFile())) {
       ZipEntry entry = zipFile.getEntry(pathRelativeToRoot);
       long crc = entry.getCrc();
       Preconditions.checkState(crc != -1,
@@ -77,7 +90,7 @@ public class ZipInspector {
   }
 
   public long getSize(String pathRelativeToRoot) throws IOException {
-    try (ZipFile zipFile = new ZipFile(this.zipFile)) {
+    try (ZipFile zipFile = new ZipFile(this.zipFile.toFile())) {
       ZipEntry entry = zipFile.getEntry(pathRelativeToRoot);
       long size = entry.getSize();
       Preconditions.checkState(size != -1,

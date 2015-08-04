@@ -30,6 +30,7 @@ import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.ImplicitDepsInferringDescription;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.SymlinkTree;
+import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.base.Optional;
@@ -89,6 +90,7 @@ public class CxxBinaryDescription implements
 
   @Override
   public <A extends Arg> BuildRule createBuildRule(
+      TargetGraph targetGraph,
       BuildRuleParams params,
       BuildRuleResolver resolver,
       A args) {
@@ -134,6 +136,7 @@ public class CxxBinaryDescription implements
           .paramsWithoutCompilationDatabaseFlavor(params);
       CxxLinkAndCompileRules cxxLinkAndCompileRules = CxxDescriptionEnhancer
           .createBuildRulesForCxxBinaryDescriptionArg(
+              targetGraph,
               paramsWithoutCompilationDatabaseFlavor,
               resolver,
               cxxPlatform,
@@ -148,6 +151,7 @@ public class CxxBinaryDescription implements
 
     CxxLinkAndCompileRules cxxLinkAndCompileRules =
         CxxDescriptionEnhancer.createBuildRulesForCxxBinaryDescriptionArg(
+            targetGraph,
             params,
             resolver,
             cxxPlatform,
@@ -165,8 +169,7 @@ public class CxxBinaryDescription implements
     //     By using another BuildRule, we can keep the original target graph dependency tree while
     //     preventing it from affecting link parallelism.
     return new CxxBinary(
-        params.appendExtraDeps(
-            pathResolver.filterBuildRuleInputs(cxxLinkAndCompileRules.executable.getInputs())),
+        params.appendExtraDeps(cxxLinkAndCompileRules.executable.getInputs(pathResolver)),
         resolver,
         pathResolver,
         cxxLinkAndCompileRules.cxxLink.getOutput(),

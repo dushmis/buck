@@ -38,6 +38,7 @@ import com.facebook.buck.step.fs.CopyStep;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.facebook.buck.step.fs.RmStep;
 import com.facebook.buck.zip.ZipStep;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -53,30 +54,30 @@ public class AndroidAar extends AbstractBuildRule implements HasClasspathEntries
   private final Path temp;
   private final AndroidManifest manifest;
   private final AndroidResource androidResource;
-  private final AssembleDirectories assembleResourceDirectories;
-  private final AssembleDirectories assembleAssetsDirectories;
+  private final Path assembledResourceDirectory;
+  private final Path assembledAssetsDirectory;
+  private final Optional<Path> assembledNativeLibs;
   private final ImmutableSet<SourcePath> nativeLibAssetsDirectories;
-  private final ImmutableSet<SourcePath> nativeLibsDirectories;
 
   public AndroidAar(
       BuildRuleParams params,
       SourcePathResolver resolver,
       AndroidManifest manifest,
       AndroidResource androidResource,
-      AssembleDirectories assembleResourceDirectories,
-      AssembleDirectories assembleAssetsDirectories,
-      ImmutableSet<SourcePath> nativeLibAssetsDirectories,
-      ImmutableSet<SourcePath> nativeLibsDirectories) {
+      Path assembledResourceDirectory,
+      Path assembledAssetsDirectory,
+      Optional<Path> assembledNativeLibs,
+      ImmutableSet<SourcePath> nativeLibAssetsDirectories) {
     super(params, resolver);
     BuildTarget buildTarget = params.getBuildTarget();
     this.pathToOutputFile = BuildTargets.getGenPath(buildTarget, "%s.aar");
     this.temp = BuildTargets.getScratchPath(buildTarget, "__temp__%s");
     this.manifest = manifest;
     this.androidResource = androidResource;
-    this.assembleAssetsDirectories = assembleAssetsDirectories;
-    this.assembleResourceDirectories = assembleResourceDirectories;
+    this.assembledAssetsDirectory = assembledAssetsDirectory;
+    this.assembledResourceDirectory = assembledResourceDirectory;
+    this.assembledNativeLibs = assembledNativeLibs;
     this.nativeLibAssetsDirectories = nativeLibAssetsDirectories;
-    this.nativeLibsDirectories = nativeLibsDirectories;
   }
 
   @Override
@@ -105,11 +106,11 @@ public class AndroidAar extends AbstractBuildRule implements HasClasspathEntries
 
     // put res/ and assets/ into tmp folder
     commands.add(CopyStep.forDirectory(
-            assembleResourceDirectories.getPathToOutput(),
+            assembledResourceDirectory,
             temp.resolve("res"),
             CopyStep.DirectoryMode.CONTENTS_ONLY));
     commands.add(CopyStep.forDirectory(
-            assembleAssetsDirectories.getPathToOutput(),
+            assembledAssetsDirectory,
             temp.resolve("assets"),
             CopyStep.DirectoryMode.CONTENTS_ONLY));
 
@@ -121,10 +122,10 @@ public class AndroidAar extends AbstractBuildRule implements HasClasspathEntries
             null));
 
     // move native libs into tmp folder under jni/
-    for (SourcePath dir : nativeLibsDirectories) {
+    if (assembledNativeLibs.isPresent()) {
       commands.add(
           CopyStep.forDirectory(
-              getResolver().getPath(dir),
+              assembledNativeLibs.get(),
               temp.resolve("jni"),
               CopyStep.DirectoryMode.CONTENTS_ONLY));
     }

@@ -36,6 +36,7 @@ import com.facebook.buck.rules.ImplicitDepsInferringDescription;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.SymlinkTree;
+import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.util.HumanReadableException;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
@@ -240,6 +241,7 @@ public class ThriftLibraryDescription
 
   @Override
   public <A extends ThriftConstructorArg> BuildRule createBuildRule(
+      TargetGraph targetGraph,
       BuildRuleParams params,
       BuildRuleResolver resolver,
       A args) {
@@ -280,14 +282,19 @@ public class ThriftLibraryDescription
       // Create the symlink tree build rule and add it to the resolver.
       Path includeRoot = getIncludeRoot(target);
       BuildTarget symlinkTreeTarget = createThriftIncludeSymlinkTreeTarget(target);
-      SymlinkTree symlinkTree = new SymlinkTree(
-          params.copyWithChanges(
-              symlinkTreeTarget,
-              Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
-              Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of())),
-          pathResolver,
-          includeRoot,
-          includes);
+      SymlinkTree symlinkTree;
+      try {
+        symlinkTree = new SymlinkTree(
+            params.copyWithChanges(
+                symlinkTreeTarget,
+                Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
+                Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of())),
+            pathResolver,
+            includeRoot,
+            includes);
+      } catch (SymlinkTree.InvalidSymlinkTreeException e) {
+        throw e.getHumanReadableExceptionForBuildTarget(target);
+      }
       resolver.addToIndex(symlinkTree);
 
       // Create a dummy rule that dependents can use to grab the information they need
@@ -360,6 +367,7 @@ public class ThriftLibraryDescription
 
     // Generate language specific rules.
     return enhancer.createBuildRule(
+        targetGraph,
         params,
         resolver,
         args,

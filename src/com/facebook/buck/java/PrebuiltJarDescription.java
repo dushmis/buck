@@ -55,6 +55,7 @@ public class PrebuiltJarDescription implements Description<PrebuiltJarDescriptio
     public Optional<SourcePath> sourceJar;
     public Optional<SourcePath> gwtJar;
     public Optional<String> javadocUrl;
+    public Optional<String> mavenCoords;
 
     public Optional<ImmutableSortedSet<BuildTarget>> deps;
   }
@@ -73,6 +74,7 @@ public class PrebuiltJarDescription implements Description<PrebuiltJarDescriptio
 
   @Override
   public <A extends Arg> BuildRule createBuildRule(
+      TargetGraph targetGraph,
       BuildRuleParams params,
       BuildRuleResolver resolver,
       A args) {
@@ -82,7 +84,8 @@ public class PrebuiltJarDescription implements Description<PrebuiltJarDescriptio
         args.binaryJar,
         args.sourceJar,
         args.gwtJar,
-        args.javadocUrl);
+        args.javadocUrl,
+        args.mavenCoords);
   }
 
   @Override
@@ -91,7 +94,6 @@ public class PrebuiltJarDescription implements Description<PrebuiltJarDescriptio
       BuildRule buildRule,
       ProjectFilesystem projectFilesystem,
       RuleKeyBuilderFactory ruleKeyBuilderFactory,
-      TargetGraph targetGraph,
       BuildRuleResolver ruleResolver) {
     UnflavoredBuildTarget prebuiltJarBuildTarget = buildRule.getBuildTarget().checkUnflavored();
     BuildTarget flavoredBuildTarget = BuildTargets.createFlavoredBuildTarget(
@@ -101,8 +103,7 @@ public class PrebuiltJarDescription implements Description<PrebuiltJarDescriptio
         /* declaredDeps */ Suppliers.ofInstance(ImmutableSortedSet.of(buildRule)),
         /* inferredDeps */ Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
         projectFilesystem,
-        ruleKeyBuilderFactory,
-        targetGraph);
+        ruleKeyBuilderFactory);
     BuildRule gwtModule = createGwtModule(params, new SourcePathResolver(ruleResolver), arg);
     ruleResolver.addToIndex(gwtModule);
   }

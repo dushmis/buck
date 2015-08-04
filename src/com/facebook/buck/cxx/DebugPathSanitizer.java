@@ -31,7 +31,9 @@ import com.google.common.base.Strings;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableBiMap;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 import java.io.IOException;
@@ -119,31 +121,29 @@ public class DebugPathSanitizer {
     return getExpandedPath(compilationDirectory);
   }
 
-  public Function<String, String> sanitize(
-      final Optional<Path> workingDir,
-      final boolean expandPaths) {
+  public Function<String, String> sanitize(final Optional<Path> workingDir) {
     return new Function<String, String>() {
       @Override
       public String apply(String input) {
-        return DebugPathSanitizer.this.sanitize(workingDir, input, expandPaths);
+        return DebugPathSanitizer.this.sanitize(workingDir, input);
       }
     };
+  }
+
+  public ImmutableList<String> sanitizeFlags(Optional<ImmutableList<String>> flags) {
+    return FluentIterable.from(flags.or(ImmutableList.<String>of()))
+        .transform(sanitize(Optional.<Path>absent()))
+        .toList();
   }
 
   /**
    * @param workingDir the current working directory, if applicable.
    * @param contents the string to sanitize.
-   * @param expandPaths whether to pad sanitized paths to {@code pathSize}.
    * @return a string with all matching paths replaced with their sanitized versions.
    */
-  public String sanitize(Optional<Path> workingDir, String contents, boolean expandPaths) {
+  public String sanitize(Optional<Path> workingDir, String contents) {
     for (Map.Entry<Path, Path> entry : getAllPaths(workingDir).entrySet()) {
-      String replacement;
-      if (expandPaths) {
-        replacement = getExpandedPath(entry.getValue());
-      } else {
-        replacement = entry.getValue().toString();
-      }
+      String replacement = entry.getValue().toString();
       String pathToReplace = entry.getKey().toString();
       if (contents.contains(pathToReplace)) {
         // String.replace creates a number of objects, and creates a fair
@@ -153,10 +153,6 @@ public class DebugPathSanitizer {
       }
     }
     return contents;
-  }
-
-  public String sanitize(Optional<Path> workingDir, String contents) {
-    return sanitize(workingDir, contents, /* expandPaths */ true);
   }
 
   public String restore(Optional<Path> workingDir, String contents) {

@@ -37,6 +37,7 @@ import com.facebook.buck.rules.FakeBuildRule;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
@@ -45,6 +46,7 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 
 import org.hamcrest.Matchers;
@@ -345,7 +347,7 @@ public class ThriftCxxEnhancerTest {
             "Test.h",
             "Test.cpp"),
         ENHANCER_CPP.getGeneratedThriftSources(
-            ImmutableSet.of("frozen"),
+            ImmutableSet.of("frozen2"),
             "test.thrift",
             ImmutableList.of("Test")));
     assertEquals(
@@ -362,7 +364,7 @@ public class ThriftCxxEnhancerTest {
             "Test_client.cpp",
             "Test.tcc"),
         ENHANCER_CPP2.getGeneratedThriftSources(
-            ImmutableSet.of("frozen"),
+            ImmutableSet.of("frozen2"),
             "test.thrift",
             ImmutableList.of("Test")));
 
@@ -498,8 +500,7 @@ public class ThriftCxxEnhancerTest {
   public void createBuildRule() {
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
-    BuildRuleParams flavoredParams =
-        BuildRuleParamsFactory.createTrivialBuildRuleParams(TARGET);
+    BuildRuleParams flavoredParams = BuildRuleParamsFactory.createTrivialBuildRuleParams(TARGET);
 
     // Add a dummy dependency to the constructor arg to make sure it gets through.
     BuildRule argDep = createFakeBuildRule("//:arg_dep", pathResolver);
@@ -535,6 +536,7 @@ public class ThriftCxxEnhancerTest {
 
     // Run the enhancer to create the language specific build rule.
     ENHANCER_CPP2.createBuildRule(
+        TargetGraph.EMPTY,
         flavoredParams,
         resolver,
         arg,
@@ -546,15 +548,14 @@ public class ThriftCxxEnhancerTest {
   public void cppSrcsAndHeadersArePropagated() {
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
-    BuildRuleParams flavoredParams =
-        BuildRuleParamsFactory.createTrivialBuildRuleParams(TARGET);
+    BuildRuleParams flavoredParams = BuildRuleParamsFactory.createTrivialBuildRuleParams(TARGET);
 
     final String cppHeaderNamespace = "foo";
-    final ImmutableMap<String, SourcePath> cppHeaders =
-        ImmutableMap.<String, SourcePath>of(
+    final ImmutableSortedMap<String, SourcePath> cppHeaders =
+        ImmutableSortedMap.<String, SourcePath>of(
             "header.h", new TestSourcePath("header.h"));
-    final ImmutableMap<String, SourceWithFlags> cppSrcs =
-        ImmutableMap.of(
+    final ImmutableSortedMap<String, SourceWithFlags> cppSrcs =
+        ImmutableSortedMap.of(
             "source.cpp", SourceWithFlags.of(new TestSourcePath("source.cpp")));
 
     ThriftConstructorArg arg = new ThriftConstructorArg();
@@ -583,6 +584,7 @@ public class ThriftCxxEnhancerTest {
             CxxPreprocessMode.SEPARATE) {
           @Override
           public <A extends Arg> BuildRule createBuildRule(
+              TargetGraph targetGraph,
               BuildRuleParams params,
               BuildRuleResolver resolver,
               A args) {
@@ -597,7 +599,7 @@ public class ThriftCxxEnhancerTest {
                   args.srcs.get().getNamedSources().get().get(source.getKey()),
                   Matchers.equalTo(source.getValue()));
             }
-            return super.createBuildRule(params, resolver, args);
+            return super.createBuildRule(targetGraph, params, resolver, args);
           }
         };
     ThriftCxxEnhancer enhancer =
@@ -606,6 +608,7 @@ public class ThriftCxxEnhancerTest {
             cxxLibraryDescription,
           /* cpp2 */ false);
     enhancer.createBuildRule(
+        TargetGraph.EMPTY,
         flavoredParams,
         resolver,
         arg,

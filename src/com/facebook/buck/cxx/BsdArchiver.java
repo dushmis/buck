@@ -17,13 +17,13 @@
 package com.facebook.buck.cxx;
 
 import com.facebook.buck.io.FileScrubber;
+import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.RuleKey;
-import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.Tool;
 import com.google.common.base.Charsets;
+import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSortedSet;
 
 import java.io.IOException;
 import java.nio.MappedByteBuffer;
@@ -69,7 +69,7 @@ public class BsdArchiver implements Archiver {
       // Skip the file name
       map.position(map.position() + nameLength);
 
-      int descriptorsSize = ObjectFileScrubbers.getLittleEndian32BitLong(map);
+      int descriptorsSize = ObjectFileScrubbers.getLittleEndianInt(map);
 
       if (descriptorsSize > 0) {
 
@@ -86,12 +86,12 @@ public class BsdArchiver implements Archiver {
           lastSymbolNameOffset =
               Math.max(
                   lastSymbolNameOffset,
-                  ObjectFileScrubbers.getLittleEndian32BitLong(map));
+                  ObjectFileScrubbers.getLittleEndianInt(map));
           // Skip the corresponding object offset
-          ObjectFileScrubbers.getLittleEndian32BitLong(map);
+          ObjectFileScrubbers.getLittleEndianInt(map);
         }
 
-        int symbolNameTableSize = ObjectFileScrubbers.getLittleEndian32BitLong(map);
+        int symbolNameTableSize = ObjectFileScrubbers.getLittleEndianInt(map);
         int endOfSymbolNameTableOffset = map.position() + symbolNameTableSize;
 
         // Skip to the last symbol name
@@ -105,7 +105,7 @@ public class BsdArchiver implements Archiver {
           map.put((byte) 0x00);
         }
       } else {
-        int symbolNameTableSize = ObjectFileScrubbers.getLittleEndian32BitLong(map);
+        int symbolNameTableSize = ObjectFileScrubbers.getLittleEndianInt(map);
         ObjectFileScrubbers.checkArchive(
             symbolNameTableSize == 0,
             "archive has no symbol descriptors but has symbol names");
@@ -127,8 +127,8 @@ public class BsdArchiver implements Archiver {
   }
 
   @Override
-  public ImmutableSortedSet<SourcePath> getInputs() {
-    return tool.getInputs();
+  public ImmutableCollection<BuildRule> getInputs(SourcePathResolver resolver) {
+    return tool.getInputs(resolver);
   }
 
   @Override

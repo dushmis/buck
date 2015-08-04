@@ -20,6 +20,7 @@ import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckTracingEventBusBridge;
 import com.facebook.buck.event.MissingSymbolEvent;
 import com.facebook.buck.event.api.BuckTracing;
+import com.facebook.buck.java.tracing.TranslatingJavacPhaseTracer;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -99,6 +100,11 @@ public abstract class Jsr199Javac implements Javac {
     return "javac";
   }
 
+  @Override
+  public ImmutableList<String> getCommandPrefix(SourcePathResolver resolver) {
+    throw new UnsupportedOperationException("In memory javac may not be used externally");
+  }
+
   protected abstract JavaCompiler createCompiler(
       ExecutionContext context,
       SourcePathResolver resolver);
@@ -162,6 +168,12 @@ public abstract class Jsr199Javac implements Javac {
     BuckTracing.setCurrentThreadTracingInterfaceFromJsr199Javac(
         new BuckTracingEventBusBridge(context.getBuckEventBus(), invokingRule));
     try {
+      TranslatingJavacPhaseTracer.setupTracing(
+          invokingRule,
+          context.getClassLoaderCache(),
+          context.getBuckEventBus(),
+          compilationTask);
+
       // Ensure annotation processors are loaded from their own classloader. If we don't do this,
       // then the evidence suggests that they get one polluted with Buck's own classpath, which
       // means that libraries that have dependencies on different versions of Buck's deps may choke
@@ -325,12 +337,13 @@ public abstract class Jsr199Javac implements Javac {
       Set<Path> javaSourceFilePaths) throws IOException {
     List<JavaFileObject> compilationUnits = Lists.newArrayList();
     for (Path path : javaSourceFilePaths) {
-      if (path.toString().endsWith(".java")) {
+      String pathString = path.toString();
+      if (pathString.endsWith(".java")) {
         // For an ordinary .java file, create a corresponding JavaFileObject.
         Iterable<? extends JavaFileObject> javaFileObjects = fileManager.getJavaFileObjects(
             absolutifier.apply(path).toFile());
         compilationUnits.add(Iterables.getOnlyElement(javaFileObjects));
-      } else if (path.toString().endsWith(SRC_ZIP)) {
+      } else if (pathString.endsWith(SRC_ZIP) || pathString.endsWith(SRC_JAR)) {
         // For a Zip of .java files, create a JavaFileObject for each .java entry.
         ZipFile zipFile = new ZipFile(absolutifier.apply(path).toFile());
         for (Enumeration<? extends ZipEntry> entries = zipFile.entries();

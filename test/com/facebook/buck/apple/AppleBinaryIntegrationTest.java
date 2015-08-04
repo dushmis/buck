@@ -23,6 +23,7 @@ import static org.junit.Assume.assumeTrue;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.model.ImmutableFlavor;
+import com.facebook.buck.testutil.MoreAsserts;
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.facebook.buck.testutil.integration.ProjectWorkspace;
 import com.facebook.buck.testutil.integration.TestDataHelper;
@@ -166,6 +167,41 @@ public class AppleBinaryIntegrationTest {
         stderr.contains(expectedError) &&
         stderr.contains(expectedWarning) &&
         stderr.contains(expectedSummary));
+  }
+
+  @Test
+  public void testAppleBinaryIsHermetic() throws IOException {
+    assumeTrue(Platform.detect() == Platform.MACOS);
+    ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
+        this, "apple_binary_is_hermetic", tmp);
+    workspace.setUp();
+
+    ProjectWorkspace.ProcessResult first = workspace.runBuckCommand(
+        workspace.getPath("first"),
+        "build",
+        "//Apps/TestApp:TestApp#iphonesimulator-x86_64");
+    first.assertSuccess();
+
+    ProjectWorkspace.ProcessResult second = workspace.runBuckCommand(
+        workspace.getPath("second"),
+        "build",
+        "//Apps/TestApp:TestApp#iphonesimulator-x86_64");
+    second.assertSuccess();
+
+    MoreAsserts.assertContentsEqual(
+        workspace.getPath(
+            "first/buck-out/gen/Apps/TestApp/" +
+                "TestApp#compile-TestClass.m.o,iphonesimulator-x86_64/TestClass.m.o"),
+        workspace.getPath(
+            "second/buck-out/gen/Apps/TestApp/" +
+                "TestApp#compile-TestClass.m.o,iphonesimulator-x86_64/TestClass.m.o"));
+    MoreAsserts.assertContentsEqual(
+        workspace.getPath(
+            "first/buck-out/gen/Apps/TestApp/" +
+                "TestApp#iphonesimulator-x86_64/TestApp#iphonesimulator-x86_64"),
+        workspace.getPath(
+            "second/buck-out/gen/Apps/TestApp/" +
+                "TestApp#iphonesimulator-x86_64/TestApp#iphonesimulator-x86_64"));
   }
 
   private static void assertIsSymbolicLink(

@@ -18,6 +18,7 @@ package com.facebook.buck.apple;
 
 import com.facebook.buck.cxx.CxxDescriptionEnhancer;
 import com.facebook.buck.cxx.CxxPlatform;
+import com.facebook.buck.js.ReactNativeFlavors;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.FlavorDomain;
@@ -34,6 +35,7 @@ import com.facebook.buck.rules.Hint;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.SourcePaths;
+import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.util.HumanReadableException;
@@ -88,12 +90,22 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
 
   @Override
   public boolean hasFlavors(ImmutableSet<Flavor> flavors) {
-    return appleLibraryDescription.hasFlavors(flavors) ||
-        appleBinaryDescription.hasFlavors(flavors);
+    if (appleLibraryDescription.hasFlavors(flavors)) {
+      return true;
+    }
+    ImmutableSet.Builder<Flavor> flavorBuilder = ImmutableSet.builder();
+    for (Flavor flavor : flavors) {
+      if (flavor.equals(ReactNativeFlavors.DO_NOT_BUNDLE)) {
+        continue;
+      }
+      flavorBuilder.add(flavor);
+    }
+    return appleBinaryDescription.hasFlavors(flavorBuilder.build());
   }
 
   @Override
   public <A extends Arg> AppleBundle createBuildRule(
+      TargetGraph targetGraph,
       BuildRuleParams params,
       BuildRuleResolver resolver,
       A args) {
@@ -124,8 +136,8 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
     ImmutableSet.Builder<SourcePath> bundleFilesBuilder = ImmutableSet.builder();
     ImmutableSet.Builder<SourcePath> bundleVariantFilesBuilder = ImmutableSet.builder();
     AppleResources.collectResourceDirsAndFiles(
-        params.getTargetGraph(),
-        Preconditions.checkNotNull(params.getTargetGraph().get(params.getBuildTarget())),
+        targetGraph,
+        Preconditions.checkNotNull(targetGraph.get(params.getBuildTarget())),
         bundleDirsBuilder,
         dirsContainingResourceDirsBuilder,
         bundleFilesBuilder,
@@ -139,6 +151,7 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
 
     CollectedAssetCatalogs collectedAssetCatalogs =
         AppleDescriptions.createBuildRulesForTransitiveAssetCatalogDependencies(
+            targetGraph,
             params,
             sourcePathResolver,
             appleCxxPlatform.getAppleSdk().getApplePlatform(),
@@ -150,7 +163,7 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
 
     // TODO(user): Sort through the changes needed to make project generation work with
     // binary being optional.
-    BuildRule flavoredBinaryRule = getFlavoredBinaryRule(params, resolver, args);
+    BuildRule flavoredBinaryRule = getFlavoredBinaryRule(targetGraph, params, resolver, args);
     BuildRuleParams bundleParamsWithFlavoredBinaryDep = getBundleParamsWithUpdatedDeps(
         params,
         args.binary,
@@ -184,6 +197,7 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
         Optional.of(bundleVariantFiles),
         appleCxxPlatform.getIbtool(),
         appleCxxPlatform.getDsymutil(),
+        appleCxxPlatform.getCxxPlatform().getStrip(),
         bundledAssetCatalogs,
         mergedAssetCatalog,
         args.getTests(),
@@ -192,11 +206,11 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
   }
 
   private static <A extends Arg> BuildRule getFlavoredBinaryRule(
+      TargetGraph targetGraph,
       final BuildRuleParams params,
       final BuildRuleResolver resolver,
-      final A args) {
-    final TargetNode<?> binaryTargetNode = Preconditions.checkNotNull(
-        params.getTargetGraph().get(args.binary));
+      A args) {
+    final TargetNode<?> binaryTargetNode = Preconditions.checkNotNull(targetGraph.get(args.binary));
     BuildRuleParams binaryRuleParams = new BuildRuleParams(
         args.binary,
         Suppliers.ofInstance(
@@ -210,12 +224,16 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
                 resolver,
                 binaryTargetNode.getExtraDeps())),
         params.getProjectFilesystem(),
-        params.getRuleKeyBuilderFactory(),
-        params.getTargetGraph());
+        params.getRuleKeyBuilderFactory());
     return CxxDescriptionEnhancer.requireBuildRule(
+        targetGraph,
         binaryRuleParams,
         resolver,
-        params.getBuildTarget().getFlavors().toArray(new Flavor[0]));
+        params
+            .getBuildTarget()
+            .withoutFlavors(ImmutableSet.of(ReactNativeFlavors.DO_NOT_BUNDLE))
+            .getFlavors()
+            .toArray(new Flavor[0]));
   }
 
   private static BuildRuleParams getBundleParamsWithUpdatedDeps(

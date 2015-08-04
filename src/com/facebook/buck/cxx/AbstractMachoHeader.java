@@ -14,32 +14,20 @@
  * under the License.
  */
 
-package com.facebook.buck.android;
+package com.facebook.buck.cxx;
 
-public class AdbOptions {
+import com.facebook.buck.util.immutables.BuckStyleImmutable;
 
-  static final String MULTI_INSTALL_MODE_SHORT_ARG = "-x";
+import org.immutables.value.Value;
 
-  private int adbThreadCount;
-  private boolean multiInstallMode;
+@Value.Immutable
+@BuckStyleImmutable
+abstract class AbstractMachoHeader {
 
-  public AdbOptions() {
-    this(0, false);
-  }
+  @Value.Parameter
+  abstract int getCommandsCount();
 
-  public AdbOptions(
-      int adbThreadCount,
-      boolean multiInstallMode) {
-    this.adbThreadCount = adbThreadCount;
-    this.multiInstallMode = multiInstallMode;
-  }
-
-  public int getAdbThreadCount() {
-    return adbThreadCount;
-  }
-
-  public boolean isMultiInstallModeEnabled() {
-    return multiInstallMode;
-  }
+  @Value.Parameter
+  abstract boolean getIs64Bit();
 
 }

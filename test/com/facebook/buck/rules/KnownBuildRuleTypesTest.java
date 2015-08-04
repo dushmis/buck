@@ -25,6 +25,8 @@ import com.facebook.buck.android.AndroidLibrary;
 import com.facebook.buck.android.AndroidLibraryDescription;
 import com.facebook.buck.android.FakeAndroidDirectoryResolver;
 import com.facebook.buck.cli.FakeBuckConfig;
+import com.facebook.buck.cxx.CxxPlatform;
+import com.facebook.buck.cxx.CxxPlatformUtils;
 import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.DefaultJavaLibrary;
@@ -34,6 +36,8 @@ import com.facebook.buck.java.Javac;
 import com.facebook.buck.java.Jsr199Javac;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
+import com.facebook.buck.model.Flavor;
+import com.facebook.buck.model.FlavorDomain;
 import com.facebook.buck.parser.NoSuchBuildTargetException;
 import com.facebook.buck.python.PythonEnvironment;
 import com.facebook.buck.python.PythonVersion;
@@ -103,6 +107,7 @@ public class KnownBuildRuleTypesTest {
 
     @Override
     public <A> BuildRule createBuildRule(
+        TargetGraph targetGraph,
         BuildRuleParams params,
         BuildRuleResolver resolver,
         A args) {
@@ -144,10 +149,8 @@ public class KnownBuildRuleTypesTest {
 
     JavaLibraryDescription.Arg arg = new JavaLibraryDescription.Arg();
     populateJavaArg(arg);
-    return (DefaultJavaLibrary) description.createBuildRule(
-        buildRuleParams,
-        new BuildRuleResolver(),
-        arg);
+    return (DefaultJavaLibrary) description
+        .createBuildRule(TargetGraph.EMPTY, buildRuleParams, new BuildRuleResolver(), arg);
   }
 
   @Test
@@ -253,11 +256,8 @@ public class KnownBuildRuleTypesTest {
     AndroidLibraryDescription.Arg arg = new AndroidLibraryDescription.Arg();
     populateJavaArg(arg);
     arg.manifest = Optional.absent();
-    AndroidLibrary rule = (AndroidLibrary) description.createBuildRule(
-        buildRuleParams,
-        new BuildRuleResolver(),
-        arg);
-
+    AndroidLibrary rule = (AndroidLibrary) description
+        .createBuildRule(TargetGraph.EMPTY, buildRuleParams, new BuildRuleResolver(), arg);
 
     Javac javac = rule.getJavacOptions().getJavac();
     assertTrue(javac.getClass().toString(), javac instanceof Jsr199Javac);
@@ -289,27 +289,40 @@ public class KnownBuildRuleTypesTest {
     AndroidLibraryDescription.Arg arg = new AndroidLibraryDescription.Arg();
     populateJavaArg(arg);
     arg.manifest = Optional.absent();
-    AndroidLibrary rule = (AndroidLibrary) description.createBuildRule(
-        buildRuleParams,
-        new BuildRuleResolver(),
-        arg);
+    AndroidLibrary rule = (AndroidLibrary) description
+        .createBuildRule(TargetGraph.EMPTY, buildRuleParams, new BuildRuleResolver(), arg);
+
     assertEquals(javac.toPath(), ((ExternalJavac) rule.getJavacOptions().getJavac()).getPath());
   }
 
   @Test
   public void whenRegisteringDescriptionsLastOneWins()
       throws IOException, NoSuchBuildTargetException {
+    FlavorDomain<CxxPlatform> cxxPlatforms = new FlavorDomain<>(
+        "C/C++ platform",
+        ImmutableMap.<Flavor, CxxPlatform>of());
+    CxxPlatform defaultPlatform = CxxPlatformUtils.DEFAULT_PLATFORM;
 
     KnownBuildRuleTypes.Builder buildRuleTypesBuilder = KnownBuildRuleTypes.builder();
     buildRuleTypesBuilder.register(new TestDescription("Foo"));
     buildRuleTypesBuilder.register(new TestDescription("Bar"));
     buildRuleTypesBuilder.register(new TestDescription("Raz"));
 
+    buildRuleTypesBuilder.setCxxPlatforms(
+        cxxPlatforms);
+    buildRuleTypesBuilder.setDefaultCxxPlatform(defaultPlatform);
+
     KnownBuildRuleTypes buildRuleTypes = buildRuleTypesBuilder.build();
 
     assertEquals(
         "Only one description should have wound up in the final KnownBuildRuleTypes",
-        KnownBuildRuleTypes.builder().build().getAllDescriptions().size() + 1,
+        KnownBuildRuleTypes.builder()
+            .setCxxPlatforms(cxxPlatforms)
+            .setDefaultCxxPlatform(defaultPlatform)
+            .build()
+            .getAllDescriptions()
+            .size() +
+            1,
         buildRuleTypes.getAllDescriptions().size());
 
     boolean foundTestDescription = false;

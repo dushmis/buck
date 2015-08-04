@@ -27,6 +27,7 @@ import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.Tool;
 import com.facebook.buck.rules.coercer.FrameworkPath;
@@ -43,6 +44,7 @@ import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
@@ -82,7 +84,7 @@ public class AppleDescriptions {
     return Paths.get(arg.headerPathPrefix.or(buildTarget.getShortName()));
   }
 
-  public static ImmutableMap<String, SourcePath> convertAppleHeadersToPublicCxxHeaders(
+  public static ImmutableSortedMap<String, SourcePath> convertAppleHeadersToPublicCxxHeaders(
       Function<SourcePath, Path> pathResolver,
       Path headerPathPrefix,
       AppleNativeTargetDescriptionArg arg) {
@@ -94,13 +96,13 @@ public class AppleDescriptions {
                 arg.exportedHeaders.or(EMPTY_HEADERS));
   }
 
-  public static ImmutableMap<String, SourcePath> convertAppleHeadersToPrivateCxxHeaders(
+  public static ImmutableSortedMap<String, SourcePath> convertAppleHeadersToPrivateCxxHeaders(
       Function<SourcePath, Path> pathResolver,
       Path headerPathPrefix,
       AppleNativeTargetDescriptionArg arg) {
     // The private headers will contain exported headers with the private include style and private
     // headers with both styles.
-    return ImmutableMap.<String, SourcePath>builder()
+    return ImmutableSortedMap.<String, SourcePath>naturalOrder()
         .putAll(
             AppleDescriptions.parseAppleHeadersForUseFromTheSameTarget(
                 pathResolver,
@@ -118,7 +120,7 @@ public class AppleDescriptions {
   }
 
   @VisibleForTesting
-  static ImmutableMap<String, SourcePath> parseAppleHeadersForUseFromOtherTargets(
+  static ImmutableSortedMap<String, SourcePath> parseAppleHeadersForUseFromOtherTargets(
       Function<SourcePath, Path> pathResolver,
       Path headerPathPrefix,
       SourceList headers) {
@@ -154,11 +156,11 @@ public class AppleDescriptions {
   }
 
   @VisibleForTesting
-  static ImmutableMap<String, SourcePath> convertToFlatCxxHeaders(
+  static ImmutableSortedMap<String, SourcePath> convertToFlatCxxHeaders(
       Path headerPathPrefix,
       Function<SourcePath, Path> sourcePathResolver,
       Set<SourcePath> headerPaths) {
-    ImmutableMap.Builder<String, SourcePath> cxxHeaders = ImmutableMap.builder();
+    ImmutableSortedMap.Builder<String, SourcePath> cxxHeaders = ImmutableSortedMap.naturalOrder();
     for (SourcePath headerPath : headerPaths) {
       Path fileName = sourcePathResolver.apply(headerPath).getFileName();
       String key = headerPathPrefix.resolve(fileName).toString();
@@ -176,18 +178,19 @@ public class AppleDescriptions {
     // The resulting cxx constructor arg will have no exported headers and both headers and exported
     // headers specified in the apple arg will be available with both public and private include
     // styles.
-    ImmutableMap<String, SourcePath> headerMap = ImmutableMap.<String, SourcePath>builder()
-        .putAll(
-            convertAppleHeadersToPublicCxxHeaders(
-                resolver.getPathFunction(),
-                headerPathPrefix,
-                arg))
-        .putAll(
-            convertAppleHeadersToPrivateCxxHeaders(
-                resolver.getPathFunction(),
-                headerPathPrefix,
-                arg))
-        .build();
+    ImmutableSortedMap<String, SourcePath> headerMap =
+        ImmutableSortedMap.<String, SourcePath>naturalOrder()
+            .putAll(
+                convertAppleHeadersToPublicCxxHeaders(
+                    resolver.getPathFunction(),
+                    headerPathPrefix,
+                    arg))
+            .putAll(
+                convertAppleHeadersToPrivateCxxHeaders(
+                    resolver.getPathFunction(),
+                    headerPathPrefix,
+                    arg))
+            .build();
 
     output.srcs = Optional.of(SourceWithFlagsList.ofUnnamedSources(arg.srcs.get()));
     output.platformSrcs = Optional.of(PatternMatchedCollection.<SourceWithFlagsList>of());
@@ -354,17 +357,15 @@ public class AppleDescriptions {
   }
 
   public static CollectedAssetCatalogs createBuildRulesForTransitiveAssetCatalogDependencies(
+      TargetGraph targetGraph,
       BuildRuleParams params,
       SourcePathResolver sourcePathResolver,
       ApplePlatform applePlatform,
       Tool actool) {
-    TargetNode<?> targetNode = Preconditions.checkNotNull(
-        params.getTargetGraph().get(params.getBuildTarget()));
+    TargetNode<?> targetNode = Preconditions.checkNotNull(targetGraph.get(params.getBuildTarget()));
 
     ImmutableSet<AppleAssetCatalogDescription.Arg> assetCatalogArgs =
-        AppleBuildRules.collectRecursiveAssetCatalogs(
-            params.getTargetGraph(),
-            ImmutableList.of(targetNode));
+        AppleBuildRules.collectRecursiveAssetCatalogs(targetGraph, ImmutableList.of(targetNode));
 
     ImmutableSortedSet.Builder<Path> mergeableAssetCatalogDirsBuilder =
         ImmutableSortedSet.naturalOrder();
@@ -388,7 +389,8 @@ public class AppleDescriptions {
     if (!mergeableAssetCatalogDirs.isEmpty()) {
       BuildRuleParams assetCatalogParams = params.copyWithChanges(
           BuildTarget.builder(params.getBuildTarget())
-              .addFlavors(AppleAssetCatalog.getFlavor(
+              .addFlavors(
+                  AppleAssetCatalog.getFlavor(
                       ActoolStep.BundlingMode.MERGE_BUNDLES,
                       MERGED_ASSET_CATALOG_NAME))
               .build(),

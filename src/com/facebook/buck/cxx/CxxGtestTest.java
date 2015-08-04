@@ -26,6 +26,7 @@ import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.test.TestResultSummary;
 import com.facebook.buck.test.result.type.ResultType;
 import com.facebook.buck.util.XmlDomParser;
+import com.google.common.base.Charsets;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
@@ -40,17 +41,25 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.annotation.Nullable;
+
 @SuppressWarnings("PMD.TestClassWithoutTestCases")
 public class CxxGtestTest extends CxxTest implements HasRuntimeDeps {
 
   private static final Pattern START = Pattern.compile("^\\[\\s*RUN\\s*\\] (.*)$");
   private static final Pattern END = Pattern.compile("^\\[\\s*(FAILED|OK)\\s*\\] .*");
+  private static final String NOTRUN = "notrun";
 
   private final Tool executable;
   private final ImmutableSortedSet<BuildRule> additionalDeps;
@@ -90,27 +99,32 @@ public class CxxGtestTest extends CxxTest implements HasRuntimeDeps {
 
     ImmutableList.Builder<TestResultSummary> summariesBuilder = ImmutableList.builder();
 
-    List<String> outputLines = context.getProjectFilesystem().readLines(output);
+    // It's possible the test output had invalid characters in it's output, so make sure to
+    // ignore these as we parse the output lines.
     Optional<String> currentTest = Optional.absent();
     Map<String, List<String>> stdout = Maps.newHashMap();
-    for (String line : outputLines) {
-      Matcher matcher;
-      if ((matcher = START.matcher(line.trim())).matches()) {
-        String test = matcher.group(1);
-        currentTest = Optional.of(test);
-        stdout.put(test, Lists.<String>newArrayList());
-      } else if (END.matcher(line.trim()).matches()) {
-        currentTest = Optional.absent();
-      } else if (currentTest.isPresent()) {
-        stdout.get(currentTest.get()).add(line);
+    CharsetDecoder decoder = Charsets.UTF_8.newDecoder();
+    decoder.onMalformedInput(CodingErrorAction.IGNORE);
+    try (InputStream input = context.getProjectFilesystem().newFileInputStream(output);
+         BufferedReader reader = new BufferedReader(new InputStreamReader(input, decoder))) {
+      String line;
+      while ((line = reader.readLine()) != null) {
+        Matcher matcher;
+        if ((matcher = START.matcher(line.trim())).matches()) {
+          String test = matcher.group(1);
+          currentTest = Optional.of(test);
+          stdout.put(test, Lists.<String>newArrayList());
+        } else if (END.matcher(line.trim()).matches()) {
+          currentTest = Optional.absent();
+        } else if (currentTest.isPresent()) {
+          stdout.get(currentTest.get()).add(line);
+        }
       }
     }
 
-    Document doc = XmlDomParser.parse(results.toFile());
-    Node testsuites = doc.getElementsByTagName("testsuites").item(0);
-    Node testsuite = testsuites.getChildNodes().item(1);
-    NodeList testcases = testsuite.getChildNodes();
-    for (int index = 1; index < testcases.getLength(); index += 2) {
+    Document doc = XmlDomParser.parse(results);
+    NodeList testcases = doc.getElementsByTagName("testcase");
+    for (int index = 0; index < testcases.getLength(); index++) {
       Node testcase = testcases.item(index);
       NamedNodeMap attributes = testcase.getAttributes();
       String testCase = attributes.getNamedItem("classname").getNodeValue();
@@ -119,10 +133,15 @@ public class CxxGtestTest extends CxxTest implements HasRuntimeDeps {
       Double time = Double.parseDouble(attributes.getNamedItem("time").getNodeValue()) * 1000;
       ResultType type = ResultType.SUCCESS;
       String message = "";
+      @Nullable List<String> testStdout = stdout.get(testFull);
       if (testcase.getChildNodes().getLength() > 0) {
         Node failure = testcase.getChildNodes().item(1);
         type = ResultType.FAILURE;
         message = failure.getAttributes().getNamedItem("message").getNodeValue();
+      } else if (attributes.getNamedItem("status").getNodeValue().equals(NOTRUN)) {
+        type = ResultType.ASSUMPTION_VIOLATION;
+        message = "DISABLED";
+        testStdout = Lists.newArrayList();
       }
       summariesBuilder.add(
           new TestResultSummary(
@@ -132,7 +151,7 @@ public class CxxGtestTest extends CxxTest implements HasRuntimeDeps {
               time.longValue(),
               message,
               "",
-              Joiner.on(System.lineSeparator()).join(stdout.get(testFull)),
+              Joiner.on(System.lineSeparator()).join(testStdout),
               ""));
     }
 
@@ -144,7 +163,7 @@ public class CxxGtestTest extends CxxTest implements HasRuntimeDeps {
   @Override
   public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
     return ImmutableSortedSet.<BuildRule>naturalOrder()
-        .addAll(getResolver().filterBuildRuleInputs(executable.getInputs()))
+        .addAll(executable.getInputs(getResolver()))
         .addAll(additionalDeps)
         .build();
   }

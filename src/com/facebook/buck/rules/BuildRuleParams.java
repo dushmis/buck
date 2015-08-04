@@ -19,12 +19,9 @@ package com.facebook.buck.rules;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.google.common.annotations.Beta;
-import com.google.common.base.Function;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableSortedSet;
-
-import java.nio.file.Path;
 
 /**
  * Standard set of parameters that is passed to all build rules.
@@ -38,21 +35,18 @@ public class BuildRuleParams {
   private final Supplier<ImmutableSortedSet<BuildRule>> totalDeps;
   private final ProjectFilesystem projectFilesystem;
   private final RuleKeyBuilderFactory ruleKeyBuilderFactory;
-  private final TargetGraph targetGraph;
 
   public BuildRuleParams(
       BuildTarget buildTarget,
       final Supplier<ImmutableSortedSet<BuildRule>> declaredDeps,
       final Supplier<ImmutableSortedSet<BuildRule>> extraDeps,
       ProjectFilesystem projectFilesystem,
-      RuleKeyBuilderFactory ruleKeyBuilderFactory,
-      TargetGraph targetGraph) {
+      RuleKeyBuilderFactory ruleKeyBuilderFactory) {
     this.buildTarget = buildTarget;
     this.declaredDeps = Suppliers.memoize(declaredDeps);
     this.extraDeps = Suppliers.memoize(extraDeps);
     this.projectFilesystem = projectFilesystem;
     this.ruleKeyBuilderFactory = ruleKeyBuilderFactory;
-    this.targetGraph = targetGraph;
 
     this.totalDeps = Suppliers.memoize(
         new Supplier<ImmutableSortedSet<BuildRule>>() {
@@ -110,8 +104,7 @@ public class BuildRuleParams {
         declaredDeps,
         extraDeps,
         projectFilesystem,
-        ruleKeyBuilderFactory,
-        targetGraph);
+        ruleKeyBuilderFactory);
   }
 
   public BuildTarget getBuildTarget() {
@@ -130,20 +123,12 @@ public class BuildRuleParams {
     return extraDeps.get();
   }
 
-  public Function<Path, Path> getPathAbsolutifier() {
-    return projectFilesystem.getAbsolutifier();
-  }
-
   public ProjectFilesystem getProjectFilesystem() {
     return projectFilesystem;
   }
 
   public RuleKeyBuilderFactory getRuleKeyBuilderFactory() {
     return ruleKeyBuilderFactory;
-  }
-
-  public TargetGraph getTargetGraph() {
-    return targetGraph;
   }
 
 }

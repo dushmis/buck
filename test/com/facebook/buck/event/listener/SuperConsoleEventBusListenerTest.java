@@ -44,6 +44,7 @@ import com.facebook.buck.rules.TestSummaryEvent;
 import com.facebook.buck.step.StepEvent;
 import com.facebook.buck.test.TestCaseSummary;
 import com.facebook.buck.test.TestResultSummary;
+import com.facebook.buck.test.TestResultSummaryVerbosity;
 import com.facebook.buck.test.TestResults;
 import com.facebook.buck.test.TestRuleEvent;
 import com.facebook.buck.test.result.type.ResultType;
@@ -74,6 +75,11 @@ import java.util.concurrent.TimeUnit;
 
 public class SuperConsoleEventBusListenerTest {
   private static final DecimalFormat timeFormatter = new DecimalFormat("0.0s");
+  private static final TestResultSummaryVerbosity noisySummaryVerbosity =
+      TestResultSummaryVerbosity.of(true, true);
+
+  private static final TestResultSummaryVerbosity silentSummaryVerbosity =
+      TestResultSummaryVerbosity.of(false, false);
 
   /**
    * Formats a string with times passed in in seconds.
@@ -90,6 +96,8 @@ public class SuperConsoleEventBusListenerTest {
             }
           }).toArray(String.class));
   }
+
+
 
   @Test
   public void testSimpleBuild() {
@@ -116,6 +124,7 @@ public class SuperConsoleEventBusListenerTest {
         new SuperConsoleEventBusListener(
             console,
             fakeClock,
+            silentSummaryVerbosity,
             new DefaultExecutionEnvironment(
                 new FakeProcessExecutor(),
                 ImmutableMap.copyOf(System.getenv()),
@@ -296,6 +305,7 @@ public class SuperConsoleEventBusListenerTest {
         new SuperConsoleEventBusListener(
             console,
             fakeClock,
+            silentSummaryVerbosity,
             new DefaultExecutionEnvironment(
                 new FakeProcessExecutor(),
                 ImmutableMap.copyOf(System.getenv()),
@@ -561,6 +571,7 @@ public class SuperConsoleEventBusListenerTest {
         new SuperConsoleEventBusListener(
             console,
             fakeClock,
+            silentSummaryVerbosity,
             new DefaultExecutionEnvironment(
                 new FakeProcessExecutor(),
                 ImmutableMap.copyOf(System.getenv()),
@@ -828,6 +839,7 @@ public class SuperConsoleEventBusListenerTest {
         new SuperConsoleEventBusListener(
             console,
             fakeClock,
+            noisySummaryVerbosity,
             new DefaultExecutionEnvironment(
                 new FakeProcessExecutor(),
                 ImmutableMap.copyOf(System.getenv()),
@@ -1107,6 +1119,7 @@ public class SuperConsoleEventBusListenerTest {
         new SuperConsoleEventBusListener(
             console,
             fakeClock,
+            silentSummaryVerbosity,
             new DefaultExecutionEnvironment(
                 new FakeProcessExecutor(),
                 ImmutableMap.copyOf(System.getenv()),
@@ -1270,6 +1283,7 @@ public class SuperConsoleEventBusListenerTest {
         new SuperConsoleEventBusListener(
             console,
             fakeClock,
+            silentSummaryVerbosity,
             new DefaultExecutionEnvironment(
                 new FakeProcessExecutor(),
                 ImmutableMap.copyOf(System.getenv()),
@@ -1294,6 +1308,7 @@ public class SuperConsoleEventBusListenerTest {
         new SuperConsoleEventBusListener(
             console,
             fakeClock,
+            silentSummaryVerbosity,
             new DefaultExecutionEnvironment(
                 new FakeProcessExecutor(),
                 ImmutableMap.copyOf(System.getenv()),

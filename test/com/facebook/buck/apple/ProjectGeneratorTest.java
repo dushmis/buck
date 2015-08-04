@@ -58,6 +58,8 @@ import com.facebook.buck.apple.xcode.xcodeproj.SourceTreePath;
 import com.facebook.buck.apple.xcode.xcodeproj.XCBuildConfiguration;
 import com.facebook.buck.cli.FakeBuckConfig;
 import com.facebook.buck.cxx.CxxDescriptionEnhancer;
+import com.facebook.buck.cxx.CxxPlatform;
+import com.facebook.buck.cxx.CxxPlatformUtils;
 import com.facebook.buck.cxx.CxxSource;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.js.IosReactNativeLibraryBuilder;
@@ -65,6 +67,8 @@ import com.facebook.buck.js.ReactNativeBuckConfig;
 import com.facebook.buck.js.ReactNativeFlavors;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
+import com.facebook.buck.model.Flavor;
+import com.facebook.buck.model.FlavorDomain;
 import com.facebook.buck.model.HasBuildTarget;
 import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.PathSourcePath;
@@ -127,6 +131,9 @@ public class ProjectGeneratorTest {
       OUTPUT_DIRECTORY.resolve(PROJECT_CONTAINER);
   private static final Path OUTPUT_PROJECT_FILE_PATH =
       OUTPUT_PROJECT_BUNDLE_PATH.resolve("project.pbxproj");
+  private static final FlavorDomain<CxxPlatform> PLATFORMS =
+      new FlavorDomain<>("C/C++ platform", ImmutableMap.<Flavor, CxxPlatform>of());
+  private static final CxxPlatform DEFAULT_PLATFORM = CxxPlatformUtils.DEFAULT_PLATFORM;
 
   private SettableFakeClock clock;
   private ProjectFilesystem projectFilesystem;
@@ -245,7 +252,7 @@ public class ProjectGeneratorTest {
     BuildTarget buildTarget = BuildTarget.builder("//foo", "lib").build();
     TargetNode<?> node = AppleLibraryBuilder
         .createBuilder(buildTarget)
-        .setSrcs(Optional.of(ImmutableList.<SourceWithFlags>of()))
+        .setSrcs(Optional.of(ImmutableSortedSet.<SourceWithFlags>of()))
         .setHeaders(
             ImmutableSortedSet.<SourcePath>of(
                 new TestSourcePath("HeaderGroup1/foo.h"),
@@ -331,14 +338,14 @@ public class ProjectGeneratorTest {
     BuildTarget buildTarget = BuildTarget.builder("//foo", "lib").build();
     TargetNode<?> node = AppleLibraryBuilder
         .createBuilder(buildTarget)
-        .setSrcs(Optional.of(ImmutableList.<SourceWithFlags>of()))
+        .setSrcs(Optional.of(ImmutableSortedSet.<SourceWithFlags>of()))
         .setHeaders(
-            ImmutableMap.<String, SourcePath>of(
+            ImmutableSortedMap.<String, SourcePath>of(
                 "any/name.h", new TestSourcePath("HeaderGroup1/foo.h"),
                 "different/name.h", new TestSourcePath("HeaderGroup2/baz.h"),
                 "one/more/name.h", new BuildTargetSourcePath(privateGeneratedTarget)))
         .setExportedHeaders(
-            ImmutableMap.<String, SourcePath>of(
+            ImmutableSortedMap.<String, SourcePath>of(
                 "yet/another/name.h", new TestSourcePath("HeaderGroup1/bar.h"),
                 "and/one/more.h", new BuildTargetSourcePath(publicGeneratedTarget)))
         .setUseBuckHeaderMaps(Optional.of(true))
@@ -418,9 +425,9 @@ public class ProjectGeneratorTest {
     BuildTarget buildTarget = BuildTarget.builder("//foo", "lib").build();
     TargetNode<?> node = AppleLibraryBuilder
         .createBuilder(buildTarget)
-        .setSrcs(Optional.of(ImmutableList.<SourceWithFlags>of()))
+        .setSrcs(Optional.of(ImmutableSortedSet.<SourceWithFlags>of()))
         .setHeaders(
-            ImmutableMap.<String, SourcePath>of(
+            ImmutableSortedMap.<String, SourcePath>of(
                 "key.h", new TestSourcePath("value.h")))
         .setUseBuckHeaderMaps(Optional.of(true))
         .build();
@@ -442,9 +449,9 @@ public class ProjectGeneratorTest {
 
     node = AppleLibraryBuilder
         .createBuilder(buildTarget)
-        .setSrcs(Optional.of(ImmutableList.<SourceWithFlags>of()))
+        .setSrcs(Optional.of(ImmutableSortedSet.<SourceWithFlags>of()))
         .setHeaders(
-            ImmutableMap.<String, SourcePath>of(
+            ImmutableSortedMap.<String, SourcePath>of(
                 "new-key.h", new TestSourcePath("value.h")))
         .setUseBuckHeaderMaps(Optional.of(true))
         .build();
@@ -474,9 +481,9 @@ public class ProjectGeneratorTest {
     BuildTarget buildTarget = BuildTarget.builder("//foo", "lib").build();
     TargetNode<?> node = AppleLibraryBuilder
         .createBuilder(buildTarget)
-        .setSrcs(Optional.of(ImmutableList.<SourceWithFlags>of()))
+        .setSrcs(Optional.of(ImmutableSortedSet.<SourceWithFlags>of()))
         .setHeaders(
-            ImmutableMap.<String, SourcePath>of(
+            ImmutableSortedMap.<String, SourcePath>of(
                 "key.h", new TestSourcePath("value.h")))
         .setUseBuckHeaderMaps(Optional.of(true))
         .build();
@@ -498,9 +505,9 @@ public class ProjectGeneratorTest {
 
     node = AppleLibraryBuilder
         .createBuilder(buildTarget)
-        .setSrcs(Optional.of(ImmutableList.<SourceWithFlags>of()))
+        .setSrcs(Optional.of(ImmutableSortedSet.<SourceWithFlags>of()))
         .setHeaders(
-            ImmutableMap.<String, SourcePath>of(
+            ImmutableSortedMap.<String, SourcePath>of(
                 "key.h", new TestSourcePath("new-value.h")))
         .setUseBuckHeaderMaps(Optional.of(true))
         .build();
@@ -530,7 +537,7 @@ public class ProjectGeneratorTest {
         .createBuilder(libraryTarget)
         .setSrcs(
             Optional.of(
-                ImmutableList.of(
+                ImmutableSortedSet.of(
                     SourceWithFlags.of(
                         new TestSourcePath("foo.h"),
                         ImmutableList.of("public")),
@@ -588,7 +595,7 @@ public class ProjectGeneratorTest {
         .createBuilder(libraryTarget)
         .setSrcs(
             Optional.of(
-                ImmutableList.of(
+                ImmutableSortedSet.of(
                     SourceWithFlags.of(
                         new TestSourcePath("foo.h"),
                         ImmutableList.of("public")),
@@ -652,7 +659,7 @@ public class ProjectGeneratorTest {
         .createBuilder(binaryTarget)
         .setSrcs(
             Optional.of(
-                ImmutableList.of(
+                ImmutableSortedSet.of(
                     SourceWithFlags.of(
                         new TestSourcePath("foo.h"),
                         ImmutableList.of("public")),
@@ -745,7 +752,7 @@ public class ProjectGeneratorTest {
                     ImmutableMap.<String, String>of())))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(
+                ImmutableSortedSet.of(
                     SourceWithFlags.of(
                         new TestSourcePath("foo.m"), ImmutableList.of("-foo")),
                     SourceWithFlags.of(new TestSourcePath("bar.m")))))
@@ -1287,7 +1294,7 @@ public class ProjectGeneratorTest {
         .setConfigs(Optional.of(configs))
         .setUseBuckHeaderMaps(Optional.of(false))
         .setSrcs(
-            Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("foo.m")))))
+            Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("foo.m")))))
         .setFrameworks(
             Optional.of(
                 ImmutableSortedSet.of(
@@ -1305,7 +1312,7 @@ public class ProjectGeneratorTest {
         .setUseBuckHeaderMaps(Optional.of(false))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
+                ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
         .setFrameworks(
             Optional.of(
                 ImmutableSortedSet.of(
@@ -1357,7 +1364,7 @@ public class ProjectGeneratorTest {
         .setConfigs(Optional.of(configs))
         .setUseBuckHeaderMaps(Optional.of(false))
         .setSrcs(
-            Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("foo.m")))))
+            Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("foo.m")))))
         .setFrameworks(
             Optional.of(
                 ImmutableSortedSet.of(
@@ -1375,7 +1382,7 @@ public class ProjectGeneratorTest {
         .setUseBuckHeaderMaps(Optional.of(false))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
+                ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
         .setFrameworks(
             Optional.of(
                 ImmutableSortedSet.of(
@@ -1422,7 +1429,7 @@ public class ProjectGeneratorTest {
         .setUseBuckHeaderMaps(Optional.of(false))
         .setConfigs(Optional.of(configs))
         .setSrcs(
-            Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("foo.m")))))
+            Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("foo.m")))))
         .setFrameworks(
             Optional.of(
                 ImmutableSortedSet.of(
@@ -1437,7 +1444,7 @@ public class ProjectGeneratorTest {
         .createBuilder(libraryTarget)
         .setConfigs(Optional.of(configs))
         .setSrcs(
-            Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("foo.m")))))
+            Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("foo.m")))))
         .setFrameworks(
             Optional.of(
                 ImmutableSortedSet.of(
@@ -1456,7 +1463,7 @@ public class ProjectGeneratorTest {
         .setConfigs(Optional.of(configs))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
+                ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
         .setFrameworks(
             Optional.of(
                 ImmutableSortedSet.of(
@@ -1527,7 +1534,7 @@ public class ProjectGeneratorTest {
         .setUseBuckHeaderMaps(Optional.of(false))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
+                ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
         .setDeps(Optional.of(ImmutableSortedSet.of(libraryTarget)))
         .build();
 
@@ -1593,7 +1600,7 @@ public class ProjectGeneratorTest {
         .setUseBuckHeaderMaps(Optional.of(false))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
+                ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("fooTest.m")))))
         .setDeps(Optional.of(ImmutableSortedSet.of(libraryTarget)))
         .build();
 
@@ -1653,7 +1660,7 @@ public class ProjectGeneratorTest {
     BuildTarget depTarget = BuildTarget.builder("//dep", "dep").build();
     TargetNode<?> depNode = AppleLibraryBuilder
         .createBuilder(depTarget)
-        .setSrcs(Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
+        .setSrcs(Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
         .setUseBuckHeaderMaps(Optional.of(false))
         .build();
 
@@ -1667,7 +1674,7 @@ public class ProjectGeneratorTest {
                     ImmutableMap.<String, String>of())))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(
+                ImmutableSortedSet.of(
                     SourceWithFlags.of(
                         new TestSourcePath("foo.m"), ImmutableList.of("-foo")))))
         .setExtraXcodeSources(
@@ -2181,7 +2188,7 @@ public class ProjectGeneratorTest {
         .createBuilder(buildTarget)
         .setSrcs(
             Optional.of(
-                ImmutableList.of(
+                ImmutableSortedSet.of(
                     SourceWithFlags.of(
                         new TestSourcePath("foo.m"), ImmutableList.of("-foo")),
                     SourceWithFlags.of(new TestSourcePath("bar.m")))))
@@ -2242,7 +2249,8 @@ public class ProjectGeneratorTest {
         .build();
     TargetNode<?> dependentSharedLibraryNode = AppleLibraryBuilder
         .createBuilder(dependentSharedLibraryTarget)
-        .setSrcs(Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("empty.m")))))
+        .setSrcs(
+            Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("empty.m")))))
         .setDeps(Optional.of(ImmutableSortedSet.of(dependentStaticLibraryTarget)))
         .build();
 
@@ -2294,7 +2302,7 @@ public class ProjectGeneratorTest {
         .build();
     TargetNode<?> dependentSharedLibraryNode = AppleLibraryBuilder
         .createBuilder(dependentSharedLibraryTarget)
-        .setSrcs(Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
+        .setSrcs(Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
         .setDeps(Optional.of(ImmutableSortedSet.of(dependentStaticLibraryTarget)))
         .build();
 
@@ -2378,7 +2386,7 @@ public class ProjectGeneratorTest {
         .build();
     TargetNode<?> libraryNode = AppleLibraryBuilder
         .createBuilder(libraryTarget)
-        .setSrcs(Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
+        .setSrcs(Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
         .setDeps(Optional.of(ImmutableSortedSet.of(dependentFrameworkTarget)))
         .build();
 
@@ -2919,12 +2927,14 @@ public class ProjectGeneratorTest {
                                 PBXReference.SourceTree.SDKROOT,
                                 Paths.get("DeclaredInTestLibDep.framework"))))))
             .setDeps(Optional.of(ImmutableSortedSet.of(testLibDepResource.getBuildTarget())))
-            .setSrcs(Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
+            .setSrcs(
+                Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
             .build();
     TargetNode<AppleNativeTargetDescriptionArg> dep1 =
         AppleLibraryBuilder.createBuilder(BuildTarget.builder("//foo", "dep1").build())
             .setDeps(Optional.of(ImmutableSortedSet.of(testLibDepLib.getBuildTarget())))
-            .setSrcs(Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
+            .setSrcs(
+                Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
             .setFrameworks(
                 Optional.of(
                     ImmutableSortedSet.of(
@@ -2935,7 +2945,8 @@ public class ProjectGeneratorTest {
             .build();
     TargetNode<AppleNativeTargetDescriptionArg> dep2 =
         AppleLibraryBuilder.createBuilder(BuildTarget.builder("//foo", "dep2").build())
-            .setSrcs(Optional.of(ImmutableList.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
+            .setSrcs(
+                Optional.of(ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("e.m")))))
             .build();
     TargetNode<AppleTestDescription.Arg> xctest1 =
         AppleTestBuilder.createBuilder(BuildTarget.builder("//foo", "xctest1").build())
@@ -2972,6 +2983,8 @@ public class ProjectGeneratorTest {
         ProjectGenerator.SEPARATED_PROJECT_OPTIONS,
         Optional.<BuildTarget>absent(),
         ImmutableList.<String>of(),
+        PLATFORMS,
+        DEFAULT_PLATFORM,
         new Function<TargetNode<?>, Path>() {
           @Nullable
           @Override
@@ -3057,7 +3070,7 @@ public class ProjectGeneratorTest {
                     ImmutableMap.<String, String>of())))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(
+                ImmutableSortedSet.of(
                     SourceWithFlags.of(
                         new BuildTargetSourcePath(source1Target)),
                     SourceWithFlags.of(
@@ -3146,7 +3159,7 @@ public class ProjectGeneratorTest {
                     ImmutableMap.<String, String>of())))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(
+                ImmutableSortedSet.of(
                     SourceWithFlags.of(
                         new TestSourcePath("foo.m"), ImmutableList.of("-foo")))))
         .build();
@@ -3163,6 +3176,8 @@ public class ProjectGeneratorTest {
         ImmutableSet.<ProjectGenerator.Option>of(),
         Optional.of(binaryTarget),
         ImmutableList.of("--flag", "value with spaces"),
+        PLATFORMS,
+        DEFAULT_PLATFORM,
         Functions.<Path>constant(null));
     projectGenerator.createXcodeProjects();
 
@@ -3185,7 +3200,8 @@ public class ProjectGeneratorTest {
     PBXShellScriptBuildPhase shellScriptBuildPhase = (PBXShellScriptBuildPhase) buildPhase;
     assertThat(
         shellScriptBuildPhase.getShellScript(),
-        equalTo("buck build --flag 'value with spaces' " + binaryTarget.getFullyQualifiedName()));
+        containsString(
+            "buck build --flag 'value with spaces' " + binaryTarget.getFullyQualifiedName()));
   }
 
   @Test
@@ -3205,7 +3221,7 @@ public class ProjectGeneratorTest {
                     ImmutableMap.<String, String>of())))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(SourceWithFlags.of(new TestSourcePath("foo.mm")))))
+                ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("foo.mm")))))
         .build();
 
     ProjectGenerator projectGenerator = createProjectGeneratorForCombinedProject(
@@ -3242,7 +3258,7 @@ public class ProjectGeneratorTest {
                     ImmutableMap.<String, String>of())))
         .setSrcs(
             Optional.of(
-                ImmutableList.of(SourceWithFlags.of(new TestSourcePath("foo.mm")))))
+                ImmutableSortedSet.of(SourceWithFlags.of(new TestSourcePath("foo.mm")))))
         .build();
 
     ProjectGenerator projectGenerator = createProjectGeneratorForCombinedProject(
@@ -3351,6 +3367,8 @@ public class ProjectGeneratorTest {
         projectGeneratorOptions,
         Optional.<BuildTarget>absent(),
         ImmutableList.<String>of(),
+        PLATFORMS,
+        DEFAULT_PLATFORM,
         Functions.<Path>constant(null));
   }
 

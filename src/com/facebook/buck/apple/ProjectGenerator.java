@@ -41,6 +41,7 @@ import com.facebook.buck.apple.xcode.xcodeproj.XCBuildConfiguration;
 import com.facebook.buck.apple.xcode.xcodeproj.XCConfigurationList;
 import com.facebook.buck.apple.xcode.xcodeproj.XCVersionGroup;
 import com.facebook.buck.cxx.CxxDescriptionEnhancer;
+import com.facebook.buck.cxx.CxxPlatform;
 import com.facebook.buck.cxx.CxxSource;
 import com.facebook.buck.cxx.HeaderVisibility;
 import com.facebook.buck.io.MorePaths;
@@ -51,6 +52,9 @@ import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuckVersion;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
+import com.facebook.buck.model.Flavor;
+import com.facebook.buck.model.FlavorDomain;
+import com.facebook.buck.model.FlavorDomainException;
 import com.facebook.buck.model.HasTests;
 import com.facebook.buck.parser.NoSuchBuildTargetException;
 import com.facebook.buck.rules.BuildRuleType;
@@ -78,6 +82,7 @@ import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
+import com.google.common.base.Strings;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -98,7 +103,10 @@ import com.google.common.hash.HashCode;
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.google.common.io.BaseEncoding;
+import com.google.common.io.Resources;
 import com.google.common.util.concurrent.UncheckedExecutionException;
+
+import org.stringtemplate.v4.ST;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -122,7 +130,10 @@ import java.util.Set;
  * Generator for xcode project and associated files from a set of xcode/ios rules.
  */
 public class ProjectGenerator {
+  public static final String BUILD_WITH_BUCK_POSTFIX = "-Buck";
+
   private static final Logger LOG = Logger.get(ProjectGenerator.class);
+  private static final String BUILD_WITH_BUCK_TEMPLATE = "build-with-buck.st";
 
   public enum Option {
     /** Use short BuildTarget name instead of full name for targets */
@@ -208,6 +219,8 @@ public class ProjectGenerator {
   private final ImmutableSet<Option> options;
   private final Optional<BuildTarget> targetToBuildWithBuck;
   private final ImmutableList<String> buildWithBuckFlags;
+  private final FlavorDomain<CxxPlatform> cxxPlatforms;
+  private final CxxPlatform defaultCxxPlatform;
 
   private ImmutableSet<TargetNode<AppleTestDescription.Arg>> testsToGenerateAsStaticLibraries =
       ImmutableSet.of();
@@ -247,6 +260,8 @@ public class ProjectGenerator {
       Set<Option> options,
       Optional<BuildTarget> targetToBuildWithBuck,
       ImmutableList<String> buildWithBuckFlags,
+      FlavorDomain<CxxPlatform> cxxPlatforms,
+      CxxPlatform defaultCxxPlatform,
       Function<? super TargetNode<?>, Path> outputPathOfNode) {
     this.sourcePathResolver = new Function<SourcePath, Path>() {
       @Override
@@ -265,6 +280,8 @@ public class ProjectGenerator {
     this.options = ImmutableSet.copyOf(options);
     this.targetToBuildWithBuck = targetToBuildWithBuck;
     this.buildWithBuckFlags = buildWithBuckFlags;
+    this.cxxPlatforms = cxxPlatforms;
+    this.defaultCxxPlatform = defaultCxxPlatform;
     this.outputPathOfNode = outputPathOfNode;
 
     this.projectPath = outputDirectory.resolve(projectName + ".xcodeproj");
@@ -370,7 +387,7 @@ public class ProjectGenerator {
       }
 
       if (targetToBuildWithBuck.isPresent()) {
-        generateAggregateTarget(
+        generateBuildWithBuckTarget(
             Preconditions.checkNotNull(targetGraph.get(targetToBuildWithBuck.get())));
       }
 
@@ -422,22 +439,55 @@ public class ProjectGenerator {
     }
   }
 
-  private void generateAggregateTarget(TargetNode<?> targetNode) {
+  private void generateBuildWithBuckTarget(TargetNode<?> targetNode) throws IOException {
+    CxxPlatform cxxPlatform;
+    ImmutableSet<Flavor> flavors = ImmutableSet.copyOf(targetNode.getBuildTarget().getFlavors());
+    try {
+      cxxPlatform = cxxPlatforms
+          .getValue(flavors)
+          .or(defaultCxxPlatform);
+    } catch (FlavorDomainException e) {
+      throw new HumanReadableException("%s: %s", targetNode.getBuildTarget(), e.getMessage());
+    }
+
     final BuildTarget buildTarget = targetNode.getBuildTarget();
-    ImmutableMap<String, ImmutableMap<String, String>> configs =
-        getAppleNativeNode(targetGraph, targetNode).get().getConstructorArg().configs.get();
-    String productName = getXcodeTargetName(buildTarget) + "-Buck";
+    String productName = getXcodeTargetName(buildTarget) + BUILD_WITH_BUCK_POSTFIX;
+    String binaryName = AppleBundle.getBinaryName(targetToBuildWithBuck.get());
+    Path bundleDestination = getScratchPathForAppBundle(targetToBuildWithBuck.get());
 
     PBXShellScriptBuildPhase shellScriptBuildPhase = new PBXShellScriptBuildPhase();
-    ImmutableList<String> command = ImmutableList
-        .<String>builder()
-        .add("buck")
-        .add("build")
-        .addAll(Iterables.transform(buildWithBuckFlags, Escaper.BASH_ESCAPER))
-        .add(Escaper.escapeAsBashString(buildTarget.getFullyQualifiedName()))
-        .build();
+    ST template = new ST(Resources.toString(
+        Resources.getResource(ProjectGenerator.class, BUILD_WITH_BUCK_TEMPLATE),
+        Charsets.UTF_8));
 
-    shellScriptBuildPhase.setShellScript(Joiner.on(' ').join(command));
+    String compDir = cxxPlatform.getDebugPathSanitizer().getCompilationDirectory();
+    // Use the hostname for padding instead of the directory, this way the directory matches without
+    // having to resolve it.
+    String sourceDir = Strings.padStart(
+        ":" + projectFilesystem.getRootPath().toString(),
+        compDir.length(),
+        'f');
+    String buildFlags = Joiner.on(' ').join(Iterables.transform(
+        buildWithBuckFlags,
+        Escaper.BASH_ESCAPER));
+    String escapedBuildTarget = Escaper.escapeAsBashString(buildTarget.getFullyQualifiedName());
+    Path resolvedBundleSource = projectFilesystem.resolve(
+        AppleBundle.getBundleRoot(targetToBuildWithBuck.get(), "app"));
+    Path resolvedBundleDestination = projectFilesystem.resolve(bundleDestination);
+
+    template.add("comp_dir", compDir);
+    template.add("source_dir", sourceDir);
+    template.add("build_flags", buildFlags);
+    template.add("escaped_build_target", escapedBuildTarget);
+    template.add("resolved_bundle_source", resolvedBundleSource);
+    template.add("resolved_bundle_destination", resolvedBundleDestination);
+    template.add("resolved_bundle_destination_parent", resolvedBundleDestination.getParent());
+    template.add("binary_name", binaryName);
+
+    shellScriptBuildPhase.setShellScript(template.render());
+
+    ImmutableMap<String, ImmutableMap<String, String>> configs =
+        getAppleNativeNode(targetGraph, targetNode).get().getConstructorArg().configs.get();
 
     XCConfigurationList configurationList = new XCConfigurationList();
     PBXGroup group = project
@@ -464,13 +514,19 @@ public class ProjectGenerator {
       configuration.setBuildSettings(inlineSettings);
     }
 
-    PBXAggregateTarget aggregateTarget = new PBXAggregateTarget(productName);
-    aggregateTarget.setProductName(productName);
-    aggregateTarget.getBuildPhases().add(shellScriptBuildPhase);
-    aggregateTarget.setBuildConfigurationList(configurationList);
-    project.getTargets().add(aggregateTarget);
+    PBXAggregateTarget buildWithBuckTarget = new PBXAggregateTarget(productName);
+    buildWithBuckTarget.setProductName(productName);
+    buildWithBuckTarget.getBuildPhases().add(shellScriptBuildPhase);
+    buildWithBuckTarget.setBuildConfigurationList(configurationList);
+    project.getTargets().add(buildWithBuckTarget);
 
-    targetNodeToGeneratedProjectTargetBuilder.put(targetNode, aggregateTarget);
+    targetNodeToGeneratedProjectTargetBuilder.put(targetNode, buildWithBuckTarget);
+  }
+
+  static Path getScratchPathForAppBundle(BuildTarget targetToBuildWithBuck) {
+    return BuildTargets
+        .getScratchPath(targetToBuildWithBuck, "/%s-unsanitised")
+        .resolve(AppleBundle.getBinaryName(targetToBuildWithBuck) + ".app");
   }
 
   @SuppressWarnings("unchecked")

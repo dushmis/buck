@@ -22,6 +22,7 @@ import com.facebook.buck.android.AndroidBuckConfig;
 import com.facebook.buck.android.AndroidBuildConfigDescription;
 import com.facebook.buck.android.AndroidDirectoryResolver;
 import com.facebook.buck.android.AndroidInstrumentationApkDescription;
+import com.facebook.buck.android.AndroidInstrumentationTestDescription;
 import com.facebook.buck.android.AndroidLibraryDescription;
 import com.facebook.buck.android.AndroidManifestDescription;
 import com.facebook.buck.android.AndroidPrebuiltAarDescription;
@@ -51,8 +52,8 @@ import com.facebook.buck.apple.AppleTestDescription;
 import com.facebook.buck.apple.AppleToolchain;
 import com.facebook.buck.apple.AppleToolchainDiscovery;
 import com.facebook.buck.apple.CoreDataModelDescription;
-import com.facebook.buck.apple.XcodePrebuildScriptDescription;
 import com.facebook.buck.apple.XcodePostbuildScriptDescription;
+import com.facebook.buck.apple.XcodePrebuildScriptDescription;
 import com.facebook.buck.apple.XcodeWorkspaceConfigDescription;
 import com.facebook.buck.cli.BuckConfig;
 import com.facebook.buck.cxx.CxxBinaryDescription;
@@ -116,6 +117,7 @@ import com.facebook.buck.util.ProcessExecutor;
 import com.facebook.buck.util.environment.Platform;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -131,6 +133,8 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.Executors;
 
+import javax.annotation.Nullable;
+
 /**
  * A registry of all the build rules types understood by Buck.
  */
@@ -139,12 +143,18 @@ public class KnownBuildRuleTypes {
   private static final Logger LOG = Logger.get(KnownBuildRuleTypes.class);
   private final ImmutableMap<BuildRuleType, Description<?>> descriptions;
   private final ImmutableMap<String, BuildRuleType> types;
+  private final FlavorDomain<CxxPlatform> cxxPlatforms;
+  private final CxxPlatform defaultCxxPlatforms;
 
   private KnownBuildRuleTypes(
       Map<BuildRuleType, Description<?>> descriptions,
-      Map<String, BuildRuleType> types) {
+      Map<String, BuildRuleType> types,
+      FlavorDomain<CxxPlatform> cxxPlatforms,
+      CxxPlatform defaultCxxPlatforms) {
     this.descriptions = ImmutableMap.copyOf(descriptions);
     this.types = ImmutableMap.copyOf(types);
+    this.cxxPlatforms = cxxPlatforms;
+    this.defaultCxxPlatforms = defaultCxxPlatforms;
   }
 
   public BuildRuleType getBuildRuleType(String named) {
@@ -166,6 +176,14 @@ public class KnownBuildRuleTypes {
 
   public ImmutableSet<Description<?>> getAllDescriptions() {
     return ImmutableSet.copyOf(descriptions.values());
+  }
+
+  public FlavorDomain<CxxPlatform> getCxxPlatforms() {
+    return cxxPlatforms;
+  }
+
+  public CxxPlatform getDefaultCxxPlatforms() {
+    return defaultCxxPlatforms;
   }
 
   public static Builder builder() {
@@ -405,7 +423,7 @@ public class KnownBuildRuleTypes {
                 SmartDexingStep.determineOptimalThreadCount(),
                 new CommandThreadFactory("SmartDexing")));
 
-    builder.register(new AndroidAarDescription(new AndroidManifestDescription()));
+    builder.register(new AndroidAarDescription(new AndroidManifestDescription(), ndkCxxPlatforms));
     builder.register(
         new AndroidBinaryDescription(
             androidBinaryOptions,
@@ -418,6 +436,7 @@ public class KnownBuildRuleTypes {
             androidBinaryOptions,
             ndkCxxPlatforms,
             dxExecutorService));
+    builder.register(new AndroidInstrumentationTestDescription(testRuleTimeoutMs));
     builder.register(new AndroidLibraryDescription(androidBinaryOptions));
     builder.register(new AndroidManifestDescription());
     builder.register(new AndroidPrebuiltAarDescription(androidBinaryOptions));
@@ -521,6 +540,9 @@ public class KnownBuildRuleTypes {
     builder.register(new XcodePrebuildScriptDescription());
     builder.register(new XcodeWorkspaceConfigDescription());
 
+    builder.setCxxPlatforms(cxxPlatforms);
+    builder.setDefaultCxxPlatform(defaultCxxPlatform);
+
     return builder;
   }
 
@@ -528,19 +550,39 @@ public class KnownBuildRuleTypes {
     private final Map<BuildRuleType, Description<?>> descriptions;
     private final Map<String, BuildRuleType> types;
 
+    @Nullable
+    private FlavorDomain<CxxPlatform> cxxPlatforms;
+    @Nullable
+    private CxxPlatform defaultCxxPlatform;
+
     protected Builder() {
       this.descriptions = Maps.newConcurrentMap();
       this.types = Maps.newConcurrentMap();
     }
 
-    public void register(Description<?> description) {
+    public Builder register(Description<?> description) {
       BuildRuleType type = description.getBuildRuleType();
       types.put(type.getName(), type);
       descriptions.put(type, description);
+      return this;
+    }
+
+    public Builder setCxxPlatforms(FlavorDomain<CxxPlatform> cxxPlatforms) {
+      this.cxxPlatforms = cxxPlatforms;
+      return this;
+    }
+
+    public Builder setDefaultCxxPlatform(CxxPlatform defaultCxxPlatform) {
+      this.defaultCxxPlatform = defaultCxxPlatform;
+      return this;
     }
 
     public KnownBuildRuleTypes build() {
-      return new KnownBuildRuleTypes(descriptions, types);
+      return new KnownBuildRuleTypes(
+          descriptions,
+          types,
+          Preconditions.checkNotNull(cxxPlatforms),
+          Preconditions.checkNotNull(defaultCxxPlatform));
     }
   }
 }
