@@ -19,13 +19,14 @@ package com.facebook.buck.cxx;
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeThat;
+import static org.junit.Assume.assumeTrue;
 
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
+import com.facebook.buck.testutil.integration.InferHelper;
 import com.facebook.buck.testutil.integration.ProjectWorkspace;
 import com.facebook.buck.testutil.integration.TestDataHelper;
 import com.facebook.buck.util.environment.Platform;
 
-import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -87,7 +88,7 @@ public class CxxLibraryIntegrationTest {
 
   @Test
   public void libraryBuildPathIsSoName() throws IOException {
-    Assume.assumeTrue(Platform.detect() == Platform.LINUX);
+    assumeTrue(Platform.detect() == Platform.LINUX);
     ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
         this, "shared_library", tmp);
     workspace.setUp();
@@ -106,6 +107,13 @@ public class CxxLibraryIntegrationTest {
         TestDataHelper.createProjectWorkspaceForScenario(this, "force_static_pic", tmp);
     workspace.setUp();
     workspace.runBuckBuild("//:foo#shared,default").assertSuccess();
+  }
+
+  @Test
+  public void runInferOnSimpleLibraryWithoutDeps() throws IOException {
+    assumeTrue(Platform.detect() != Platform.WINDOWS);
+    ProjectWorkspace workspace = InferHelper.setupCxxInferWorkspace(this, tmp);
+    workspace.runBuckBuild("//foo:dep_one").assertSuccess();
   }
 
 }

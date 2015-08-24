@@ -74,8 +74,9 @@ public class CxxBoostTest extends CxxTest implements HasRuntimeDeps {
       ImmutableSortedSet<BuildRule> additionalDeps,
       ImmutableSet<Label> labels,
       ImmutableSet<String> contacts,
-      ImmutableSet<BuildRule> sourceUnderTest) {
-    super(params, resolver, env, labels, contacts, sourceUnderTest);
+      ImmutableSet<BuildRule> sourceUnderTest,
+      boolean runTestSeparately) {
+    super(params, resolver, env, labels, contacts, sourceUnderTest, runTestSeparately);
     this.executable = executable;
     this.additionalDeps = additionalDeps;
   }
@@ -91,7 +92,7 @@ public class CxxBoostTest extends CxxTest implements HasRuntimeDeps {
         .add("--report_format=xml")
         .add("--report_level=detailed")
         .add("--result_code=no")
-        .add("--report_sink=" + context.getProjectFilesystem().resolve(output))
+        .add("--report_sink=" + getProjectFilesystem().resolve(output))
         .build();
   }
 
@@ -207,7 +208,7 @@ public class CxxBoostTest extends CxxTest implements HasRuntimeDeps {
   @Override
   public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
     return ImmutableSortedSet.<BuildRule>naturalOrder()
-        .addAll(executable.getInputs(getResolver()))
+        .addAll(executable.getDeps(getResolver()))
         .addAll(additionalDeps)
         .build();
   }

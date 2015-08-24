@@ -32,6 +32,7 @@ import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetGraphToActionGraph;
+import com.facebook.buck.rules.keys.DependencyFileRuleKeyBuilderFactory;
 import com.facebook.buck.rules.keys.InputBasedRuleKeyBuilderFactory;
 import com.facebook.buck.step.AdbOptions;
 import com.facebook.buck.step.TargetDevice;
@@ -99,8 +100,13 @@ public class FetchCommand extends BuildCommand {
              params.getAndroidPlatformTargetSupplier(),
              new CachingBuildEngine(
                  pool.getExecutor(),
+                 params.getFileHashCache(),
                  getBuildEngineMode().or(params.getBuckConfig().getBuildEngineMode()),
+                 params.getBuckConfig().getBuildDepFiles(),
                  new InputBasedRuleKeyBuilderFactory(
+                     params.getFileHashCache(),
+                     new SourcePathResolver(transformer.getRuleResolver())),
+                 new DependencyFileRuleKeyBuilderFactory(
                      params.getFileHashCache(),
                      new SourcePathResolver(transformer.getRuleResolver()))),
              getArtifactCache(params),
@@ -113,10 +119,11 @@ public class FetchCommand extends BuildCommand {
              params.getClock(),
              Optional.<AdbOptions>absent(),
              Optional.<TargetDeviceOptions>absent())) {
-      exitCode = build.executeAndPrintFailuresToConsole(
+      exitCode = build.executeAndPrintFailuresToEventBus(
           buildTargets,
           isKeepGoing(),
-          params.getConsole(),
+          params.getBuckEventBus(),
+          params.getConsole().getAnsi(),
           getPathToBuildReport(params.getBuckConfig()));
     }
 

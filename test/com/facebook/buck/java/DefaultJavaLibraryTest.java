@@ -1084,7 +1084,6 @@ public class DefaultJavaLibraryTest {
     ImmutableList.Builder<Step> stepsBuilder = ImmutableList.builder();
     buildable.createCommandsForJavac(
         buildable.getPathToOutput(),
-        ImmutableSet.copyOf(buildable.getTransitiveClasspathEntries().values()),
         ImmutableSet.copyOf(buildable.getDeclaredClasspathEntries().values()),
         DEFAULT_JAVAC_OPTIONS,
         Optional.<JavacStep.SuggestBuildRules>absent(),
@@ -1115,7 +1114,6 @@ public class DefaultJavaLibraryTest {
     ImmutableList.Builder<Step> stepsBuilder = ImmutableList.builder();
     buildable.createCommandsForJavac(
         buildable.getPathToOutput(),
-        ImmutableSet.copyOf(buildable.getTransitiveClasspathEntries().values()),
         ImmutableSet.copyOf(buildable.getDeclaredClasspathEntries().values()),
         buildable.getJavacOptions(),
         Optional.<JavacStep.SuggestBuildRules>absent(),
@@ -1149,13 +1147,13 @@ public class DefaultJavaLibraryTest {
     assertTrue(steps.get(0) instanceof ShellStep);
     ShellStep step0 = (ShellStep) steps.get(0);
     assertEquals(
-        ImmutableList.of("bash", "-c", "tool arg1", outputDirectory.toString()),
+        ImmutableList.of("bash", "-c", "tool arg1 " + outputDirectory),
         step0.getShellCommand(executionContext));
 
     assertTrue(steps.get(1) instanceof ShellStep);
     ShellStep step1 = (ShellStep) steps.get(1);
     assertEquals(
-        ImmutableList.of("bash", "-c", "tool2", outputDirectory.toString()),
+        ImmutableList.of("bash", "-c", "tool2 " + outputDirectory),
         step1.getShellCommand(executionContext));
   }
 

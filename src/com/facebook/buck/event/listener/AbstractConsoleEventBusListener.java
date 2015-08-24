@@ -26,6 +26,7 @@ import com.facebook.buck.parser.ParseEvent;
 import com.facebook.buck.rules.ActionGraphEvent;
 import com.facebook.buck.rules.BuildEvent;
 import com.facebook.buck.rules.BuildRuleEvent;
+import com.facebook.buck.rules.BuildRuleStatus;
 import com.facebook.buck.timing.Clock;
 import com.facebook.buck.util.Ansi;
 import com.facebook.buck.util.Console;
@@ -171,7 +172,7 @@ public abstract class AbstractConsoleEventBusListener implements BuckEventListen
     } else if (logEvent.getLevel().equals(Level.WARNING)) {
       formattedLine = ansi.asWarningText(logEvent.getMessage());
     } else if (logEvent.getLevel().equals(Level.SEVERE)) {
-      formattedLine = ansi.asErrorText(logEvent.getMessage());
+      formattedLine = ansi.asHighlightedFailureText(logEvent.getMessage());
     }
     if (!formattedLine.isEmpty()) {
       // Split log messages at newlines and add each line individually to keep the line count
@@ -231,9 +232,10 @@ public abstract class AbstractConsoleEventBusListener implements BuckEventListen
   }
 
   @Subscribe
-  public void incrementNumRulesCompleted(
-      @SuppressWarnings("unused") BuildRuleEvent.Finished finished) {
-    numRulesCompleted.getAndIncrement();
+  public void incrementNumRulesCompleted(BuildRuleEvent.Finished finished) {
+    if (finished.getStatus() != BuildRuleStatus.CANCELED) {
+      numRulesCompleted.getAndIncrement();
+    }
   }
 
   @Subscribe

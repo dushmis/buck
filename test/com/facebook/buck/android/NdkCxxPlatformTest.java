@@ -47,6 +47,7 @@ import com.google.common.base.Optional;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
@@ -96,7 +97,8 @@ public class NdkCxxPlatformTest {
               pathResolver,
               entry.getValue().getCxxPlatform(),
               ImmutableList.<CxxPreprocessorInput>of(),
-              ImmutableList.<String>of());
+              ImmutableList.<String>of(),
+              Optional.<SourcePath>absent());
       CxxPreprocessAndCompile rule;
       switch (operation) {
         case PREPROCESS_AND_COMPILE:
@@ -172,7 +174,8 @@ public class NdkCxxPlatformTest {
           Linker.LinkableDepType.SHARED,
           ImmutableList.<BuildRule>of(),
           Optional.<Linker.CxxRuntimeType>absent(),
-          Optional.<SourcePath>absent());
+          Optional.<SourcePath>absent(),
+          ImmutableSet.<BuildRule>of());
       RuleKey.Builder builder = ruleKeyBuilderFactory.newInstance(rule);
       ruleKeys.put(entry.getKey(), builder.build());
     }

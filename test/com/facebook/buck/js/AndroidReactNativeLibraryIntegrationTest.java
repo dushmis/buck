@@ -61,6 +61,26 @@ public class AndroidReactNativeLibraryIntegrationTest {
   }
 
   @Test
+  public void testAaptPackageDependsOnReactNativeBundle() throws IOException {
+    workspace.enableDirCache();
+    workspace.runBuckBuild("//apps/sample:app-without-rn-res").assertSuccess();
+    ZipInspector zipInspector = new ZipInspector(
+        workspace.getPath("buck-out/gen/apps/sample/app-without-rn-res.apk"));
+    zipInspector.assertFileExists("assets/SampleBundle.js");
+
+    workspace.runBuckCommand("clean");
+    workspace.replaceFileContents(
+        "apps/sample/BUCK",
+        "#REPLACE_ME_WITH_ANOTHER_RES",
+        "'//res/com/sample/unused:unused'");
+
+    workspace.runBuckBuild("//apps/sample:app-without-rn-res").assertSuccess();
+    zipInspector = new ZipInspector(
+        workspace.getPath("buck-out/gen/apps/sample/app-without-rn-res.apk"));
+    zipInspector.assertFileExists("assets/SampleBundle.js");
+  }
+
+  @Test
   public void testEditingUnusedJSFileDoesNotTriggerRebuild() throws IOException {
     workspace.runBuckBuild("//apps/sample:app").assertSuccess();
 

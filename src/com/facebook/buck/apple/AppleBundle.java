@@ -53,6 +53,8 @@ import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.io.Files;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Iterator;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -64,12 +66,14 @@ import javax.annotation.Nullable;
  */
 public class AppleBundle extends AbstractBuildRule implements NativeTestable {
   private static final Logger LOG = Logger.get(AppleBundle.class);
+  private static final String CODE_SIGN_ENTITLEMENTS = "CODE_SIGN_ENTITLEMENTS";
+  private static final String CODE_SIGN_IDENTITY = "CODE_SIGN_IDENTITY";
 
   @AddToRuleKey
   private final String extension;
 
   @AddToRuleKey
-  private final Optional<SourcePath> infoPlist;
+  private final SourcePath infoPlist;
 
   @AddToRuleKey
   private final ImmutableMap<String, String> infoPlistSubstitutions;
@@ -110,9 +114,15 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
   @AddToRuleKey
   private final String sdkName;
 
-  private final ImmutableSet<AppleAssetCatalog> bundledAssetCatalogs;
+  @AddToRuleKey
+  private final Optional<ImmutableSet<ProvisioningProfileMetadata>> provisioningProfiles;
 
-  private final Optional<AppleAssetCatalog> mergedAssetCatalog;
+  @AddToRuleKey
+  private final Optional<CodeSignIdentity> codeSignIdentity;
+
+  private final ImmutableSet<SourcePath> extensionBundlePaths;
+
+  private final Optional<AppleAssetCatalog> assetCatalog;
 
   private final String binaryName;
   private final Path bundleRoot;
@@ -122,22 +132,23 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
       BuildRuleParams params,
       SourcePathResolver resolver,
       Either<AppleBundleExtension, String> extension,
-      Optional<SourcePath> infoPlist,
+      SourcePath infoPlist,
       Map<String, String> infoPlistSubstitutions,
       Optional<BuildRule> binary,
       AppleBundleDestinations destinations,
       Set<SourcePath> resourceDirs,
       Set<SourcePath> resourceFiles,
       Set<SourcePath> dirsContainingResourceDirs,
+      ImmutableSet<SourcePath> extensionBundlePaths,
       Optional<ImmutableSet<SourcePath>> resourceVariantFiles,
       Tool ibtool,
       Tool dsymutil,
       Tool strip,
-      Set<AppleAssetCatalog> bundledAssetCatalogs,
-      Optional<AppleAssetCatalog> mergedAssetCatalog,
+      Optional<AppleAssetCatalog> assetCatalog,
       Set<BuildTarget> tests,
-      String platformName,
-      String sdkName) {
+      AppleSdk sdk,
+      ImmutableSet<CodeSignIdentity> allValidCodeSignIdentities,
+      Optional<SourcePath> provisioningProfileSearchPath) {
     super(params, resolver);
     this.extension = extension.isLeft() ?
         extension.getLeft().toFileExtension() :
@@ -149,19 +160,79 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
     this.resourceDirs = resourceDirs;
     this.resourceFiles = resourceFiles;
     this.dirsContainingResourceDirs = dirsContainingResourceDirs;
+    this.extensionBundlePaths = extensionBundlePaths;
     this.resourceVariantFiles = resourceVariantFiles;
     this.ibtool = ibtool;
     this.dsymutil = dsymutil;
     this.strip = strip;
-    this.bundledAssetCatalogs = ImmutableSet.copyOf(bundledAssetCatalogs);
-    this.mergedAssetCatalog = mergedAssetCatalog;
+    this.assetCatalog = assetCatalog;
     this.binaryName = getBinaryName(getBuildTarget());
     this.bundleRoot = getBundleRoot(getBuildTarget(), this.extension);
     this.binaryPath = this.destinations.getExecutablesPath()
         .resolve(this.binaryName);
     this.tests = ImmutableSortedSet.copyOf(tests);
-    this.platformName = platformName;
-    this.sdkName = sdkName;
+    this.platformName = sdk.getApplePlatform().getName();
+    this.sdkName = sdk.getName();
+
+    // We need to resolve the possible set of profiles and code sign identity at construction time
+    // because they form part of the rule key.
+    if (binary.isPresent() && ApplePlatform.needsCodeSign(this.platformName)) {
+      final Path searchPath;
+      if (provisioningProfileSearchPath.isPresent()) {
+        searchPath = resolver.getResolvedPath(provisioningProfileSearchPath.get());
+      } else {
+        searchPath = Paths.get(System.getProperty("user.home") +
+                "/Library/MobileDevice/Provisioning Profiles");
+      }
+
+      Optional<ImmutableSet<ProvisioningProfileMetadata>> provisioningProfiles;
+      try {
+        provisioningProfiles = Optional.of(
+            ProvisioningProfileCopyStep.findProfilesInPath(searchPath));
+      } catch (InterruptedException e) {
+        // We get here if the user pressed Ctrl-C during the profile discovery step.
+        // In this case, we'll fail anyway since the set of profiles will be empty.
+        provisioningProfiles = Optional.of(ImmutableSet.<ProvisioningProfileMetadata>of());
+      }
+      this.provisioningProfiles = provisioningProfiles;
+
+      Optional<CodeSignIdentity> foundIdentity = Optional.absent();
+      Optional<String> customIdentity = InfoPlistSubstitution.getVariableExpansionForPlatform(
+          CODE_SIGN_IDENTITY,
+          this.platformName,
+          this.infoPlistSubstitutions);
+      if (customIdentity.isPresent()) {
+        LOG.debug("Bundle specifies custom code signing identity: " + customIdentity.get());
+        if (CodeSignIdentity.isHash(customIdentity.get())) {
+          for (CodeSignIdentity identity : allValidCodeSignIdentities) {
+            if (identity.getHash().equals(customIdentity.get())) {
+              foundIdentity = Optional.of(identity);
+              break;
+            }
+          }
+        } else {
+          for (CodeSignIdentity identity : allValidCodeSignIdentities) {
+            if (identity.getFullName().startsWith(customIdentity.get())) {
+              foundIdentity = Optional.of(identity);
+              break;
+            }
+          }
+        }
+      } else if (!allValidCodeSignIdentities.isEmpty()) {
+        LOG.debug("Using default code signing identity");
+        Iterator<CodeSignIdentity> it = allValidCodeSignIdentities.iterator();
+        foundIdentity = Optional.of(it.next());
+      }
+      if (!foundIdentity.isPresent()) {
+        throw new HumanReadableException("The platform " + platformName + " for this target " +
+            "requires code signing but couldn't find a compatible code signing identity to use.");
+      }
+      LOG.debug("Code signing identity is " + foundIdentity.toString());
+      this.codeSignIdentity = foundIdentity;
+    } else {
+      this.provisioningProfiles = Optional.absent();
+      this.codeSignIdentity = Optional.absent();
+    }
   }
 
   public static String getBinaryName(BuildTarget buildTarget) {
@@ -172,6 +243,10 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
     return BuildTargets
         .getGenPath(buildTarget, "%s")
         .resolve(getBinaryName(buildTarget) + "." + extension);
+  }
+
+  public String getExtension() {
+    return extension;
   }
 
   @Override
@@ -192,6 +267,10 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
     return bundleRoot.resolve(destinations.getMetadataPath());
   }
 
+  public String getPlatformName() { return platformName; }
+
+  public Optional<BuildRule> getBinary() { return binary; }
+
   @Override
   public ImmutableList<Step> getBuildSteps(
       BuildContext context,
@@ -200,7 +279,7 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
 
     Path metadataPath = getMetadataPath();
 
-    Path infoPlistInputPath = getResolver().getPath(infoPlist.get());
+    Path infoPlistInputPath = getResolver().getPath(infoPlist);
     Path infoPlistSubstitutionTempPath =
         BuildTargets.getScratchPath(getBuildTarget(), "%s.plist");
     Path infoPlistOutputPath = metadataPath.resolve("Info.plist");
@@ -209,18 +288,18 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
         new MakeCleanDirectoryStep(bundleRoot),
         new MkdirStep(metadataPath),
         // TODO(user): This is only appropriate for .app bundles.
-        new WriteFileStep("APPLWRUN", metadataPath.resolve("PkgInfo")),
+        new WriteFileStep("APPLWRUN", metadataPath.resolve("PkgInfo"), /* executable */ false),
         new FindAndReplaceStep(
-            infoPlistInputPath,
-            infoPlistSubstitutionTempPath,
-            InfoPlistSubstitution.createVariableExpansionFunction(
-                withDefaults(
-                    infoPlistSubstitutions,
-                    ImmutableMap.of(
-                        "EXECUTABLE_NAME", binaryName,
-                        "PRODUCT_NAME", binaryName
-                    ))
-            )),
+          infoPlistInputPath,
+          infoPlistSubstitutionTempPath,
+          InfoPlistSubstitution.createVariableExpansionFunction(
+              withDefaults(
+                  infoPlistSubstitutions,
+                  ImmutableMap.of(
+                      "EXECUTABLE_NAME", binaryName,
+                      "PRODUCT_NAME", binaryName
+                  ))
+          )),
         new PlistProcessStep(
             infoPlistSubstitutionTempPath,
             infoPlistOutputPath,
@@ -228,10 +307,6 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
             getInfoPlistOverrideKeys(platformName),
             PlistProcessStep.OutputFormat.BINARY));
 
-    // TODO(jakubzika):
-    // Checking whether the output path is not null only serves as a workaround if the binary is
-    // an unflavored CxxLibrary and does not have any output. The correct fix would be using
-    // the correctly flavored version of the rule to make sure that it always has output.
     if (binary.isPresent() && binary.get().getPathToOutput() != null) {
       stepsBuilder.add(
           new MkdirStep(bundleRoot.resolve(this.destinations.getExecutablesPath())));
@@ -279,6 +354,8 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
       addResourceProcessingSteps(resolvedFilePath, destinationPath, stepsBuilder);
     }
 
+    addStepsToCopyExtensionBundlesDependencies(stepsBuilder);
+
     if (resourceVariantFiles.isPresent()) {
       for (SourcePath variantSourcePath : resourceVariantFiles.get()) {
         Path variantFilePath = getResolver().getPath(variantSourcePath);
@@ -300,17 +377,8 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
       }
     }
 
-    for (AppleAssetCatalog bundledAssetCatalog : bundledAssetCatalogs) {
-      Path bundleDir = bundledAssetCatalog.getOutputDir();
-      stepsBuilder.add(
-          CopyStep.forDirectory(
-              bundleDir,
-              bundleRoot,
-              CopyStep.DirectoryMode.DIRECTORY_AND_CONTENTS));
-    }
-
-    if (mergedAssetCatalog.isPresent()) {
-      Path bundleDir = mergedAssetCatalog.get().getOutputDir();
+    if (assetCatalog.isPresent()) {
+      Path bundleDir = assetCatalog.get().getOutputDir();
       stepsBuilder.add(
           CopyStep.forDirectory(
               bundleDir,
@@ -318,10 +386,64 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
               CopyStep.DirectoryMode.CONTENTS_ONLY));
     }
 
+    // Copy the .mobileprovision file if the platform requires it.
+    if (provisioningProfiles.isPresent()) {
+      Optional<Path> entitlementsPlist = Optional.absent();
+      final String srcRoot = context.getProjectRoot().resolve(
+          getBuildTarget().getBasePath()).toString();
+      Optional<String> entitlementsPlistString =
+          InfoPlistSubstitution.getVariableExpansionForPlatform(
+              CODE_SIGN_ENTITLEMENTS,
+              platformName,
+              withDefaults(
+                  infoPlistSubstitutions,
+                  ImmutableMap.of(
+                      "SOURCE_ROOT", srcRoot,
+                      "SRCROOT", srcRoot
+                  )));
+      if (entitlementsPlistString.isPresent()) {
+        entitlementsPlist = Optional.of(Paths.get(entitlementsPlistString.get()));
+      }
+
+      final Path signingEntitlementsTempPath =
+          BuildTargets.getScratchPath(getBuildTarget(), "%s.xcent");
+
+      stepsBuilder.add(
+          new ProvisioningProfileCopyStep(
+              infoPlistOutputPath,
+              Optional.<String>absent(),  // Provisioning profile UUID -- find automatically.
+              entitlementsPlist,
+              provisioningProfiles.get(),
+              bundleDestinationPath.resolve("embedded.mobileprovision"),
+              signingEntitlementsTempPath)
+      );
+
+      stepsBuilder.add(
+          new CodeSignStep(
+              bundleDestinationPath,
+              signingEntitlementsTempPath,
+              codeSignIdentity.get().getHash()
+          )
+      );
+    }
+
     // Ensure the bundle directory is archived so we can fetch it later.
     buildableContext.recordArtifact(bundleRoot);
 
     return stepsBuilder.build();
+  }
+
+  public void addStepsToCopyExtensionBundlesDependencies(
+      ImmutableList.Builder<Step> stepsBuilder) {
+    for (SourcePath sourcePath : extensionBundlePaths) {
+      Path plugInsDestPath = bundleRoot.resolve(destinations.getPlugInsPath());
+      stepsBuilder.add(new MkdirStep(plugInsDestPath));
+      stepsBuilder.add(
+        CopyStep.forDirectory(
+            getResolver().getPath(sourcePath),
+            plugInsDestPath,
+            CopyStep.DirectoryMode.DIRECTORY_AND_CONTENTS));
+    }
   }
 
   static ImmutableMap<String, String> withDefaults(

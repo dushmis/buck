@@ -21,7 +21,7 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.HasBuildTarget;
 import com.facebook.buck.model.UnflavoredBuildTarget;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
-import com.facebook.buck.util.FileHashCache;
+import com.facebook.buck.util.cache.FileHashCache;
 import com.facebook.buck.util.hash.AppendingHasher;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
@@ -30,6 +30,7 @@ import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.hash.HashCode;
@@ -37,6 +38,7 @@ import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.google.common.primitives.Primitives;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Iterator;
@@ -257,6 +259,30 @@ public class RuleKey {
       return setSingleValue(val);
     }
 
+    // Paths get added as a combination of the file name and file hash. If the path is absolute
+    // then we only include the file name (assuming that it represents a tool of some kind
+    // that's being used for compilation or some such). This does mean that if a user renames a
+    // file without changing the contents, we have a cache miss. We're going to assume that this
+    // doesn't happen that often in practice.
+    public Builder setPath(Path path) throws IOException {
+      HashCode sha1 = hashCache.get(path);
+      if (sha1 == null) {
+        throw new RuntimeException("No SHA for " + path);
+      }
+      if (logElms != null) {
+        logElms.add(String.format("path(%s:%s):", path, sha1));
+      }
+      if (path.isAbsolute()) {
+        logger.warn(
+            "Attempting to add absolute path to rule key. Only using file name: %s", path);
+        feed(path.getFileName().toString().getBytes()).separate();
+      } else {
+        feed(path.toString().getBytes()).separate();
+      }
+      feed(sha1.toString().getBytes());
+      return this;
+    }
+
     protected Builder setSingleValue(@Nullable Object val) {
 
       if (val == null) { // Null value first
@@ -287,28 +313,11 @@ public class RuleKey {
           throw new RuntimeException(("Unhandled number type: " + val.getClass()));
         }
       } else if (val instanceof Path) {
-        // Paths get added as a combination of the file name and file hash. If the path is absolute
-        // then we only include the file name (assuming that it represents a tool of some kind
-        // that's being used for compilation or some such). This does mean that if a user renames a
-        // file without changing the contents, we have a cache miss. We're going to assume that this
-        // doesn't happen that often in practice.
-        Path path = (Path) val;
-        HashCode sha1 = hashCache.get(path);
-        if (sha1 == null) {
-          throw new RuntimeException("No SHA for " + val);
+        try {
+          setPath((Path) val);
+        } catch (IOException e) {
+          throw Throwables.propagate(e);
         }
-        if (logElms != null) {
-          logElms.add(String.format("path(%s:%s):", val, sha1));
-        }
-        if (path.isAbsolute()) {
-          logger.warn(
-              "Attempting to add absolute path to rule key. Only using file name: %s", path);
-          feed(path.getFileName().toString().getBytes()).separate();
-        } else {
-          feed(path.toString().getBytes()).separate();
-        }
-
-        feed(sha1.toString().getBytes());
       } else if (val instanceof String) {
         if (logElms != null) {
           logElms.add(String.format("string(\"%s\"):", val));

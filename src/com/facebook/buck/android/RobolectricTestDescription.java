@@ -115,11 +115,9 @@ public class RobolectricTestDescription implements Description<RobolectricTestDe
             targetGraph,
             params,
             args.useCxxLibraries,
-            vmArgs,
             pathResolver,
             cxxPlatform);
     params = cxxLibraryEnhancement.updatedParams;
-    vmArgs = cxxLibraryEnhancement.updatedVmArgs;
 
     return new RobolectricTest(
         params.appendExtraDeps(
@@ -141,6 +139,7 @@ public class RobolectricTestDescription implements Description<RobolectricTestDe
         additionalClasspathEntries,
         javacOptions,
         vmArgs,
+        cxxLibraryEnhancement.nativeLibsEnvironment,
         JavaTestDescription.validateAndGetSourcesUnderTest(
             args.sourceUnderTest.get(),
             params.getBuildTarget(),
@@ -149,7 +148,9 @@ public class RobolectricTestDescription implements Description<RobolectricTestDe
         args.mavenCoords,
         dummyRDotJava,
         testRuleTimeoutMs,
-        args.getRunTestSeparately());
+        args.getRunTestSeparately(),
+        args.stdOutLogLevel,
+        args.stdErrLogLevel);
   }
 
   @SuppressFieldNotInitialized

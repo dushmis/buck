@@ -23,6 +23,7 @@ import static org.easymock.EasyMock.verify;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
@@ -33,7 +34,6 @@ import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckEventBusFactory;
 import com.facebook.buck.event.FakeBuckEventListener;
-import com.facebook.buck.event.TestEventConfigerator;
 import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.io.ProjectFilesystem;
@@ -42,6 +42,7 @@ import com.facebook.buck.json.BuildFileParseException;
 import com.facebook.buck.json.DefaultProjectBuildFileParserFactory;
 import com.facebook.buck.json.ProjectBuildFileParser;
 import com.facebook.buck.json.ProjectBuildFileParserFactory;
+import com.facebook.buck.json.ProjectBuildFileParserOptions;
 import com.facebook.buck.model.BuildFileTree;
 import com.facebook.buck.model.BuildId;
 import com.facebook.buck.model.BuildTarget;
@@ -61,10 +62,15 @@ import com.facebook.buck.rules.TestRepositoryBuilder;
 import com.facebook.buck.testutil.TestConsole;
 import com.facebook.buck.testutil.WatchEvents;
 import com.facebook.buck.util.Console;
+import com.facebook.buck.util.FakeProcess;
+import com.facebook.buck.util.FakeProcessExecutor;
 import com.facebook.buck.util.HumanReadableException;
-import com.facebook.buck.util.NullFileHashCache;
+import com.facebook.buck.util.cache.NullFileHashCache;
+import com.facebook.buck.util.ProcessExecutor;
+import com.facebook.buck.util.ProcessExecutorParams;
 import com.facebook.buck.util.environment.Platform;
 import com.google.common.base.Charsets;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
@@ -81,6 +87,7 @@ import com.google.common.hash.HashCode;
 import com.google.common.io.Files;
 
 import org.easymock.EasyMockSupport;
+import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -168,12 +175,14 @@ public class ParserTest extends EasyMockSupport {
         new ExecutableFinder());
     DefaultProjectBuildFileParserFactory testBuildFileParserFactory =
         new DefaultProjectBuildFileParserFactory(
-            filesystem.getRootPath(),
-            pythonBuckConfig.getPythonInterpreter(),
-            parserConfig.getAllowEmptyGlobs(),
-            parserConfig.getBuildFileName(),
-            parserConfig.getDefaultIncludes(),
-            buildRuleTypes.getAllDescriptions());
+            ProjectBuildFileParserOptions.builder()
+                .setProjectRoot(filesystem.getRootPath())
+                .setPythonInterpreter(pythonBuckConfig.getPythonInterpreter())
+                .setAllowEmptyGlobs(parserConfig.getAllowEmptyGlobs())
+                .setBuildFileName(parserConfig.getBuildFileName())
+                .setDefaultIncludes(parserConfig.getDefaultIncludes())
+                .setDescriptions(buildRuleTypes.getAllDescriptions())
+                .build());
     testParser = createParser(emptyBuildTargets(), testBuildFileParserFactory);
   }
 
@@ -271,6 +280,7 @@ public class ParserTest extends EasyMockSupport {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
   public void testParseBuildFilesForTargetsWithOverlappingTargets()
       throws BuildFileParseException, BuildTargetException, IOException, InterruptedException {
     // Execute buildTargetGraphForBuildTargets() with multiple targets that require parsing the same
@@ -296,14 +306,13 @@ public class ParserTest extends EasyMockSupport {
     BuildRule barRule = actionGraph.findBuildRuleByTarget(barTarget);
     assertNotNull(barRule);
 
-    ImmutableList<ParseEvent> expected = ImmutableList.of(
-        TestEventConfigerator.configureTestEvent(ParseEvent.started(buildTargets), eventBus),
-        TestEventConfigerator.configureTestEvent(ParseEvent.finished(buildTargets,
-            Optional.of(targetGraph)),
-            eventBus));
-
     Iterable<ParseEvent> events = Iterables.filter(listener.getEvents(), ParseEvent.class);
-    assertEquals(expected, ImmutableList.copyOf(events));
+    assertThat(events, Matchers.contains(
+            Matchers.hasProperty("buildTargets", Matchers.equalTo(buildTargets)),
+            Matchers.allOf(
+                Matchers.hasProperty("buildTargets", Matchers.equalTo(buildTargets)),
+                Matchers.hasProperty("graph", Matchers.equalTo(Optional.of(targetGraph)))
+            )));
   }
 
   @Test
@@ -318,6 +327,7 @@ public class ParserTest extends EasyMockSupport {
     thrown.expectMessage(
         "No rule found when resolving target //java/com/facebook:raz in build file " +
             "//java/com/facebook/BUCK");
+    thrown.expectMessage("Defined in file: " + repository.getAbsolutePathToBuildFile(razTarget));
 
     testParser.buildTargetGraphForBuildTargets(
         buildTargets,
@@ -392,6 +402,8 @@ public class ParserTest extends EasyMockSupport {
 
     BuildTarget fooTarget = BuildTarget.builder("//java/com/facebook/invalid", "foo").build();
     Iterable<BuildTarget> buildTargets = ImmutableList.of(fooTarget);
+
+    thrown.expectMessage("Defined in file: " + repository.getAbsolutePathToBuildFile(fooTarget));
 
     testParser.buildTargetGraphForBuildTargets(
         buildTargets,
@@ -1772,31 +1784,54 @@ public class ParserTest extends EasyMockSupport {
       PythonBuckConfig config = new PythonBuckConfig(
           new FakeBuckConfig(ImmutableMap.<String, ImmutableMap<String, String>>of(), environment),
           new ExecutableFinder());
-      return new TestProjectBuildFileParser(config.getPythonInterpreter());
+      return new TestProjectBuildFileParser(
+          config.getPythonInterpreter(),
+          new ProcessExecutor(console));
     }
 
     public ProjectBuildFileParser createNoopParserThatAlwaysReturnsError() {
-      // "false" is a unix utility that always returns error code 1 (failure).
-      return new TestProjectBuildFileParser("false" /* pythonInterpreter */);
+      return new TestProjectBuildFileParser(
+          "fake-python",
+          new FakeProcessExecutor(
+              new Function<ProcessExecutorParams, FakeProcess>() {
+                @Override
+                public FakeProcess apply(ProcessExecutorParams params) {
+                  return new FakeProcess(1, "JSON\n", "");
+                }
+              },
+              new TestConsole()));
     }
 
     public ProjectBuildFileParser createNoopParserThatAlwaysReturnsSuccess() {
-      // "true" is a unix utility that always returns error code 0 (success).
-      return new TestProjectBuildFileParser("true" /* pythonInterpreter */);
+      return new TestProjectBuildFileParser(
+          "fake-python",
+          new FakeProcessExecutor(
+              new Function<ProcessExecutorParams, FakeProcess>() {
+                @Override
+                public FakeProcess apply(ProcessExecutorParams params) {
+                  return new FakeProcess(0, "JSON\n", "");
+                }
+              },
+              new TestConsole()));
     }
 
     private class TestProjectBuildFileParser extends ProjectBuildFileParser {
-      public TestProjectBuildFileParser(String pythonInterpreter) {
+      public TestProjectBuildFileParser(
+          String pythonInterpreter,
+          ProcessExecutor processExecutor) {
         super(
-            projectRoot,
-            pythonInterpreter,
-            ParserConfig.DEFAULT_ALLOW_EMPTY_GLOBS,
-            ParserConfig.DEFAULT_BUILD_FILE_NAME,
-            ImmutableSet.of("//java/com/facebook/defaultIncludeFile"),
-            buildRuleTypes.getAllDescriptions(),
+            ProjectBuildFileParserOptions.builder()
+                .setProjectRoot(projectRoot)
+                .setPythonInterpreter(pythonInterpreter)
+                .setAllowEmptyGlobs(ParserConfig.DEFAULT_ALLOW_EMPTY_GLOBS)
+                .setBuildFileName(ParserConfig.DEFAULT_BUILD_FILE_NAME)
+                .setDefaultIncludes(ImmutableSet.of("//java/com/facebook/defaultIncludeFile"))
+                .setDescriptions(buildRuleTypes.getAllDescriptions())
+                .build(),
             new TestConsole(),
             ImmutableMap.<String, String>of(),
-            BuckEventBusFactory.newInstance());
+            BuckEventBusFactory.newInstance(),
+            processExecutor);
       }
 
       @Override

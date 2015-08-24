@@ -15,7 +15,7 @@ java_library(
   ],
 )
 
-java_library(
+java_immutables_library(
   name = 'json',
   srcs = glob(['*.java'], excludes = RAW_PARSER_SRCS),
   resources = [
@@ -23,6 +23,7 @@ java_library(
   ],
   deps = [
     ':raw_parser',
+    '//src/com/facebook/buck/bser:bser',
     '//src/com/facebook/buck/event:event',
     '//src/com/facebook/buck/io:io',
     '//src/com/facebook/buck/log:api',

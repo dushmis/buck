@@ -21,6 +21,7 @@ import static com.facebook.buck.rules.BuildableProperties.Kind.PACKAGING;
 
 import com.facebook.buck.android.FilterResourcesStep.ResourceFilter;
 import com.facebook.buck.android.ResourcesFilter.ResourceCompressionMode;
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.AccumulateClassNamesStep;
 import com.facebook.buck.java.Classpaths;
 import com.facebook.buck.java.HasClasspathEntries;
@@ -51,6 +52,7 @@ import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.CopyStep;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.facebook.buck.step.fs.MkdirStep;
+import com.facebook.buck.step.fs.XzStep;
 import com.facebook.buck.zip.RepackZipEntriesStep;
 import com.facebook.buck.zip.ZipScrubberStep;
 import com.google.common.annotations.VisibleForTesting;
@@ -68,14 +70,20 @@ import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import com.google.common.hash.HashCode;
 import com.google.common.io.Files;
 import com.google.common.util.concurrent.ListeningExecutorService;
 
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -95,6 +103,12 @@ public class AndroidBinary
     implements AbiRule, HasClasspathEntries, HasRuntimeDeps, InstallableApk {
 
   private static final BuildableProperties PROPERTIES = new BuildableProperties(ANDROID, PACKAGING);
+
+  /**
+   * The filename of the solidly compressed libraries if compressAssetLibraries is set to true.
+   * This file can be found in assets/lib.
+   */
+  private static final String SOLID_COMPRESSED_ASSET_LIBRARY_FILENAME = "libs.xzs";
 
   /**
    * This is the path from the root of the APK that should contain the metadata.txt and
@@ -193,6 +207,10 @@ public class AndroidBinary
   private final ListeningExecutorService dxExecutorService;
   @AddToRuleKey
   private final Optional<Integer> xzCompressionLevel;
+  @AddToRuleKey
+  private final Optional<Boolean> packageAssetLibraries;
+  @AddToRuleKey
+  private final Optional<Boolean> compressAssetLibraries;
 
   AndroidBinary(
       BuildRuleParams params,
@@ -218,7 +236,9 @@ public class AndroidBinary
       Optional<SourcePath> dexReorderToolFile,
       Optional<SourcePath> dexReorderDataDumpFile,
       Optional<Integer> xzCompressionLevel,
-      ListeningExecutorService dxExecutorService) {
+      ListeningExecutorService dxExecutorService,
+      Optional<Boolean> packageAssetLibraries,
+      Optional<Boolean> compressAssetLibraries) {
     super(params, resolver);
     this.proguardJarOverride = proguardJarOverride;
     this.proguardMaxHeapSize = proguardMaxHeapSize;
@@ -243,6 +263,8 @@ public class AndroidBinary
     this.dexReorderDataDumpFile = dexReorderDataDumpFile;
     this.dxExecutorService = dxExecutorService;
     this.xzCompressionLevel = xzCompressionLevel;
+    this.packageAssetLibraries = packageAssetLibraries;
+    this.compressAssetLibraries = compressAssetLibraries;
 
     if (ExopackageMode.enabledForSecondaryDexes(exopackageModes)) {
       Preconditions.checkArgument(enhancementResult.getPreDexMerge().isPresent(),
@@ -306,6 +328,8 @@ public class AndroidBinary
     return optimizationPasses;
   }
 
+  public Optional<Boolean> getPackageAssetLibraries() { return packageAssetLibraries; }
+
   @VisibleForTesting
   AndroidGraphEnhancementResult getEnhancementResult() {
     return enhancementResult;
@@ -359,21 +383,100 @@ public class AndroidBinary
 
     // Copy the transitive closure of native-libs-as-assets to a single directory, if any.
     ImmutableSet<Path> nativeLibraryAsAssetDirectories;
-    if (!packageableCollection.getNativeLibAssetsDirectories().isEmpty()) {
+    if ((!packageableCollection.getNativeLibAssetsDirectories().isEmpty()) ||
+        (!packageableCollection.getNativeLinkablesAssets().isEmpty() &&
+            packageAssetLibraries.or(Boolean.FALSE))) {
       Path pathForNativeLibsAsAssets = getPathForNativeLibsAsAssets();
-      Path libSubdirectory = pathForNativeLibsAsAssets.resolve("assets").resolve("lib");
+      final Path libSubdirectory = pathForNativeLibsAsAssets.resolve("assets").resolve("lib");
       steps.add(new MakeCleanDirectoryStep(libSubdirectory));
+
+      // Filter, rename and copy the ndk libraries marked as assets.
       for (SourcePath nativeLibDir : packageableCollection.getNativeLibAssetsDirectories()) {
         CopyNativeLibraries.copyNativeLibrary(
+            getProjectFilesystem(),
             getResolver().getPath(nativeLibDir),
             libSubdirectory,
             cpuFilters,
             steps);
       }
+
+      if (packageAssetLibraries.or(Boolean.FALSE)) {
+        // Copy in cxx libraries marked as assets. Filtering and renaming was already done
+        // in CopyNativeLibraries.getBuildSteps().
+        Path cxxNativeLibsSrc = enhancementResult
+            .getCopyNativeLibraries()
+            .get()
+            .getPathToNativeLibsAssetsDir();
+
+        steps.add(CopyStep.forDirectory(cxxNativeLibsSrc,
+                libSubdirectory,
+                CopyStep.DirectoryMode.CONTENTS_ONLY));
+      }
+
+      final List<Path> inputAssetLibraries = Lists.newArrayList();
+      final ImmutableList.Builder<Path> outputAssetLibrariesBuilder = ImmutableList.builder();
+      if (compressAssetLibraries.or(Boolean.FALSE)) {
+        steps.add(
+            // Step that populates a list of libraries and writes a metadata.txt to decompress.
+            new AbstractExecutionStep("write_metadata_for_asset_libraries") {
+              @Override
+              public int execute(ExecutionContext context) {
+                ProjectFilesystem filesystem = getProjectFilesystem();
+                try {
+                  // HACK: Rename libraries as temp files so ApkBuilder doesn't add them to the apk
+                  filesystem.walkRelativeFileTree(
+                      libSubdirectory, new SimpleFileVisitor<Path>() {
+                        @Override
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
+                            throws IOException {
+                          if (!file.toString().endsWith(".so")) {
+                            throw new IOException("unexpected file in lib directory");
+                          }
+                          inputAssetLibraries.add(file);
+                          return FileVisitResult.CONTINUE;
+                        }
+                      });
+                  for (Path libPath : inputAssetLibraries) {
+                    Path tempPath = libPath.resolveSibling(libPath.getFileName() + "~");
+                    filesystem.move(libPath, tempPath);
+                    outputAssetLibrariesBuilder.add(tempPath);
+                  }
+
+                  // Write a metadata
+                  ImmutableList<Path> outputAssetLibraries = outputAssetLibrariesBuilder.build();
+                  ImmutableList.Builder<String> metadataLines = ImmutableList.builder();
+                  Path metadataOutput = libSubdirectory.resolve("metadata.txt");
+                  for (Path libPath : outputAssetLibraries) {
+                    // Should return something like x86/libfoo.so
+                    Path relativeLibPath = libSubdirectory.relativize(libPath);
+                    long filesize = filesystem.getFileSize(libPath);
+                    metadataLines.add(relativeLibPath.toString() + ' ' + filesize);
+                  }
+                  ImmutableList<String> metadata = metadataLines.build();
+                  if (!metadata.isEmpty()) {
+                    filesystem.writeLinesToPath(metadata, metadataOutput);
+                  }
+                } catch (IOException e) {
+                  context.logError(e, "Writing metadata for asset libraries failed.");
+                  return 1;
+                }
+                return 0;
+              }
+            });
+
+        // Concat and xz compress.
+        Path libOutputBlob = libSubdirectory.resolve("libraries.blob");
+        steps.add(new ConcatStep(outputAssetLibrariesBuilder, libOutputBlob));
+        steps.add(new XzStep(libOutputBlob,
+                libSubdirectory.resolve(SOLID_COMPRESSED_ASSET_LIBRARY_FILENAME)));
+      }
+
       nativeLibraryAsAssetDirectories = ImmutableSet.of(pathForNativeLibsAsAssets);
     } else {
       nativeLibraryAsAssetDirectories = ImmutableSet.of();
     }
+
+
 
     // If non-english strings are to be stored as assets, pass them to ApkBuilder.
     ImmutableSet.Builder<Path> zipFiles = ImmutableSet.builder();
@@ -507,7 +610,7 @@ public class AndroidBinary
         protected void addEnvironmentVariables(
             ExecutionContext context,
             ImmutableMap.Builder<String, String> environmentVariablesBuilder) {
-          Function<Path, Path> absolutifier = context.getProjectFilesystem().getAbsolutifier();
+          Function<Path, Path> absolutifier = getProjectFilesystem().getAbsolutifier();
           environmentVariablesBuilder.put(
               "IN_JARS_DIR", absolutifier.apply(preprocessJavaClassesInDir).toString());
           environmentVariablesBuilder.put(
@@ -789,6 +892,7 @@ public class AndroidBinary
       Path zipSplitReportDir = getBinPath("__%s_split_zip_report__");
       steps.add(new MakeCleanDirectoryStep(zipSplitReportDir));
       SplitZipStep splitZipCommand = new SplitZipStep(
+          getProjectFilesystem(),
           classpathEntriesToDex,
           secondaryJarMeta,
           primaryJarPath,

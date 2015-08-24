@@ -20,16 +20,20 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.oneOf;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeThat;
+import static org.junit.Assume.assumeTrue;
 
 import com.facebook.buck.android.AssumeAndroidPlatform;
 import com.facebook.buck.cli.BuckConfig;
 import com.facebook.buck.cli.FakeBuckConfig;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
+import com.facebook.buck.rules.BuildRuleStatus;
 import com.facebook.buck.rules.BuildRuleSuccessType;
 import com.facebook.buck.testutil.integration.BuckBuildLog;
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
+import com.facebook.buck.testutil.integration.InferHelper;
 import com.facebook.buck.testutil.integration.ProjectWorkspace;
 import com.facebook.buck.testutil.integration.TestDataHelper;
 import com.facebook.buck.util.BuckConstant;
@@ -37,16 +41,376 @@ import com.facebook.buck.util.environment.Platform;
 import com.google.common.collect.ImmutableSet;
 
 import org.hamcrest.Matchers;
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 
 public class CxxBinaryIntegrationTest {
 
   @Rule
   public DebuggableTemporaryFolder tmp = new DebuggableTemporaryFolder();
+
+  @Test
+  public void testInferCxxBinaryDepsCaching() throws IOException {
+    assumeTrue(Platform.detect() != Platform.WINDOWS);
+    ProjectWorkspace workspace = InferHelper.setupCxxInferWorkspace(this, tmp);
+    workspace.enableDirCache(); // enable the cache
+
+    CxxPlatform cxxPlatform = DefaultCxxPlatforms.build(new CxxBuckConfig(new FakeBuckConfig()));
+    BuildTarget inputBuildTarget = BuildTargetFactory.newInstance("//foo:binary_with_deps");
+    String inputBuildTargetName =
+        inputBuildTarget.withFlavors(CxxInferEnhancer.INFER).getFullyQualifiedName();
+
+    /*
+     * Build the given target and check that it succeeds.
+     */
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+
+    /*
+     * Check that building after clean will use the cache
+     */
+    workspace.runBuckCommand("clean").assertSuccess();
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+    BuckBuildLog buildLog = workspace.getBuildLog();
+    for (BuildTarget buildTarget : buildLog.getAllTargets()) {
+      buildLog.assertTargetWasFetchedFromCache(buildTarget.toString());
+    }
+
+    /*
+     * Check that if the file in the binary target changes, then all the deps will be fetched
+     * from the cache
+     */
+    String sourceName = "src_with_deps.c";
+    workspace.replaceFileContents("foo/" + sourceName, "10", "30");
+    workspace.runBuckCommand("clean").assertSuccess();
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+    buildLog = workspace.getBuildLog();
+
+    CxxSourceRuleFactory cxxSourceRuleFactory = CxxSourceRuleFactoryHelper.of(
+        inputBuildTarget,
+        cxxPlatform);
+
+    BuildTarget captureBuildTarget =
+        cxxSourceRuleFactory.createInferCaptureBuildTarget(sourceName);
+
+    // this is flavored, and denotes the analysis step (generates a local report)
+    BuildTarget inferAnalysisTarget = inputBuildTarget.withFlavors(CxxInferEnhancer.INFER_ANALYZE);
+
+    // this is the flavored version of the top level target (the one give in input to buck)
+    BuildTarget inferReportTarget = inputBuildTarget.withFlavors(CxxInferEnhancer.INFER);
+
+    String bt;
+    for (BuildTarget buildTarget : buildLog.getAllTargets()) {
+      bt = buildTarget.toString();
+      if (bt.equals(inferAnalysisTarget.toString()) ||
+          bt.equals(captureBuildTarget.toString()) ||
+          bt.equals(inferReportTarget.toString())) {
+        buildLog.assertTargetBuiltLocally(bt);
+      } else {
+        buildLog.assertTargetWasFetchedFromCache(buildTarget.toString());
+      }
+    }
+  }
+
+  @Test
+  public void testInferCxxBinaryWithoutDeps() throws IOException {
+    assumeTrue(Platform.detect() != Platform.WINDOWS);
+    ProjectWorkspace workspace = InferHelper.setupCxxInferWorkspace(this, tmp);
+
+    CxxPlatform cxxPlatform = DefaultCxxPlatforms.build(new CxxBuckConfig(new FakeBuckConfig()));
+    BuildTarget inputBuildTarget = BuildTargetFactory.newInstance("//foo:simple");
+    String inputBuildTargetName =
+        inputBuildTarget.withFlavors(CxxInferEnhancer.INFER).getFullyQualifiedName();
+
+    /*
+     * Build the given target and check that it succeeds.
+     */
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+
+    /*
+     * Check that all the required build targets have been generated.
+     */
+    String sourceName = "simple.cpp";
+    String sourceFull = "foo/" + sourceName;
+
+    CxxSourceRuleFactory cxxSourceRuleFactory = CxxSourceRuleFactoryHelper.of(
+        inputBuildTarget,
+        cxxPlatform);
+    // this is unflavored, but bounded to the InferCapture build rule
+    BuildTarget captureBuildTarget =
+        cxxSourceRuleFactory.createInferCaptureBuildTarget(sourceName);
+    // this is unflavored, but necessary to run the compiler successfully
+    BuildTarget headerSymlinkTreeTarget =
+        CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
+            inputBuildTarget,
+            cxxPlatform.getFlavor(),
+            HeaderVisibility.PRIVATE);
+    // this is flavored, and denotes the analysis step (generates a local report)
+    BuildTarget inferAnalysisTarget = inputBuildTarget.withFlavors(CxxInferEnhancer.INFER_ANALYZE);
+
+    // this is flavored and corresponds to the top level target (the one give in input to buck)
+    BuildTarget inferReportTarget = inputBuildTarget.withFlavors(CxxInferEnhancer.INFER);
+
+    ImmutableSet<BuildTarget> expectedTargets = ImmutableSet.<BuildTarget>builder()
+        .addAll(
+            ImmutableSet.of(
+                headerSymlinkTreeTarget,
+                captureBuildTarget,
+                inferAnalysisTarget,
+                inferReportTarget))
+        .build();
+
+    BuckBuildLog buildLog = workspace.getBuildLog();
+    assertEquals(expectedTargets, buildLog.getAllTargets());
+    buildLog.assertTargetBuiltLocally(headerSymlinkTreeTarget.toString());
+    buildLog.assertTargetBuiltLocally(captureBuildTarget.toString());
+    buildLog.assertTargetBuiltLocally(inferAnalysisTarget.toString());
+    buildLog.assertTargetBuiltLocally(inferReportTarget.toString());
+
+    /*
+     * Check that running a build again results in no builds since nothing has changed.
+     */
+    workspace.resetBuildLogFile(); // clear for new build
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+    buildLog = workspace.getBuildLog();
+    assertEquals(ImmutableSet.of(inferReportTarget), buildLog.getAllTargets());
+    buildLog.assertTargetHadMatchingRuleKey(inferReportTarget.toString());
+
+    /*
+     * Check that changing the source file results in running the capture/analysis rules again.
+     */
+    workspace.resetBuildLogFile();
+    workspace.replaceFileContents(sourceFull, "*s = 42;", "");
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+    buildLog = workspace.getBuildLog();
+    assertEquals(
+        expectedTargets,
+        buildLog.getAllTargets());
+    buildLog.assertTargetBuiltLocally(captureBuildTarget.toString());
+    buildLog.assertTargetBuiltLocally(inferAnalysisTarget.toString());
+    buildLog.assertTargetHadMatchingRuleKey(headerSymlinkTreeTarget.toString());
+  }
+
+  @Test
+  public void testInferCxxBinaryWithDeps() throws IOException {
+    assumeTrue(Platform.detect() != Platform.WINDOWS);
+    ProjectWorkspace workspace = InferHelper.setupCxxInferWorkspace(this, tmp);
+
+    CxxPlatform cxxPlatform = DefaultCxxPlatforms.build(new CxxBuckConfig(new FakeBuckConfig()));
+    BuildTarget inputBuildTarget = BuildTargetFactory.newInstance("//foo:binary_with_deps");
+    String inputBuildTargetName =
+        inputBuildTarget.withFlavors(CxxInferEnhancer.INFER).getFullyQualifiedName();
+
+    /*
+     * Build the given target and check that it succeeds.
+     */
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+
+    /*
+     * Check that all the required build targets have been generated.
+     */
+    String sourceName = "src_with_deps.c";
+    CxxSourceRuleFactory cxxSourceRuleFactory = CxxSourceRuleFactoryHelper.of(
+        inputBuildTarget,
+        cxxPlatform);
+    // 1. create the targets of binary_with_deps
+    // this is unflavored, but bounded to the InferCapture build rule
+    BuildTarget topCaptureBuildTarget =
+        cxxSourceRuleFactory.createInferCaptureBuildTarget(sourceName);
+
+    // this is unflavored, but necessary to run the compiler successfully
+    BuildTarget topHeaderSymlinkTreeTarget =
+        CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
+            inputBuildTarget,
+            cxxPlatform.getFlavor(),
+            HeaderVisibility.PRIVATE);
+
+    // this is flavored, and denotes the analysis step (generates a local report)
+    BuildTarget topInferAnalysisTarget =
+        inputBuildTarget.withFlavors(CxxInferEnhancer.INFER_ANALYZE);
+
+    // this is flavored and corresponds to the top level target (the one give in input to buck)
+    BuildTarget topInferReportTarget = inputBuildTarget.withFlavors(CxxInferEnhancer.INFER);
+
+    // 2. create the targets of dep_one
+    BuildTarget depOneBuildTarget = BuildTargetFactory.newInstance("//foo:dep_one");
+    String depOneSourceName = "dep_one.c";
+    String depOneSourceFull = "foo/" + depOneSourceName;
+    CxxSourceRuleFactory depOneSourceRuleFactory =
+        CxxSourceRuleFactoryHelper.of(depOneBuildTarget, cxxPlatform);
+
+    BuildTarget depOneCaptureBuildTarget =
+        depOneSourceRuleFactory.createInferCaptureBuildTarget(depOneSourceName);
+
+    BuildTarget depOneHeaderSymlinkTreeTarget =
+        CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
+            depOneBuildTarget,
+            cxxPlatform.getFlavor(),
+            HeaderVisibility.PRIVATE);
+
+    BuildTarget depOneExportedHeaderSymlinkTreeTarget =
+        CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
+            depOneBuildTarget,
+            cxxPlatform.getFlavor(),
+            HeaderVisibility.PUBLIC);
+
+    BuildTarget depOneInferAnalysisTarget =
+        depOneCaptureBuildTarget.withFlavors(
+            cxxPlatform.getFlavor(),
+            CxxInferEnhancer.INFER_ANALYZE);
+
+    // 3. create the targets of dep_two
+    BuildTarget depTwoBuildTarget = BuildTargetFactory.newInstance("//foo:dep_two");
+    CxxSourceRuleFactory depTwoSourceRuleFactory =
+        CxxSourceRuleFactoryHelper.of(depTwoBuildTarget, cxxPlatform);
+
+    BuildTarget depTwoCaptureBuildTarget =
+        depTwoSourceRuleFactory.createInferCaptureBuildTarget("dep_two.c");
+
+    BuildTarget depTwoHeaderSymlinkTreeTarget =
+        CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
+            depTwoBuildTarget,
+            cxxPlatform.getFlavor(),
+            HeaderVisibility.PRIVATE);
+
+    BuildTarget depTwoExportedHeaderSymlinkTreeTarget =
+        CxxDescriptionEnhancer.createHeaderSymlinkTreeTarget(
+            depTwoBuildTarget,
+            cxxPlatform.getFlavor(),
+            HeaderVisibility.PUBLIC);
+
+    BuildTarget depTwoInferAnalysisTarget =
+        depTwoCaptureBuildTarget.withFlavors(
+            cxxPlatform.getFlavor(),
+            CxxInferEnhancer.INFER_ANALYZE);
+
+    // Check all the targets are in the buildLog
+    assertEquals(
+        ImmutableSet.of(
+            topCaptureBuildTarget,
+            topHeaderSymlinkTreeTarget,
+            topInferAnalysisTarget,
+            topInferReportTarget,
+            depOneCaptureBuildTarget,
+            depOneHeaderSymlinkTreeTarget,
+            depOneExportedHeaderSymlinkTreeTarget,
+            depOneInferAnalysisTarget,
+            depTwoCaptureBuildTarget,
+            depTwoHeaderSymlinkTreeTarget,
+            depTwoExportedHeaderSymlinkTreeTarget,
+            depTwoInferAnalysisTarget),
+        workspace.getBuildLog().getAllTargets());
+
+    /*
+     * Check that running a build again results in no builds since nothing has changed.
+     */
+    workspace.resetBuildLogFile(); // clear for new build
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+    BuckBuildLog buildLog = workspace.getBuildLog();
+    assertEquals(ImmutableSet.of(topInferReportTarget), buildLog.getAllTargets());
+    buildLog.assertTargetHadMatchingRuleKey(topInferReportTarget.toString());
+
+    /*
+     * Check that if a library source file changes then the capture/analysis rules run again on
+     * the main target and on dep_one only.
+     */
+    workspace.resetBuildLogFile();
+    workspace.replaceFileContents(depOneSourceFull, "flag > 0", "flag < 0");
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+    buildLog = workspace.getBuildLog();
+    assertEquals(
+        ImmutableSet.of(
+            topInferAnalysisTarget, // analysis runs again
+            topInferReportTarget, // report runs again
+            topCaptureBuildTarget, // cached
+            depTwoInferAnalysisTarget, // cached
+            depOneCaptureBuildTarget, // capture of the changed file runs again
+            depOneExportedHeaderSymlinkTreeTarget, // cached
+            depOneHeaderSymlinkTreeTarget, // cached
+            depOneInferAnalysisTarget), // analysis of the library runs again
+        buildLog.getAllTargets());
+    buildLog.assertTargetBuiltLocally(topInferAnalysisTarget.toString());
+    buildLog.assertTargetBuiltLocally(topInferReportTarget.toString());
+    buildLog.assertTargetHadMatchingRuleKey(topCaptureBuildTarget.toString());
+    buildLog.assertTargetHadMatchingRuleKey(depTwoInferAnalysisTarget.toString());
+    buildLog.assertTargetBuiltLocally(depOneCaptureBuildTarget.toString());
+    buildLog.assertTargetHadMatchingRuleKey(depOneExportedHeaderSymlinkTreeTarget.toString());
+    buildLog.assertTargetHadMatchingRuleKey(depOneHeaderSymlinkTreeTarget.toString());
+    buildLog.assertTargetBuiltLocally(depOneInferAnalysisTarget.toString());
+  }
+
+  @Test
+  public void testInferCxxBinaryWithCachedDepsGetsAllItsTransitiveDeps() throws IOException {
+    assumeTrue(Platform.detect() != Platform.WINDOWS);
+    ProjectWorkspace workspace = InferHelper.setupCxxInferWorkspace(this, tmp);
+    workspace.enableDirCache(); // enable the cache
+
+    BuildTarget inputBuildTarget = BuildTargetFactory.newInstance("//foo:binary_with_chain_deps");
+    String inputBuildTargetName =
+        inputBuildTarget.withFlavors(CxxInferEnhancer.INFER).getFullyQualifiedName();
+
+    /*
+     * Build the given target and check that it succeeds.
+     */
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+
+    /*
+     * Check that building after clean will use the cache
+     */
+    workspace.runBuckCommand("clean").assertSuccess();
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+    BuckBuildLog buildLog = workspace.getBuildLog();
+    for (BuildTarget buildTarget : buildLog.getAllTargets()) {
+      buildLog.assertTargetWasFetchedFromCache(buildTarget.toString());
+    }
+
+    /*
+     * Check that if the file in the top target changes, then all the transitive deps will be
+     * fetched from the cache (even those that are not direct dependencies).
+     * Make sure there's the specs file of the dependency that has distance 2 from
+     * the binary target.
+     */
+    String sourceName = "top_chain.c";
+    workspace.replaceFileContents("foo/" + sourceName, "*p += 1", "*p += 10");
+    workspace.runBuckCommand("clean").assertSuccess();
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+
+    // Check all the buildrules were fetched from the cache (and there's the specs file)
+    assertTrue(
+        "Expected specs file for func_ret_null() in chain_dep_two.c not found",
+        workspace.getPath(
+            "buck-out/gen/foo/infer-analysis-chain_dep_two#default,infer-analyze/specs/" +
+                "mockedSpec.specs").toFile().exists());
+  }
+
+  @Test
+  public void testInferCxxBinaryMergesAllReportsOfDependencies() throws IOException {
+    assumeTrue(Platform.detect() != Platform.WINDOWS);
+    ProjectWorkspace workspace = InferHelper.setupCxxInferWorkspace(this, tmp);
+
+    BuildTarget inputBuildTarget = BuildTargetFactory.newInstance("//foo:binary_with_chain_deps");
+    String inputBuildTargetName =
+        inputBuildTarget.withFlavors(CxxInferEnhancer.INFER).getFullyQualifiedName();
+
+    /*
+     * Build the given target and check that it succeeds.
+     */
+    workspace.runBuckCommand("build", inputBuildTargetName).assertSuccess();
+
+    String reportPath = "buck-out/gen/foo/infer-binary_with_chain_deps#infer/report.json";
+    List<Object> bugs = InferHelper.loadInferReport(workspace, reportPath);
+
+    // check that the merge step has merged a total of 3 bugs, one for each target
+    // (chain_dep_two, chain_dep_one, binary_with_chain_deps)
+    Assert.assertThat(
+        "3 bugs expected in " + reportPath + " not found",
+        bugs.size(),
+        Matchers.equalTo(3));
+  }
 
   public void doTestSimpleCxxBinaryBuilds(
       String preprocessMode,
@@ -153,9 +517,12 @@ public class CxxBinaryIntegrationTest {
     if (expectPreprocessorOutput) {
       buildLog.assertTargetBuiltLocally(preprocessTarget.toString());
     }
-    buildLog.assertTargetFailed(compileTarget.toString());
-    buildLog.assertTargetFailed(binaryTarget.toString());
-    buildLog.assertTargetFailed(target.toString());
+    assertThat(
+        buildLog.getLogEntry(binaryTarget).getStatus(),
+        Matchers.equalTo(BuildRuleStatus.CANCELED));
+    assertThat(
+        buildLog.getLogEntry(target).getStatus(),
+        Matchers.equalTo(BuildRuleStatus.CANCELED));
   }
 
   @Test

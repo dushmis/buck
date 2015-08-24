@@ -35,6 +35,7 @@ import com.facebook.buck.rules.SymlinkTree;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.Tool;
+import com.facebook.buck.rules.coercer.FrameworkPath;
 import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.facebook.buck.rules.coercer.SourceWithFlagsList;
@@ -126,7 +127,7 @@ public class CxxDescriptionEnhancer {
     return lexYaccSources;
   }
 
-  public static SymlinkTree createHeaderSymlinkTree(
+  public static HeaderSymlinkTree createHeaderSymlinkTree(
       BuildRuleParams params,
       BuildRuleResolver ruleResolver,
       SourcePathResolver pathResolver,
@@ -147,6 +148,15 @@ public class CxxDescriptionEnhancer {
             params.getBuildTarget(),
             cxxPlatform.getFlavor(),
             headerVisibility);
+    Optional<Path> headerMapLocation = Optional.absent();
+    if (cxxPlatform.getCpp().supportsHeaderMaps() && cxxPlatform.getCxxpp().supportsHeaderMaps()) {
+      headerMapLocation =
+          Optional.of(
+              getHeaderMapPath(
+                  params.getBuildTarget(),
+                  cxxPlatform.getFlavor(),
+                  headerVisibility));
+    }
 
     CxxHeaderSourceSpec lexYaccSources;
     if (includeLexYaccHeaders) {
@@ -166,13 +176,14 @@ public class CxxDescriptionEnhancer {
         headerSymlinkTreeTarget,
         params,
         headerSymlinkTreeRoot,
+        headerMapLocation,
         ImmutableMap.<Path, SourcePath>builder()
             .putAll(headers)
             .putAll(lexYaccSources.getCxxHeaders())
             .build());
   }
 
-  public static SymlinkTree requireHeaderSymlinkTree(
+  public static HeaderSymlinkTree requireHeaderSymlinkTree(
       BuildRuleParams params,
       BuildRuleResolver ruleResolver,
       SourcePathResolver pathResolver,
@@ -191,11 +202,11 @@ public class CxxDescriptionEnhancer {
     // Check the cache...
     Optional<BuildRule> rule = ruleResolver.getRuleOptional(headerSymlinkTreeTarget);
     if (rule.isPresent()) {
-      Preconditions.checkState(rule.get() instanceof SymlinkTree);
-      return (SymlinkTree) rule.get();
+      Preconditions.checkState(rule.get() instanceof HeaderSymlinkTree);
+      return (HeaderSymlinkTree) rule.get();
     }
 
-    SymlinkTree symlinkTree = createHeaderSymlinkTree(
+    HeaderSymlinkTree symlinkTree = createHeaderSymlinkTree(
         params,
         ruleResolver,
         pathResolver,
@@ -249,6 +260,17 @@ public class CxxDescriptionEnhancer {
     }
   }
 
+  /**
+   * @return the {@link Path} to use for the header map for the given symlink tree.
+   */
+  public static Path getHeaderMapPath(
+      BuildTarget target,
+      Flavor platform,
+      HeaderVisibility headerVisibility) {
+    return BuildTargets.getGenPath(
+        createHeaderSymlinkTreeTarget(target, platform, headerVisibility),
+        "%s.hmap");
+  }
   /**
    * @return a map of header locations to input {@link SourcePath} objects formed by parsing the
    *    input {@link SourcePath} objects for the "headers" parameter.
@@ -572,8 +594,7 @@ public class CxxDescriptionEnhancer {
       BuildRuleParams params,
       CxxPlatform cxxPlatform,
       ImmutableMultimap<CxxSource.Type, String> preprocessorFlags,
-      ImmutableList<SourcePath> prefixHeaders,
-      ImmutableList<SymlinkTree> headerSymlinkTrees,
+      ImmutableList<HeaderSymlinkTree> headerSymlinkTrees,
       ImmutableSet<Path> frameworkSearchPaths,
       Iterable<CxxPreprocessorInput> cxxPreprocessorInputFromDeps) {
 
@@ -609,10 +630,12 @@ public class CxxDescriptionEnhancer {
     ImmutableMap.Builder<Path, SourcePath> allLinks = ImmutableMap.builder();
     ImmutableMap.Builder<Path, SourcePath> allFullLinks = ImmutableMap.builder();
     ImmutableList.Builder<Path> allIncludeRoots = ImmutableList.builder();
-    for (SymlinkTree headerSymlinkTree : headerSymlinkTrees) {
+    ImmutableSet.Builder<Path> allHeaderMaps = ImmutableSet.builder();
+    for (HeaderSymlinkTree headerSymlinkTree : headerSymlinkTrees) {
       allLinks.putAll(headerSymlinkTree.getLinks());
       allFullLinks.putAll(headerSymlinkTree.getFullLinks());
-      allIncludeRoots.add(headerSymlinkTree.getRoot());
+      allIncludeRoots.add(headerSymlinkTree.getIncludePath());
+      allHeaderMaps.addAll(headerSymlinkTree.getHeaderMap().asSet());
     }
 
     CxxPreprocessorInput localPreprocessorInput =
@@ -621,11 +644,11 @@ public class CxxDescriptionEnhancer {
             .putAllPreprocessorFlags(preprocessorFlags)
             .setIncludes(
                 CxxHeaders.builder()
-                    .addAllPrefixHeaders(prefixHeaders)
                     .putAllNameToPathMap(allLinks.build())
                     .putAllFullNameToPathMap(allFullLinks.build())
                     .build())
             .addAllIncludeRoots(allIncludeRoots.build())
+            .addAllHeaderMaps(allHeaderMaps.build())
             .addAllFrameworkRoots(frameworkSearchPaths)
             .build();
 
@@ -701,13 +724,22 @@ public class CxxDescriptionEnhancer {
    * @return the framework search paths with any embedded macros expanded.
    */
   static ImmutableSet<Path> getFrameworkSearchPaths(
-      Optional<ImmutableSet<Path>> frameworkSearchPaths,
-      CxxPlatform cxxPlatform) {
-    return FluentIterable.from(frameworkSearchPaths.or(ImmutableSet.<Path>of()))
+      Optional<ImmutableSortedSet<FrameworkPath>> frameworks,
+      CxxPlatform cxxPlatform,
+      SourcePathResolver resolver) {
+
+    ImmutableSet<Path> searchPaths = FluentIterable.from(frameworks.get())
+        .transform(
+            FrameworkPath.getUnexpandedSearchPathFunction(
+                resolver.getPathFunction(),
+                Functions.<Path>identity()))
+        .toSet();
+
+   return FluentIterable.from(Optional.of(searchPaths).or(ImmutableSet.<Path>of()))
         .transform(Functions.toStringFunction())
         .transform(CxxFlags.getTranslateMacrosFn(cxxPlatform))
-        .transform(MorePaths.TO_PATH)
-        .toSet();
+       .transform(MorePaths.TO_PATH)
+       .toSet();
   }
 
   static class CxxLinkAndCompileRules {
@@ -755,7 +787,7 @@ public class CxxDescriptionEnhancer {
 
     // Setup the header symlink tree and combine all the preprocessor input from this rule
     // and all dependencies.
-    SymlinkTree headerSymlinkTree = requireHeaderSymlinkTree(
+    HeaderSymlinkTree headerSymlinkTree = requireHeaderSymlinkTree(
         params,
         resolver,
         sourcePathResolver,
@@ -775,11 +807,11 @@ public class CxxDescriptionEnhancer {
                 args.platformPreprocessorFlags,
                 args.langPreprocessorFlags,
                 cxxPlatform),
-            args.prefixHeaders.get(),
             ImmutableList.of(headerSymlinkTree),
             getFrameworkSearchPaths(
-                args.frameworkSearchPaths,
-                cxxPlatform),
+                args.frameworks,
+                cxxPlatform,
+                new SourcePathResolver(resolver)),
             CxxPreprocessables.getTransitiveCxxPreprocessorInput(
                 targetGraph,
                 cxxPlatform,
@@ -806,6 +838,7 @@ public class CxxDescriptionEnhancer {
                 args.compilerFlags,
                 args.platformCompilerFlags,
                 cxxPlatform),
+            args.prefixHeader,
             preprocessMode,
             sources,
             linkStyle == Linker.LinkableDepType.STATIC ?
@@ -864,7 +897,8 @@ public class CxxDescriptionEnhancer {
             linkStyle,
             params.getDeps(),
             args.cxxRuntimeType,
-            Optional.<SourcePath>absent());
+            Optional.<SourcePath>absent(),
+            ImmutableSet.<BuildRule>of());
     resolver.addToIndex(cxxLink);
 
     // Add the output of the link as the lone argument needed to invoke this binary as a tool.
@@ -891,7 +925,8 @@ public class CxxDescriptionEnhancer {
             target,
             Suppliers.ofInstance(params.getDeclaredDeps()),
             Suppliers.ofInstance(params.getExtraDeps())),
-        ruleResolver, args);
+        ruleResolver,
+        args);
   }
 
   /**
@@ -977,7 +1012,7 @@ public class CxxDescriptionEnhancer {
   }
 
   /**
-   * Build a {@link SymlinkTree} of all the shared libraries found via the top-level rule's
+   * Build a {@link HeaderSymlinkTree} of all the shared libraries found via the top-level rule's
    * transitive dependencies.
    */
   public static SymlinkTree createSharedLibrarySymlinkTree(

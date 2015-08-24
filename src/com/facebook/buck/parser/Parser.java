@@ -21,6 +21,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import com.facebook.buck.event.AbstractBuckEvent;
 import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.event.BuckEventBus;
+import com.facebook.buck.event.PerfEventId;
+import com.facebook.buck.event.SimplePerfEvent;
 import com.facebook.buck.graph.AbstractAcyclicDepthFirstPostOrderTraversal;
 import com.facebook.buck.graph.MutableDirectedGraph;
 import com.facebook.buck.io.MorePaths;
@@ -30,6 +32,7 @@ import com.facebook.buck.json.DefaultProjectBuildFileParserFactory;
 import com.facebook.buck.json.JsonObjectHashing;
 import com.facebook.buck.json.ProjectBuildFileParser;
 import com.facebook.buck.json.ProjectBuildFileParserFactory;
+import com.facebook.buck.json.ProjectBuildFileParserOptions;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuckVersion;
 import com.facebook.buck.model.BuildFileTree;
@@ -196,7 +199,10 @@ public class Parser {
       boolean enforceBuckPackageBoundary,
       ImmutableSet<Pattern> tempFilePatterns,
       final String buildFileName,
-      Iterable<String> defaultIncludes)
+      Iterable<String> defaultIncludes,
+      boolean useWatchmanGlob,
+      Optional<String> watchmanWatchRoot,
+      Optional<String> watchmanProjectPrefix)
       throws IOException, InterruptedException {
     return new Parser(
         repository,
@@ -215,12 +221,17 @@ public class Parser {
         },
         // TODO(jacko): Get rid of this global BuildTargetParser completely.
         new DefaultProjectBuildFileParserFactory(
-            repository.getFilesystem().getRootPath(),
-            pythonInterpreter,
-            allowEmptyGlobs,
-            buildFileName,
-            defaultIncludes,
-            repository.getAllDescriptions()));
+            ProjectBuildFileParserOptions.builder()
+                .setProjectRoot(repository.getFilesystem().getRootPath())
+                .setPythonInterpreter(pythonInterpreter)
+                .setAllowEmptyGlobs(allowEmptyGlobs)
+                .setBuildFileName(buildFileName)
+                .setDefaultIncludes(defaultIncludes)
+                .setDescriptions(repository.getAllDescriptions())
+                .setUseWatchmanGlob(useWatchmanGlob)
+                .setWatchmanWatchRoot(watchmanWatchRoot)
+                .setWatchmanProjectPrefix(watchmanProjectPrefix)
+                .build()));
   }
 
   /**
@@ -379,17 +390,18 @@ public class Parser {
           buildFileParser,
           environment);
 
-      postParseStartEvent(buildTargets, eventBus);
+      ParseEvent.Started parseStart = postParseStartEvent(buildTargets, eventBus);
 
       try {
         graph = buildTargetGraph(
             buildTargets,
             parserConfig,
             buildFileParser,
-            environment);
+            environment,
+            eventBus);
         return new Pair<>(buildTargets, graph);
       } finally {
-        eventBus.post(ParseEvent.finished(buildTargets, Optional.fromNullable(graph)));
+        eventBus.post(ParseEvent.finished(parseStart, Optional.fromNullable(graph)));
       }
     }
   }
@@ -424,6 +436,15 @@ public class Parser {
     return state.get(buildTarget);
   }
 
+  private SimplePerfEvent.Scope getTargetNodeEventScope(
+      BuckEventBus eventBus,
+      BuildTarget buildTarget) {
+    return SimplePerfEvent.scope(
+        eventBus,
+        PerfEventId.of("GetTargetNode"),
+        "target", buildTarget);
+  }
+
   /**
    * Build a {@link TargetGraph} from the {@code toExplore} targets. Note that this graph isn't
    * pruned in any way and needs to be transformed into an {@link ActionGraph} before being useful
@@ -439,62 +460,84 @@ public class Parser {
       Iterable<BuildTarget> toExplore,
       final ParserConfig parserConfig,
       final ProjectBuildFileParser buildFileParser,
-      final ImmutableMap<String, String> environment) throws IOException, InterruptedException {
+      final ImmutableMap<String, String> environment,
+      final BuckEventBus eventBus) throws IOException, InterruptedException {
 
     final MutableDirectedGraph<TargetNode<?>> graph = new MutableDirectedGraph<>();
+
+    final Optional<BuckEventBus> eventBusOptional = Optional.of(eventBus);
 
     AbstractAcyclicDepthFirstPostOrderTraversal<BuildTarget> traversal =
         new AbstractAcyclicDepthFirstPostOrderTraversal<BuildTarget>() {
           @Override
           protected Iterator<BuildTarget> findChildren(BuildTarget buildTarget)
               throws IOException, InterruptedException {
-            BuildTargetPatternParser<BuildTargetPattern> buildTargetPatternParser =
-                BuildTargetPatternParser.forBaseName(buildTarget.getBaseName());
+            try (SimplePerfEvent.Scope getTargetDepsEventScope = SimplePerfEvent.scope(
+                eventBus,
+                PerfEventId.of("GetTargetDeps"),
+                "target", buildTarget)) {
+              BuildTargetPatternParser<BuildTargetPattern> buildTargetPatternParser =
+                  BuildTargetPatternParser.forBaseName(buildTarget.getBaseName());
 
-            // Verify that the BuildTarget actually exists in the map of known BuildTargets
-            // before trying to recurse through its children.
-            TargetNode<?> targetNode = getTargetNode(buildTarget);
-            if (targetNode == null) {
-              throw new HumanReadableException(
-                  NoSuchBuildTargetException.createForMissingBuildRule(
-                      buildTarget,
-                      buildTargetPatternParser,
-                      parserConfig.getBuildFileName()));
-            }
-
-            Set<BuildTarget> deps = Sets.newHashSet();
-            for (BuildTarget buildTargetForDep : targetNode.getDeps()) {
-              try {
-                TargetNode<?> depTargetNode = getTargetNode(buildTargetForDep);
-                if (depTargetNode == null) {
-                  parseBuildFileContainingTarget(
-                      buildTargetForDep,
-                      parserConfig,
-                      buildFileParser,
-                      environment);
-                  depTargetNode = getTargetNode(buildTargetForDep);
-                  if (depTargetNode == null) {
-                    throw new HumanReadableException(
-                        NoSuchBuildTargetException.createForMissingBuildRule(
-                            buildTargetForDep,
-                            BuildTargetPatternParser.forBaseName(
-                                buildTargetForDep.getBaseName()),
-                            parserConfig.getBuildFileName()));
-                  }
-                }
-                depTargetNode.checkVisibility(buildTarget);
-                deps.add(buildTargetForDep);
-              } catch (HumanReadableException | BuildTargetException | BuildFileParseException e) {
-                throw new HumanReadableException(
-                    e,
-                    "Couldn't get dependency '%s' of target '%s':\n%s",
-                    buildTargetForDep,
-                    buildTarget,
-                    e.getHumanReadableErrorMessage());
+              // Verify that the BuildTarget actually exists in the map of known BuildTargets
+              // before trying to recurse through its children.
+              TargetNode<?> targetNode;
+              try (SimplePerfEvent.Scope scope = getTargetNodeEventScope(eventBus, buildTarget)) {
+                targetNode = state.get(buildTarget, eventBusOptional);
               }
-            }
 
-            return deps.iterator();
+              if (targetNode == null) {
+                throw new HumanReadableException(
+                    NoSuchBuildTargetException.createForMissingBuildRule(
+                        buildTarget,
+                        buildTargetPatternParser,
+                        parserConfig.getBuildFileName(),
+                        getDefinedFilepathMessage(buildTarget)));
+              }
+
+              Set<BuildTarget> deps = Sets.newHashSet();
+              for (BuildTarget buildTargetForDep : targetNode.getDeps()) {
+                try {
+                  TargetNode<?> depTargetNode;
+                  try (SimplePerfEvent.Scope scope =
+                           getTargetNodeEventScope(eventBus, buildTargetForDep)) {
+                    depTargetNode = state.get(buildTargetForDep, eventBusOptional);
+                  }
+                  if (depTargetNode == null) {
+                    parseBuildFileContainingTarget(
+                        buildTargetForDep,
+                        parserConfig,
+                        buildFileParser,
+                        environment);
+                    try (SimplePerfEvent.Scope scope =
+                             getTargetNodeEventScope(eventBus, buildTargetForDep)) {
+                      depTargetNode = state.get(buildTargetForDep, eventBusOptional);
+                    }
+                    if (depTargetNode == null) {
+                      throw new HumanReadableException(
+                          NoSuchBuildTargetException.createForMissingBuildRule(
+                              buildTargetForDep,
+                              BuildTargetPatternParser.forBaseName(
+                                  buildTargetForDep.getBaseName()),
+                              parserConfig.getBuildFileName(),
+                              getDefinedFilepathMessage(buildTarget)));
+                    }
+                  }
+                  depTargetNode.checkVisibility(buildTarget);
+                  deps.add(buildTargetForDep);
+                } catch (HumanReadableException | BuildTargetException | BuildFileParseException
+                             e) {
+                  throw new HumanReadableException(
+                      e,
+                      "Couldn't get dependency '%s' of target '%s':\n%s",
+                      buildTargetForDep,
+                      buildTarget,
+                      e.getHumanReadableErrorMessage());
+                }
+              }
+
+              return deps.iterator();
+            }
           }
 
           @Override
@@ -531,8 +574,9 @@ public class Parser {
 
     if (buildTarget.getRepository().isPresent()) {
       throw new HumanReadableException(
-          "Buck does not currently support multiple repositories: %d",
-          buildTarget);
+          "Buck does not currently support multiple repositories: %d\n%s",
+          buildTarget,
+          getDefinedFilepathMessage(buildTarget));
     }
     Repository targetRepo = repository;
     Path buildFile = targetRepo.getAbsolutePathToBuildFile(buildTarget);
@@ -817,12 +861,31 @@ public class Parser {
    * Post a ParseStart event to eventBus, using the start of WatchEvent processing as the start
    * time if applicable.
    */
-  private void postParseStartEvent(Iterable<BuildTarget> buildTargets, BuckEventBus eventBus) {
+  private ParseEvent.Started postParseStartEvent(
+      Iterable<BuildTarget> buildTargets,
+      BuckEventBus eventBus) {
+    ParseEvent.Started started = ParseEvent.started(buildTargets);
     if (parseStartEvent.isPresent()) {
-      eventBus.post(ParseEvent.started(buildTargets), parseStartEvent.get());
+      eventBus.post(started, parseStartEvent.get());
     } else {
-      eventBus.post(ParseEvent.started(buildTargets));
+      eventBus.post(started);
     }
+    return started;
+  }
+
+  /**
+   * Returns error message which contains reference to the BUCK file that causes the exception
+   * @param buildTarget
+   * @return Error message with BUCK filepath
+   */
+  private String getDefinedFilepathMessage(BuildTarget buildTarget) {
+    String filePath;
+    try {
+      filePath = repository.getAbsolutePathToBuildFile(buildTarget).toString();
+    } catch (Repository.MissingBuildFileException e) {
+      return e.getHumanReadableErrorMessage();
+    }
+    return "Defined in file: " + filePath;
   }
 
   private class CachedState {
@@ -1037,8 +1100,15 @@ public class Parser {
     }
 
     @Nullable
-    @SuppressWarnings({"rawtypes", "unchecked"})
     public TargetNode<?> get(BuildTarget buildTarget) throws IOException, InterruptedException {
+      return get(buildTarget, Optional.<BuckEventBus>absent());
+    }
+
+    @Nullable
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public TargetNode<?> get(
+        BuildTarget buildTarget,
+        Optional<BuckEventBus> eventBus) throws IOException, InterruptedException {
       // Fast path.
       TargetNode<?> toReturn = memoizedTargetNodes.get(buildTarget);
       if (toReturn != null) {
@@ -1119,19 +1189,27 @@ public class Parser {
         try {
           ImmutableSet.Builder<BuildTarget> declaredDeps = ImmutableSet.builder();
           ImmutableSet.Builder<BuildTargetPattern> visibilityPatterns = ImmutableSet.builder();
-          marshaller.populate(
-              targetRepo.getFilesystem(),
-              factoryParams,
-              constructorArg,
-              declaredDeps,
-              visibilityPatterns,
-              map);
-          targetNode = new TargetNode(
-              description,
-              constructorArg,
-              factoryParams,
-              declaredDeps.build(),
-              visibilityPatterns.build());
+          try (SimplePerfEvent.Scope scope = SimplePerfEvent.scope(
+              eventBus, PerfEventId.of("MarshalledConstructorArg"),
+              "target", buildTarget)) {
+            marshaller.populate(
+                targetRepo.getFilesystem(),
+                factoryParams,
+                constructorArg,
+                declaredDeps,
+                visibilityPatterns,
+                map);
+          }
+          try (SimplePerfEvent.Scope scope = SimplePerfEvent.scope(
+              eventBus, PerfEventId.of("CreatedTargetNode"),
+              "target", buildTarget)) {
+            targetNode = new TargetNode(
+                description,
+                constructorArg,
+                factoryParams,
+                declaredDeps.build(),
+                visibilityPatterns.build());
+          }
         } catch (NoSuchBuildTargetException | TargetNode.InvalidSourcePathInputException e) {
           throw new HumanReadableException(e);
         } catch (ConstructorArgMarshalException e) {
@@ -1234,5 +1312,4 @@ public class Parser {
     }
     return result;
   }
-
 }

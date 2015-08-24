@@ -20,12 +20,15 @@ import com.facebook.buck.cxx.CxxCompilationDatabase;
 import com.facebook.buck.cxx.CxxDescriptionEnhancer;
 import com.facebook.buck.cxx.CxxPlatform;
 import com.facebook.buck.cxx.Linker;
+import com.facebook.buck.cxx.NativeLinkables;
+import com.facebook.buck.graph.MutableDirectedGraph;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.FlavorDomain;
 import com.facebook.buck.model.FlavorDomainException;
 import com.facebook.buck.model.Flavored;
 import com.facebook.buck.model.ImmutableFlavor;
+import com.facebook.buck.model.Pair;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
@@ -87,6 +90,7 @@ public class AppleTestDescription implements
   private final FlavorDomain<CxxPlatform> cxxPlatformFlavorDomain;
   private final ImmutableMap<Flavor, AppleCxxPlatform> platformFlavorsToAppleCxxPlatforms;
   private final CxxPlatform defaultCxxPlatform;
+  private final ImmutableSet<CodeSignIdentity> allValidCodeSignIdentities;
 
   public AppleTestDescription(
       AppleConfig appleConfig,
@@ -94,7 +98,8 @@ public class AppleTestDescription implements
       AppleLibraryDescription appleLibraryDescription,
       FlavorDomain<CxxPlatform> cxxPlatformFlavorDomain,
       Map<Flavor, AppleCxxPlatform> platformFlavorsToAppleCxxPlatforms,
-      CxxPlatform defaultCxxPlatform) {
+      CxxPlatform defaultCxxPlatform,
+      ImmutableSet<CodeSignIdentity> allValidCodeSignIdentities) {
     this.appleConfig = appleConfig;
     this.appleBundleDescription = appleBundleDescription;
     this.appleLibraryDescription = appleLibraryDescription;
@@ -102,6 +107,7 @@ public class AppleTestDescription implements
     this.platformFlavorsToAppleCxxPlatforms =
         ImmutableMap.copyOf(platformFlavorsToAppleCxxPlatforms);
     this.defaultCxxPlatform = defaultCxxPlatform;
+    this.allValidCodeSignIdentities = allValidCodeSignIdentities;
   }
 
   @Override
@@ -152,8 +158,18 @@ public class AppleTestDescription implements
       extraFlavorsBuilder.add(defaultCxxPlatform.getFlavor());
     }
 
+    CxxPlatform cxxPlatform;
+    try {
+      cxxPlatform = cxxPlatformFlavorDomain
+          .getValue(params.getBuildTarget().getFlavors())
+          .or(defaultCxxPlatform);
+    } catch (FlavorDomainException e) {
+      throw new HumanReadableException(e, "%s: %s", params.getBuildTarget(), e.getMessage());
+    }
+
     Optional<AppleBundle> testHostApp;
     Optional<SourcePath> testHostAppBinarySourcePath;
+    ImmutableSet<BuildRule> blacklist;
     if (args.testHostApp.isPresent()) {
       TargetNode<?> testHostAppNode = targetGraph.get(args.testHostApp.get());
       Preconditions.checkNotNull(testHostAppNode);
@@ -192,9 +208,19 @@ public class AppleTestDescription implements
                   testHostAppDescription));
       testHostAppBinarySourcePath = Optional.<SourcePath>of(
           new BuildTargetSourcePath(testHostAppDescription.binary));
+
+      Pair<MutableDirectedGraph<BuildRule>, Map<BuildTarget, Linker.LinkableDepType>>
+          transitiveDependencies = NativeLinkables.getTransitiveNativeLinkableInput(
+            cxxPlatform,
+            testHostApp.get().getBinary().get().getDeps(),
+            Linker.LinkableDepType.STATIC,
+            Predicates.alwaysTrue());
+
+      blacklist = ImmutableSet.copyOf(transitiveDependencies.getFirst().getNodes());
     } else {
       testHostApp = Optional.absent();
       testHostAppBinarySourcePath = Optional.absent();
+      blacklist = ImmutableSet.of();
     }
 
     BuildRule library = appleLibraryDescription.createBuildRule(
@@ -210,19 +236,12 @@ public class AppleTestDescription implements
         // For now, instead of building all deps as dylibs and fixing up their install_names,
         // we'll just link them statically.
         Optional.of(Linker.LinkableDepType.STATIC),
-        testHostAppBinarySourcePath);
+        testHostAppBinarySourcePath,
+        blacklist);
     if (!createBundle) {
       return library;
     }
 
-    CxxPlatform cxxPlatform;
-    try {
-      cxxPlatform = cxxPlatformFlavorDomain
-          .getValue(params.getBuildTarget().getFlavors())
-          .or(defaultCxxPlatform);
-    } catch (FlavorDomainException e) {
-      throw new HumanReadableException(e, "%s: %s", params.getBuildTarget(), e.getMessage());
-    }
     AppleCxxPlatform appleCxxPlatform =
         platformFlavorsToAppleCxxPlatforms.get(cxxPlatform.getFlavor());
     if (appleCxxPlatform == null) {
@@ -255,19 +274,14 @@ public class AppleTestDescription implements
     ImmutableSet<SourcePath> resourceFiles = resourceFilesBuilder.build();
     ImmutableSet<SourcePath> resourceVariantFiles = resourceVariantFilesBuilder.build();
 
-    CollectedAssetCatalogs collectedAssetCatalogs =
-        AppleDescriptions.createBuildRulesForTransitiveAssetCatalogDependencies(
+    Optional<AppleAssetCatalog> assetCatalog =
+        AppleDescriptions.createBuildRuleForTransitiveAssetCatalogDependencies(
             targetGraph,
             params,
             sourcePathResolver,
             appleCxxPlatform.getAppleSdk().getApplePlatform(),
             appleCxxPlatform.getActool());
 
-    Optional<AppleAssetCatalog> mergedAssetCatalog = collectedAssetCatalogs.getMergedAssetCatalog();
-    ImmutableSet<AppleAssetCatalog> bundledAssetCatalogs =
-        collectedAssetCatalogs.getBundledAssetCatalogs();
-
-    String sdkName = appleCxxPlatform.getAppleSdk().getName();
     String platformName = appleCxxPlatform.getAppleSdk().getApplePlatform().getName();
 
     AppleBundle bundle = new AppleBundle(
@@ -278,8 +292,7 @@ public class AppleTestDescription implements
             Suppliers.ofInstance(
                 ImmutableSortedSet.<BuildRule>naturalOrder()
                     .add(library)
-                    .addAll(mergedAssetCatalog.asSet())
-                    .addAll(bundledAssetCatalogs)
+                    .addAll(assetCatalog.asSet())
                     .addAll(params.getDeclaredDeps())
                     .addAll(
                         BuildRules.toBuildRulesFor(
@@ -302,15 +315,16 @@ public class AppleTestDescription implements
         resourceDirs,
         resourceFiles,
         dirsContainingResourceDirsBuilder.build(),
+        ImmutableSet.<SourcePath>of(),
         Optional.of(resourceVariantFiles),
         appleCxxPlatform.getIbtool(),
         appleCxxPlatform.getDsymutil(),
         appleCxxPlatform.getCxxPlatform().getStrip(),
-        bundledAssetCatalogs,
-        mergedAssetCatalog,
+        assetCatalog,
         ImmutableSortedSet.<BuildTarget>of(),
-        platformName,
-        sdkName);
+        appleCxxPlatform.getAppleSdk(),
+        allValidCodeSignIdentities,
+        args.provisioningProfileSearchPath);
 
 
     Optional<BuildRule> xctoolZipBuildRule;
@@ -364,10 +378,11 @@ public class AppleTestDescription implements
 
     // Bundle related fields.
     public Either<AppleBundleExtension, String> extension;
-    public Optional<SourcePath> infoPlist;
+    public SourcePath infoPlist;
     public Optional<ImmutableMap<String, String>> infoPlistSubstitutions;
     public Optional<String> xcodeProductType;
     public Optional<String> resourcePrefixDir;
+    public Optional<SourcePath> provisioningProfileSearchPath;
 
     @Override
     public Either<AppleBundleExtension, String> getExtension() {
@@ -375,7 +390,7 @@ public class AppleTestDescription implements
     }
 
     @Override
-    public Optional<SourcePath> getInfoPlist() {
+    public SourcePath getInfoPlist() {
       return infoPlist;
     }
 

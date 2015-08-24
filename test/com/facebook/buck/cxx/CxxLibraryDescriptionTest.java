@@ -40,10 +40,12 @@ import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TestSourcePath;
+import com.facebook.buck.rules.coercer.FrameworkPath;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.facebook.buck.shell.GenruleBuilder;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.testutil.TargetGraphFactory;
+import com.facebook.buck.util.BuckConstant;
 import com.google.common.base.Optional;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
@@ -75,6 +77,35 @@ public class CxxLibraryDescriptionTest {
   private static <T> void assertNotContains(List<T> container, Iterable<T> items) {
     for (T item : items) {
       assertThat(container, Matchers.not(Matchers.hasItem(item)));
+    }
+  }
+
+  private static Path getHeaderSymlinkTreeIncludePath(
+      BuildTarget target,
+      CxxPlatform cxxPlatform,
+      HeaderVisibility headerVisibility) {
+    if (cxxPlatform.getCpp().supportsHeaderMaps() && cxxPlatform.getCxxpp().supportsHeaderMaps()) {
+      return BuckConstant.BUCK_OUTPUT_PATH;
+    } else {
+      return CxxDescriptionEnhancer.getHeaderSymlinkTreePath(
+          target,
+          cxxPlatform.getFlavor(),
+          headerVisibility);
+    }
+  }
+
+  private static ImmutableSet<Path> getHeaderMaps(
+      BuildTarget target,
+      CxxPlatform cxxPlatform,
+      HeaderVisibility headerVisibility) {
+    if (cxxPlatform.getCpp().supportsHeaderMaps() && cxxPlatform.getCxxpp().supportsHeaderMaps()) {
+      return ImmutableSet.of(
+          CxxDescriptionEnhancer.getHeaderMapPath(
+              target,
+              cxxPlatform.getFlavor(),
+              headerVisibility));
+    } else {
+      return ImmutableSet.of();
     }
   }
 
@@ -161,7 +192,8 @@ public class CxxLibraryDescriptionTest {
             ImmutableList.<SourcePath>of(
                 new BuildTargetSourcePath(archive.getBuildTarget())),
             ImmutableList.of(archiveOutput.toString()),
-            ImmutableSet.<Path>of());
+            ImmutableSet.<FrameworkPath>of(),
+            ImmutableSet.<FrameworkPath>of());
       }
 
       @Override
@@ -221,10 +253,10 @@ public class CxxLibraryDescriptionTest {
             ImmutableSortedSet.of(
                 SourceWithFlags.of(new TestSourcePath("test/bar.cpp")),
                 SourceWithFlags.of(new BuildTargetSourcePath(genSourceTarget))))
-        .setFrameworkSearchPaths(
-            ImmutableSet.of(
-                Paths.get("/some/framework/path"),
-                Paths.get("/another/framework/path")))
+        .setFrameworks(
+            ImmutableSortedSet.of(
+                FrameworkPath.ofSourcePath(new TestSourcePath("/some/framework/path/s.dylib")),
+                FrameworkPath.ofSourcePath(new TestSourcePath("/another/framework/path/a.dylib"))))
         .setDeps(ImmutableSortedSet.of(dep.getBuildTarget()));
 
     TargetGraph targetGraph = TargetGraphFactory.newInstance(
@@ -266,9 +298,14 @@ public class CxxLibraryDescriptionTest {
                         new BuildTargetSourcePath(genHeaderTarget))
                     .build())
             .addIncludeRoots(
-                CxxDescriptionEnhancer.getHeaderSymlinkTreePath(
+                getHeaderSymlinkTreeIncludePath(
                     target,
-                    cxxPlatform.getFlavor(),
+                    cxxPlatform,
+                    HeaderVisibility.PUBLIC))
+            .addAllHeaderMaps(
+                getHeaderMaps(
+                    target,
+                    cxxPlatform,
                     HeaderVisibility.PUBLIC))
             .addFrameworkRoots(
                 Paths.get("/some/framework/path"),
@@ -301,9 +338,14 @@ public class CxxLibraryDescriptionTest {
                         new TestSourcePath(privateHeaderName))
                     .build())
             .addIncludeRoots(
-                CxxDescriptionEnhancer.getHeaderSymlinkTreePath(
+                getHeaderSymlinkTreeIncludePath(
                     target,
-                    cxxPlatform.getFlavor(),
+                    cxxPlatform,
+                    HeaderVisibility.PRIVATE))
+            .addAllHeaderMaps(
+                getHeaderMaps(
+                    target,
+                    cxxPlatform,
                     HeaderVisibility.PRIVATE))
             .addFrameworkRoots(
                 Paths.get("/some/framework/path"),
@@ -582,13 +624,15 @@ public class CxxLibraryDescriptionTest {
                     new BuildTargetSourcePath(
                         staticLibraryDep.getBuildTarget())),
                 ImmutableList.of(staticLibraryOutput.toString()),
-                ImmutableSet.<Path>of()) :
+                ImmutableSet.<FrameworkPath>of(),
+                ImmutableSet.<FrameworkPath>of()) :
             NativeLinkableInput.of(
                 ImmutableList.<SourcePath>of(
                     new BuildTargetSourcePath(
                         sharedLibraryDep.getBuildTarget())),
                 ImmutableList.of(sharedLibraryOutput.toString()),
-                ImmutableSet.<Path>of());
+                ImmutableSet.<FrameworkPath>of(),
+                ImmutableSet.<FrameworkPath>of());
       }
 
       @Override
@@ -651,10 +695,10 @@ public class CxxLibraryDescriptionTest {
                 SourceWithFlags.of(new TestSourcePath(sourceName)),
                 genSourceName,
                 SourceWithFlags.of(new BuildTargetSourcePath(genSourceTarget))))
-        .setFrameworkSearchPaths(
-            ImmutableSet.of(
-                Paths.get("/some/framework/path"),
-                Paths.get("/another/framework/path")))
+        .setFrameworks(
+            ImmutableSortedSet.of(
+                FrameworkPath.ofSourcePath(new TestSourcePath("/some/framework/path/s.dylib")),
+                FrameworkPath.ofSourcePath(new TestSourcePath("/another/framework/path/a.dylib"))))
         .setDeps(ImmutableSortedSet.of(dep.getBuildTarget()));
 
     // Construct C/C++ library build rules.
@@ -690,9 +734,14 @@ public class CxxLibraryDescriptionTest {
                         new BuildTargetSourcePath(genHeaderTarget))
                     .build())
             .addIncludeRoots(
-                CxxDescriptionEnhancer.getHeaderSymlinkTreePath(
+                getHeaderSymlinkTreeIncludePath(
                     target,
-                    cxxPlatform.getFlavor(),
+                    cxxPlatform,
+                    HeaderVisibility.PUBLIC))
+            .addAllHeaderMaps(
+                getHeaderMaps(
+                    target,
+                    cxxPlatform,
                     HeaderVisibility.PUBLIC))
             .addFrameworkRoots(
                 Paths.get("/some/framework/path"),

@@ -1,4 +1,4 @@
-from buck import glob_internal, LazyBuildEnvPartial
+from buck import format_watchman_query_params, glob_internal, LazyBuildEnvPartial
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import os
 import shutil
@@ -45,7 +45,6 @@ class TestBuckPlatformBase(object):
                 includes=['*.java'],
                 excludes=[],
                 include_dotfiles=False,
-                allow_empty=False,
                 search_base=search_base))
 
     def test_glob_includes_sort(self):
@@ -58,7 +57,6 @@ class TestBuckPlatformBase(object):
                 includes=['*.java'],
                 excludes=[],
                 include_dotfiles=False,
-                allow_empty=False,
                 search_base=search_base))
 
     def test_glob_includes_multi(self):
@@ -74,7 +72,6 @@ class TestBuckPlatformBase(object):
                 includes=['bar/*.java', 'baz/*.java'],
                 excludes=[],
                 include_dotfiles=False,
-                allow_empty=False,
                 search_base=search_base))
 
     def test_glob_excludes_double_star(self):
@@ -89,7 +86,6 @@ class TestBuckPlatformBase(object):
                 includes=['**/*.java'],
                 excludes=['**/*Test.java'],
                 include_dotfiles=False,
-                allow_empty=False,
                 search_base=search_base))
 
     def test_glob_excludes_multi(self):
@@ -105,7 +101,6 @@ class TestBuckPlatformBase(object):
                 includes=['bar/*.java', 'baz/*.java'],
                 excludes=['*/[AC].java'],
                 include_dotfiles=False,
-                allow_empty=False,
                 search_base=search_base))
 
     def test_glob_excludes_relative(self):
@@ -120,7 +115,6 @@ class TestBuckPlatformBase(object):
                 includes=['**/*.java'],
                 excludes=['bar/*.java'],
                 include_dotfiles=False,
-                allow_empty=False,
                 search_base=search_base))
 
     def test_glob_includes_skips_dotfiles(self):
@@ -133,7 +127,6 @@ class TestBuckPlatformBase(object):
                 includes=['*.java'],
                 excludes=[],
                 include_dotfiles=False,
-                allow_empty=False,
                 search_base=search_base))
 
     def test_glob_includes_does_not_skip_dotfiles_if_include_dotfiles(self):
@@ -146,7 +139,6 @@ class TestBuckPlatformBase(object):
                 includes=['*.java'],
                 excludes=[],
                 include_dotfiles=True,
-                allow_empty=False,
                 search_base=search_base))
 
     def test_lazy_build_env_partial(self):
@@ -166,33 +158,6 @@ class TestBuckPlatformBase(object):
             ('HAL', [1, 2, 3], {'abc': 789}),
             testLazy.invoke(name='HAL', deps=[1, 2, 3]))
 
-    def test_glob_errors_empty_results(self):
-        search_base = self.fake_path(
-            'foo',
-            glob_results={'*.java': []})
-        self.assertRaises(
-            AssertionError,
-            lambda:
-            glob_internal(
-                includes=['*.java'],
-                excludes=[],
-                include_dotfiles=False,
-                allow_empty=False,
-                search_base=search_base))
-
-    def test_glob_allows_empty_results_with_flag(self):
-        search_base = self.fake_path(
-            'foo',
-            glob_results={'*.java': []})
-        self.assertGlobMatches(
-            [],
-            glob_internal(
-                includes=['*.java'],
-                excludes=[],
-                include_dotfiles=False,
-                allow_empty=True,
-                search_base=search_base))
-
     def test_explicit_exclude_with_file_separator_excludes(self):
         search_base = self.fake_path(
             'foo',
@@ -203,7 +168,6 @@ class TestBuckPlatformBase(object):
                 includes=['java/**/*.java'],
                 excludes=['java/Exclude.java'],
                 include_dotfiles=False,
-                allow_empty=False,
                 search_base=search_base))
 
 
@@ -253,7 +217,6 @@ class TestBuck(unittest.TestCase):
                     includes=['b/a/**/*.java'],
                     excludes=['**/*Test.java'],
                     include_dotfiles=False,
-                    allow_empty=False,
                     search_base=Path(d)))
         finally:
             shutil.rmtree(d)
@@ -272,10 +235,50 @@ class TestBuck(unittest.TestCase):
                     includes=['java/Main.java'],
                     excludes=[],
                     include_dotfiles=False,
-                    allow_empty=False,
                     search_base=Path(d)))
         finally:
             shutil.rmtree(d)
+
+    def test_watchman_query_params_includes(self):
+        query_params = format_watchman_query_params(
+            ['**/*.java'],
+            [],
+            False,
+            '/path/to/glob')
+        self.assertEquals(
+            {
+                'relative_root': '/path/to/glob',
+                'path': [''],
+                'fields': ['name'],
+                'expression': [
+                    'allof',
+                    'exists',
+                    ['anyof', ['type', 'f'], ['type', 'l']],
+                    ['anyof', ['match', '**/*.java', 'wholename', {}]],
+                ]
+            },
+            query_params)
+
+    def test_watchman_query_params_includes_and_excludes(self):
+        query_params = format_watchman_query_params(
+            ['**/*.java'],
+            ['**/*Test.java'],
+            False,
+            '/path/to/glob')
+        self.assertEquals(
+            {
+                'relative_root': '/path/to/glob',
+                'path': [''],
+                'fields': ['name'],
+                'expression': [
+                    'allof',
+                    'exists',
+                    ['anyof', ['type', 'f'], ['type', 'l']],
+                    ['anyof', ['match', '**/*.java', 'wholename', {}]],
+                    ['not', ['anyof', ['match', '**/*Test.java', 'wholename', {}]]],
+                ]
+            },
+            query_params)
 
 
 if __name__ == '__main__':

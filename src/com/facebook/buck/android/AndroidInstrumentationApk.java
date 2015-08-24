@@ -81,7 +81,9 @@ public class AndroidInstrumentationApk extends AndroidBinary {
         Optional.<SourcePath>absent(),
         Optional.<SourcePath>absent(),
         Optional.<Integer>absent(),
-        dxExecutorService);
+        dxExecutorService,
+        Optional.<Boolean>absent(),
+        Optional.<Boolean>absent());
     this.apkUnderTest = apkUnderTest;
   }
 

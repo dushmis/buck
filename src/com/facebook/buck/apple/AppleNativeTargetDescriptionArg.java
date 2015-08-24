@@ -17,6 +17,7 @@
 package com.facebook.buck.apple;
 
 import com.facebook.buck.cxx.CxxSource;
+import com.facebook.buck.cxx.Linker;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.HasTests;
 import com.facebook.buck.rules.Hint;
@@ -42,6 +43,7 @@ public class AppleNativeTargetDescriptionArg implements HasTests {
   public Optional<SourceList> headers;
   public Optional<SourceList> exportedHeaders;
   public Optional<ImmutableSortedSet<FrameworkPath>> frameworks;
+  public Optional<ImmutableSortedSet<FrameworkPath>> libraries;
   public Optional<ImmutableSortedSet<BuildTarget>> deps;
   public Optional<ImmutableSortedSet<BuildTarget>> exportedDeps;
   public Optional<String> gid;
@@ -55,6 +57,7 @@ public class AppleNativeTargetDescriptionArg implements HasTests {
   public Optional<ImmutableList<String>> compilerFlags;
   public Optional<ImmutableList<String>> linkerFlags;
   public Optional<ImmutableList<String>> exportedLinkerFlags;
+  public Optional<Linker.LinkableDepType> linkStyle;
 
   public boolean getUseBuckHeaderMaps() {
     return useBuckHeaderMaps.or(true);

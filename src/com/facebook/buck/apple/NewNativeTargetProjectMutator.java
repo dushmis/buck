@@ -50,6 +50,7 @@ import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.facebook.buck.shell.GenruleDescription;
 import com.facebook.buck.util.HumanReadableException;
 import com.google.common.base.Function;
+import com.google.common.base.Functions;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -99,7 +100,8 @@ public class NewNativeTargetProjectMutator {
   private boolean shouldGenerateCopyHeadersPhase = true;
   private ImmutableSet<FrameworkPath> frameworks = ImmutableSet.of();
   private ImmutableSet<PBXFileReference> archives = ImmutableSet.of();
-  private ImmutableSet<AppleResourceDescription.Arg> resources = ImmutableSet.of();
+  private ImmutableSet<AppleResourceDescription.Arg> recursiveResources = ImmutableSet.of();
+  private ImmutableSet<AppleResourceDescription.Arg> directResources = ImmutableSet.of();
   private ImmutableSet<AppleAssetCatalogDescription.Arg> recursiveAssetCatalogs = ImmutableSet.of();
   private ImmutableSet<AppleAssetCatalogDescription.Arg> directAssetCatalogs = ImmutableSet.of();
   private Path assetCatalogBuildScript = Paths.get("");
@@ -192,8 +194,15 @@ public class NewNativeTargetProjectMutator {
     return this;
   }
 
-  public NewNativeTargetProjectMutator setResources(Set<AppleResourceDescription.Arg> resources) {
-    this.resources = ImmutableSet.copyOf(resources);
+  public NewNativeTargetProjectMutator setRecursiveResources(
+      Set<AppleResourceDescription.Arg> recursiveResources) {
+    this.recursiveResources = ImmutableSet.copyOf(recursiveResources);
+    return this;
+  }
+
+  public NewNativeTargetProjectMutator setDirectResources(
+      ImmutableSet<AppleResourceDescription.Arg> directResources) {
+    this.directResources = directResources;
     return this;
   }
 
@@ -258,6 +267,7 @@ public class NewNativeTargetProjectMutator {
     addRunScriptBuildPhases(target, preBuildRunScriptPhases);
     addPhasesAndGroupsForSources(target, targetGroup);
     addFrameworksBuildPhase(project, target);
+    addResourcesFileReference(targetGroup);
     addResourcesBuildPhase(target, targetGroup);
     addAssetCatalogFileReference(targetGroup);
     addAssetCatalogBuildPhase(target);
@@ -269,7 +279,10 @@ public class NewNativeTargetProjectMutator {
 
     PBXGroup productsGroup = project.getMainGroup().getOrCreateChildGroupByName("Products");
     PBXFileReference productReference = productsGroup.getOrCreateFileReferenceBySourceTreePath(
-        new SourceTreePath(PBXReference.SourceTree.BUILT_PRODUCTS_DIR, productOutputPath));
+        new SourceTreePath(
+            PBXReference.SourceTree.BUILT_PRODUCTS_DIR,
+            productOutputPath,
+            Optional.<String>absent()));
     target.setProductName(productName);
     target.setProductReference(productReference);
     target.setProductType(productType);
@@ -308,8 +321,8 @@ public class NewNativeTargetProjectMutator {
     if (prefixHeader.isPresent()) {
       SourceTreePath prefixHeaderSourceTreePath = new SourceTreePath(
           PBXReference.SourceTree.GROUP,
-          pathRelativizer.outputPathToSourcePath(prefixHeader.get())
-      );
+          pathRelativizer.outputPathToSourcePath(prefixHeader.get()),
+          Optional.<String>absent());
       sourcesGroup.getOrCreateFileReferenceBySourceTreePath(prefixHeaderSourceTreePath);
     }
 
@@ -383,7 +396,8 @@ public class NewNativeTargetProjectMutator {
         new SourceTreePath(
             PBXReference.SourceTree.SOURCE_ROOT,
             pathRelativizer.outputDirToRootRelative(
-                sourcePathResolver.apply(sourceWithFlags.getSourcePath()))));
+                sourcePathResolver.apply(sourceWithFlags.getSourcePath())),
+            Optional.<String>absent()));
     PBXBuildFile buildFile = new PBXBuildFile(fileReference);
     sourcesBuildPhase.getFiles().add(buildFile);
     List<String> customFlags = sourceWithFlags.getFlags();
@@ -408,7 +422,8 @@ public class NewNativeTargetProjectMutator {
     PBXFileReference fileReference = headersGroup.getOrCreateFileReferenceBySourceTreePath(
         new SourceTreePath(
             PBXReference.SourceTree.SOURCE_ROOT,
-            pathRelativizer.outputPathToSourcePath(headerPath)));
+            pathRelativizer.outputPathToSourcePath(headerPath),
+            Optional.<String>absent()));
     PBXBuildFile buildFile = new PBXBuildFile(fileReference);
     if (visibility != HeaderVisibility.PRIVATE) {
       NSDictionary settings = new NSDictionary();
@@ -452,7 +467,8 @@ public class NewNativeTargetProjectMutator {
       } else if (framework.getSourcePath().isPresent()) {
         sourceTreePath = new SourceTreePath(
             PBXReference.SourceTree.SOURCE_ROOT,
-            pathRelativizer.outputPathToSourcePath(framework.getSourcePath().get()));
+            pathRelativizer.outputPathToSourcePath(framework.getSourcePath().get()),
+            Optional.<String>absent());
       } else {
         throw new RuntimeException();
       }
@@ -466,25 +482,68 @@ public class NewNativeTargetProjectMutator {
     }
   }
 
-  private void addResourcesBuildPhase(PBXNativeTarget target, PBXGroup targetGroup) {
+  private void addResourcesFileReference(PBXGroup targetGroup) {
+    addResourcesFileReference(
+        targetGroup,
+        directResources,
+        Functions.<Void>constant(null),
+        Functions.<Void>constant(null));
+  }
+
+  private PBXBuildPhase addResourcesBuildPhase(PBXNativeTarget target, PBXGroup targetGroup) {
+    final PBXBuildPhase phase = new PBXResourcesBuildPhase();
+    addResourcesFileReference(
+        targetGroup,
+        recursiveResources,
+        new Function<PBXFileReference, Void>() {
+          @Override
+          public Void apply(PBXFileReference input) {
+            PBXBuildFile buildFile = new PBXBuildFile(input);
+            phase.getFiles().add(buildFile);
+            return null;
+          }
+        },
+        new Function<PBXVariantGroup, Void>() {
+          @Override
+          public Void apply(PBXVariantGroup input) {
+            PBXBuildFile buildFile = new PBXBuildFile(input);
+            phase.getFiles().add(buildFile);
+            return null;
+          }
+        });
+    if (!phase.getFiles().isEmpty()) {
+      target.getBuildPhases().add(phase);
+      LOG.debug("Added resources build phase %s", phase);
+    }
+    return phase;
+  }
+
+  private void addResourcesFileReference(
+      PBXGroup targetGroup,
+      ImmutableSet<AppleResourceDescription.Arg> resources,
+      Function<? super PBXFileReference, Void> resourceCallback,
+      Function<? super PBXVariantGroup, Void> variantGroupCallback) {
     if (resources.isEmpty()) {
       return;
     }
 
     PBXGroup resourcesGroup = targetGroup.getOrCreateChildGroupByName("Resources");
-    PBXBuildPhase phase = new PBXResourcesBuildPhase();
-    target.getBuildPhases().add(phase);
     for (AppleResourceDescription.Arg resource : resources) {
-      Iterable<Path> paths = Iterables.transform(
-          Iterables.concat(resource.files, resource.dirs),
-          sourcePathResolver);
-      for (Path path : paths) {
+      for (Path path : Iterables.transform(resource.files, sourcePathResolver)) {
         PBXFileReference fileReference = resourcesGroup.getOrCreateFileReferenceBySourceTreePath(
             new SourceTreePath(
                 PBXReference.SourceTree.SOURCE_ROOT,
-                pathRelativizer.outputDirToRootRelative(path)));
-        PBXBuildFile buildFile = new PBXBuildFile(fileReference);
-        phase.getFiles().add(buildFile);
+                pathRelativizer.outputDirToRootRelative(path),
+                Optional.<String>absent()));
+        resourceCallback.apply(fileReference);
+      }
+      for (Path path : Iterables.transform(resource.dirs, sourcePathResolver)) {
+        PBXFileReference fileReference = resourcesGroup.getOrCreateFileReferenceBySourceTreePath(
+            new SourceTreePath(
+                PBXReference.SourceTree.SOURCE_ROOT,
+                pathRelativizer.outputDirToRootRelative(path),
+                Optional.of("folder")));
+        resourceCallback.apply(fileReference);
       }
 
       Map<String, PBXVariantGroup> variantGroups = Maps.newHashMap();
@@ -505,19 +564,18 @@ public class NewNativeTargetProjectMutator {
         PBXVariantGroup variantGroup = variantGroups.get(variantFileName);
         if (variantGroup == null) {
           variantGroup = resourcesGroup.getOrCreateChildVariantGroupByName(variantFileName);
-          PBXBuildFile buildFile = new PBXBuildFile(variantGroup);
-          phase.getFiles().add(buildFile);
+          variantGroupCallback.apply(variantGroup);
           variantGroups.put(variantFileName, variantGroup);
         }
         SourceTreePath sourceTreePath = new SourceTreePath(
             PBXReference.SourceTree.SOURCE_ROOT,
-            pathRelativizer.outputPathToSourcePath(variantSourcePath));
+            pathRelativizer.outputPathToSourcePath(variantSourcePath),
+            Optional.<String>absent());
         variantGroup.getOrCreateVariantFileReferenceByNameAndSourceTreePath(
             variantLocalization,
             sourceTreePath);
       }
     }
-    LOG.debug("Added resources build phase %s", phase);
   }
 
   private void addAssetCatalogFileReference(PBXGroup targetGroup) {
@@ -535,7 +593,8 @@ public class NewNativeTargetProjectMutator {
         resourcesGroup.getOrCreateFileReferenceBySourceTreePath(
             new SourceTreePath(
                 PBXReference.SourceTree.SOURCE_ROOT,
-                pathRelativeToProjectRoot));
+                pathRelativeToProjectRoot,
+                Optional.<String>absent()));
 
         LOG.debug("Resolved asset catalog path %s, result %s", dir, pathRelativeToProjectRoot);
       }
@@ -547,13 +606,7 @@ public class NewNativeTargetProjectMutator {
       return;
     }
 
-    // Some asset catalogs should be copied to their sibling bundles, while others use the default
-    // output format (which may be to copy individual files to the root resource output path or to
-    // be archived in Assets.car if it is supported by the target platform version).
-
-    ImmutableList.Builder<String> commonAssetCatalogsBuilder = ImmutableList.builder();
-    ImmutableList.Builder<String> assetCatalogsToSplitIntoBundlesBuilder =
-        ImmutableList.builder();
+    ImmutableList.Builder<String> assetCatalogsBuilder = ImmutableList.builder();
     for (AppleAssetCatalogDescription.Arg assetCatalog : recursiveAssetCatalogs) {
       for (Path dir : assetCatalog.dirs) {
         Path pathRelativeToProjectRoot = pathRelativizer.outputDirToRootRelative(dir);
@@ -561,17 +614,11 @@ public class NewNativeTargetProjectMutator {
         LOG.debug("Resolved asset catalog path %s, result %s", dir, pathRelativeToProjectRoot);
 
         String bundlePath = "$PROJECT_DIR/" + pathRelativeToProjectRoot.toString();
-        if (assetCatalog.getCopyToBundles()) {
-          assetCatalogsToSplitIntoBundlesBuilder.add(bundlePath);
-        } else {
-          commonAssetCatalogsBuilder.add(bundlePath);
-        }
+        assetCatalogsBuilder.add(bundlePath);
       }
     }
 
-    ImmutableList<String> commonAssetCatalogs = commonAssetCatalogsBuilder.build();
-    ImmutableList<String> assetCatalogsToSplitIntoBundles =
-        assetCatalogsToSplitIntoBundlesBuilder.build();
+    ImmutableList<String> assetCatalogs = assetCatalogsBuilder.build();
 
     // Map asset catalog paths to their shell script arguments relative to the project's root
     Path buildScript = pathRelativizer.outputDirToRootRelative(assetCatalogBuildScript);
@@ -579,12 +626,12 @@ public class NewNativeTargetProjectMutator {
     scriptBuilder
         .append("TMPDIR=`mktemp -d -t buckAssetCatalogs.XXXXXX`\n")
         .append("trap \"rm -rf '${TMPDIR}'\" exit\n");
-    if (commonAssetCatalogs.size() != 0) {
+    if (assetCatalogs.size() != 0) {
       scriptBuilder
           .append("COMMON_ARGS_FILE=\"${TMPDIR}\"/common_args\n")
           .append("cat <<EOT >\"${COMMON_ARGS_FILE}\"\n");
 
-      Joiner.on('\n').appendTo(scriptBuilder, commonAssetCatalogs);
+      Joiner.on('\n').appendTo(scriptBuilder, assetCatalogs);
 
       scriptBuilder
           .append("\n")
@@ -592,21 +639,6 @@ public class NewNativeTargetProjectMutator {
           .append("\"${PROJECT_DIR}/\"")
           .append(buildScript.toString())
           .append(" @\"${COMMON_ARGS_FILE}\"\n");
-    }
-    if (assetCatalogsToSplitIntoBundles.size() != 0) {
-      scriptBuilder
-        .append("BUNDLE_ARGS_FILE=\"${TMPDIR}\"/bundle_args\n")
-        .append("cat <<EOT >\"${BUNDLE_ARGS_FILE}\"\n");
-
-      Joiner.on('\n').appendTo(scriptBuilder, assetCatalogsToSplitIntoBundles);
-
-      scriptBuilder
-        .append("\n")
-        .append("EOT\n")
-        .append("\"${PROJECT_DIR}/\"")
-        .append(buildScript.toString())
-        .append(" -b ")
-        .append("@\"${BUNDLE_ARGS_FILE}\"\n");
     }
 
     PBXShellScriptBuildPhase phase = new PBXShellScriptBuildPhase();

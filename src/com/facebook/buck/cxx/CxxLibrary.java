@@ -22,6 +22,7 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.Pair;
 import com.facebook.buck.python.PythonPackageComponents;
+import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
@@ -29,6 +30,7 @@ import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TargetGraph;
+import com.facebook.buck.rules.coercer.FrameworkPath;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -51,6 +53,9 @@ import java.util.regex.Pattern;
  */
 public class CxxLibrary extends AbstractCxxLibrary {
 
+  @AddToRuleKey
+  private final boolean canBeAsset;
+
   private final BuildRuleParams params;
   private final BuildRuleResolver ruleResolver;
   private final Predicate<CxxPlatform> headerOnly;
@@ -58,7 +63,8 @@ public class CxxLibrary extends AbstractCxxLibrary {
       exportedPreprocessorFlags;
   private final Function<? super CxxPlatform, ImmutableList<String>> exportedLinkerFlags;
   private final Optional<Pattern> supportedPlatformsRegex;
-  private final Function<? super CxxPlatform, ImmutableSet<Path>> frameworkSearchPaths;
+  private final ImmutableSet<FrameworkPath> frameworks;
+  private final ImmutableSet<FrameworkPath> libraries;
   private final Linkage linkage;
   private final boolean linkWhole;
   private final Optional<String> soname;
@@ -76,11 +82,13 @@ public class CxxLibrary extends AbstractCxxLibrary {
           exportedPreprocessorFlags,
       Function<? super CxxPlatform, ImmutableList<String>> exportedLinkerFlags,
       Optional<Pattern> supportedPlatformsRegex,
-      Function<? super CxxPlatform, ImmutableSet<Path>> frameworkSearchPaths,
+      ImmutableSet<FrameworkPath> frameworks,
+      ImmutableSet<FrameworkPath> libraries,
       Linkage linkage,
       boolean linkWhole,
       Optional<String> soname,
-      ImmutableSortedSet<BuildTarget> tests) {
+      ImmutableSortedSet<BuildTarget> tests,
+      boolean canBeAsset) {
     super(params, pathResolver);
     this.params = params;
     this.ruleResolver = ruleResolver;
@@ -88,11 +96,13 @@ public class CxxLibrary extends AbstractCxxLibrary {
     this.exportedPreprocessorFlags = exportedPreprocessorFlags;
     this.exportedLinkerFlags = exportedLinkerFlags;
     this.supportedPlatformsRegex = supportedPlatformsRegex;
-    this.frameworkSearchPaths = frameworkSearchPaths;
+    this.frameworks = frameworks;
+    this.libraries = libraries;
     this.linkage = linkage;
     this.linkWhole = linkWhole;
     this.soname = soname;
     this.tests = tests;
+    this.canBeAsset = canBeAsset;
   }
 
   private boolean isPlatformSupported(CxxPlatform cxxPlatform) {
@@ -115,7 +125,8 @@ public class CxxLibrary extends AbstractCxxLibrary {
         headerVisibility,
         CxxPreprocessables.IncludeType.LOCAL,
         exportedPreprocessorFlags.apply(cxxPlatform),
-        frameworkSearchPaths.apply(cxxPlatform));
+        cxxPlatform,
+        frameworks);
   }
 
   @Override
@@ -159,7 +170,8 @@ public class CxxLibrary extends AbstractCxxLibrary {
       return NativeLinkableInput.of(
           ImmutableList.<SourcePath>of(),
           ImmutableList.<String>of(),
-          Preconditions.checkNotNull(frameworkSearchPaths.apply(cxxPlatform)));
+          Preconditions.checkNotNull(frameworks),
+          ImmutableSet.<FrameworkPath>of());
     }
 
     // Build up the arguments used to link this library.  If we're linking the
@@ -208,7 +220,8 @@ public class CxxLibrary extends AbstractCxxLibrary {
     return NativeLinkableInput.of(
         ImmutableList.<SourcePath>of(new BuildTargetSourcePath(libraryRule.getBuildTarget())),
         linkerArgs,
-        Preconditions.checkNotNull(frameworkSearchPaths.apply(cxxPlatform)));
+        Preconditions.checkNotNull(frameworks),
+        Preconditions.checkNotNull(libraries));
   }
 
   public BuildRule requireBuildRule(
@@ -263,7 +276,11 @@ public class CxxLibrary extends AbstractCxxLibrary {
 
   @Override
   public void addToCollector(AndroidPackageableCollector collector) {
-    collector.addNativeLinkable(this);
+    if (canBeAsset) {
+      collector.addNativeLinkableAsset(this);
+    } else {
+      collector.addNativeLinkable(this);
+    }
   }
 
   @Override

@@ -53,7 +53,6 @@ import com.google.common.util.concurrent.ListeningExecutorService;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
@@ -148,13 +147,13 @@ public class SmartDexingStep implements Step {
             projectFilesystem);
 
         // Concatenate if solid compression is specified.
-        List<Path> secondaryDexJars = new ArrayList<>();
+        ImmutableList.Builder<Path> secondaryDexJarsBuilder = ImmutableList.builder();
         for (Path p : outputToInputs.keySet()) {
           if (DexStore.XZS.matchesPath(p)) {
-            secondaryDexJars.add(p);
+            secondaryDexJarsBuilder.add(p);
           }
         }
-
+        ImmutableList<Path> secondaryDexJars = secondaryDexJarsBuilder.build();
         if (!secondaryDexJars.isEmpty()) {
           // Construct the output path for our solid blob and its compressed form.
           Path secondaryBlobOutput = Paths.get(
@@ -356,7 +355,7 @@ public class SmartDexingStep implements Step {
       List<Step> steps = Lists.newArrayList();
 
       steps.add(createDxStepForDxPseudoRule(srcs, outputPath, dxOptions, xzCompressionLevel));
-      steps.add(new WriteFileStep(newInputsHash, outputHashPath));
+      steps.add(new WriteFileStep(newInputsHash, outputHashPath, /* executable */ false));
 
       // Use a composite step to ensure that runDxSteps can still make use of
       // runStepsInParallelAndWait.  This is necessary to keep the DxStep and

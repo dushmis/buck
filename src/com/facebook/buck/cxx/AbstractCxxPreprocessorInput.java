@@ -20,7 +20,6 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.util.immutables.BuckStyleImmutable;
 import com.google.common.base.Function;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multimap;
@@ -63,6 +62,14 @@ abstract class AbstractCxxPreprocessorInput {
         }
       };
 
+  public static final Function<CxxPreprocessorInput, ImmutableSet<Path>> GET_HEADER_MAPS =
+      new Function<CxxPreprocessorInput, ImmutableSet<Path>>() {
+        @Override
+        public ImmutableSet<Path> apply(CxxPreprocessorInput input) {
+          return input.getHeaderMaps();
+        }
+      };
+
   public static final Function<CxxPreprocessorInput, ImmutableSet<Path>> GET_FRAMEWORK_ROOTS =
       new Function<CxxPreprocessorInput, ImmutableSet<Path>>() {
         @Override
@@ -92,6 +99,10 @@ abstract class AbstractCxxPreprocessorInput {
   @Value.Parameter
   public abstract Set<Path> getSystemIncludeRoots();
 
+  // Locations of header maps.
+  @Value.Parameter
+  public abstract Set<Path> getHeaderMaps();
+
   // Directories where frameworks are stored.
   @Value.Parameter
   public abstract Set<Path> getFrameworkRoots();
@@ -103,17 +114,16 @@ abstract class AbstractCxxPreprocessorInput {
     ImmutableSet.Builder<BuildTarget> rules = ImmutableSet.builder();
     ImmutableMultimap.Builder<CxxSource.Type, String> preprocessorFlags =
       ImmutableMultimap.builder();
-    ImmutableList.Builder<SourcePath> prefixHeaders = ImmutableList.builder();
     Map<Path, SourcePath> includeNameToPathMap = new HashMap<>();
     Map<Path, SourcePath> includeFullNameToPathMap = new HashMap<>();
     ImmutableSet.Builder<Path> includeRoots = ImmutableSet.builder();
     ImmutableSet.Builder<Path> systemIncludeRoots = ImmutableSet.builder();
+    ImmutableSet.Builder<Path> headerMaps = ImmutableSet.builder();
     ImmutableSet.Builder<Path> frameworkRoots = ImmutableSet.builder();
 
     for (CxxPreprocessorInput input : inputs) {
       rules.addAll(input.getRules());
       preprocessorFlags.putAll(input.getPreprocessorFlags());
-      prefixHeaders.addAll(input.getIncludes().getPrefixHeaders());
       CxxHeaders.addAllEntriesToIncludeMap(
           includeNameToPathMap,
           input.getIncludes().getNameToPathMap());
@@ -122,6 +132,7 @@ abstract class AbstractCxxPreprocessorInput {
           input.getIncludes().getFullNameToPathMap());
       includeRoots.addAll(input.getIncludeRoots());
       systemIncludeRoots.addAll(input.getSystemIncludeRoots());
+      headerMaps.addAll(input.getHeaderMaps());
       frameworkRoots.addAll(input.getFrameworkRoots());
     }
 
@@ -129,12 +140,12 @@ abstract class AbstractCxxPreprocessorInput {
         rules.build(),
         preprocessorFlags.build(),
         CxxHeaders.builder()
-            .addAllPrefixHeaders(prefixHeaders.build())
             .putAllNameToPathMap(includeNameToPathMap)
             .putAllFullNameToPathMap(includeFullNameToPathMap)
             .build(),
         includeRoots.build(),
         systemIncludeRoots.build(),
+        headerMaps.build(),
         frameworkRoots.build());
   }
 

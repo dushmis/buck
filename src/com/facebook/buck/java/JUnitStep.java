@@ -43,8 +43,10 @@ import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
 
 public class JUnitStep extends ShellStep {
   private static final Logger LOG = Logger.get(JUnitStep.class);
@@ -69,9 +71,13 @@ public class JUnitStep extends ShellStep {
   @VisibleForTesting
   public static final String MODULE_BASE_PATH_PROPERTY = "com.facebook.buck.moduleBasePath";
 
+  private static final String STD_OUT_LOG_LEVEL_PROPERTY = "com.facebook.buck.stdOutLogLevel";
+  private static final String STD_ERR_LOG_LEVEL_PROPERTY = "com.facebook.buck.stdErrLogLevel";
+
   private final ImmutableSet<Path> classpathEntries;
   private final Iterable<String> testClassNames;
   private final List<String> vmArgs;
+  private final ImmutableMap<String, String> nativeLibsEnvironment;
   private final Path directoryForTestResults;
   private final Path modulePath;
   private final Path tmpDirectory;
@@ -79,6 +85,8 @@ public class JUnitStep extends ShellStep {
   private final boolean isCodeCoverageEnabled;
   private final boolean isDebugEnabled;
   private final BuildId buildId;
+  private final Optional<Level> stdErrLogLevel;
+  private final Optional<Level> stdOutLogLevel;
   private TestSelectorList testSelectorList;
   private final boolean isDryRun;
   private final TestType type;
@@ -112,6 +120,7 @@ public class JUnitStep extends ShellStep {
       Set<Path> classpathEntries,
       Iterable<String> testClassNames,
       List<String> vmArgs,
+      Map<String, String> nativeLibsEnvironment,
       Path directoryForTestResults,
       Path modulePath,
       Path tmpDirectory,
@@ -121,10 +130,13 @@ public class JUnitStep extends ShellStep {
       TestSelectorList testSelectorList,
       boolean isDryRun,
       TestType type,
-      Optional<Long> testRuleTimeoutMs) {
+      Optional<Long> testRuleTimeoutMs,
+      Optional<Level> stdOutLogLevel,
+      Optional<Level> stdErrLogLevel) {
     this(classpathEntries,
         testClassNames,
         vmArgs,
+        nativeLibsEnvironment,
         directoryForTestResults,
         modulePath,
         tmpDirectory,
@@ -135,7 +147,10 @@ public class JUnitStep extends ShellStep {
         isDryRun,
         type,
         TESTRUNNER_CLASSES,
-        testRuleTimeoutMs);
+        testRuleTimeoutMs,
+        stdOutLogLevel,
+        stdErrLogLevel
+        );
   }
 
   @VisibleForTesting
@@ -143,6 +158,7 @@ public class JUnitStep extends ShellStep {
       Set<Path> classpathEntries,
       Iterable<String> testClassNames,
       List<String> vmArgs,
+      Map<String, String> nativeLibsEnvironment,
       Path directoryForTestResults,
       Path modulePath,
       Path tmpDirectory,
@@ -153,10 +169,13 @@ public class JUnitStep extends ShellStep {
       boolean isDryRun,
       TestType type,
       Path testRunnerClasspath,
-      Optional<Long> testRuleTimeoutMs) {
+      Optional<Long> testRuleTimeoutMs,
+      Optional<Level> stdOutLogLevel,
+      Optional<Level> stdErrLogLevel) {
     this.classpathEntries = ImmutableSet.copyOf(classpathEntries);
     this.testClassNames = Iterables.unmodifiableIterable(testClassNames);
     this.vmArgs = ImmutableList.copyOf(vmArgs);
+    this.nativeLibsEnvironment = ImmutableMap.copyOf(nativeLibsEnvironment);
     this.directoryForTestResults = directoryForTestResults;
     this.tmpDirectory = tmpDirectory;
     this.modulePath = modulePath;
@@ -168,6 +187,8 @@ public class JUnitStep extends ShellStep {
     this.type = type;
     this.testRunnerClasspath = testRunnerClasspath;
     this.testRuleTimeoutMs = testRuleTimeoutMs;
+    this.stdOutLogLevel = stdOutLogLevel;
+    this.stdErrLogLevel = stdErrLogLevel;
   }
 
   @Override
@@ -203,6 +224,14 @@ public class JUnitStep extends ShellStep {
 
     // Include the baseDir
     args.add(String.format("-D%s=%s", MODULE_BASE_PATH_PROPERTY, modulePath));
+
+    // Include log levels
+    if (stdOutLogLevel.isPresent()) {
+      args.add(String.format("-D%s=%s", STD_OUT_LOG_LEVEL_PROPERTY, stdOutLogLevel.get()));
+    }
+    if (stdErrLogLevel.isPresent()) {
+      args.add(String.format("-D%s=%s", STD_ERR_LOG_LEVEL_PROPERTY, stdErrLogLevel.get()));
+    }
 
     if (isDebugEnabled) {
       // This is the default config used by IntelliJ. By doing this, all a user
@@ -271,7 +300,10 @@ public class JUnitStep extends ShellStep {
 
   @Override
   public ImmutableMap<String, String> getEnvironmentVariables(ExecutionContext context) {
-    return ImmutableMap.of("TMP", context.getProjectFilesystem().resolve(tmpDirectory).toString());
+    return ImmutableMap.<String, String>builder()
+        .put("TMP", context.getProjectFilesystem().resolve(tmpDirectory).toString())
+        .putAll(nativeLibsEnvironment)
+        .build();
   }
 
   private void warnUser(ExecutionContext context, String message) {

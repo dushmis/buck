@@ -20,6 +20,7 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.HasTests;
 import com.facebook.buck.rules.Hint;
 import com.facebook.buck.rules.SourcePath;
+import com.facebook.buck.rules.coercer.FrameworkPath;
 import com.facebook.buck.rules.coercer.PatternMatchedCollection;
 import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.rules.coercer.SourceWithFlagsList;
@@ -27,10 +28,8 @@ import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 
-import java.nio.file.Path;
 
 @SuppressFieldNotInitialized
 public class CxxConstructorArg implements HasTests {
@@ -39,7 +38,7 @@ public class CxxConstructorArg implements HasTests {
   public Optional<PatternMatchedCollection<SourceWithFlagsList>> platformSrcs;
   public Optional<SourceList> headers;
   public Optional<PatternMatchedCollection<SourceList>> platformHeaders;
-  public Optional<ImmutableList<SourcePath>> prefixHeaders;
+  public Optional<SourcePath> prefixHeader;
   public Optional<ImmutableList<String>> compilerFlags;
   public Optional<PatternMatchedCollection<ImmutableList<String>>> platformCompilerFlags;
   public Optional<ImmutableList<String>> preprocessorFlags;
@@ -47,7 +46,8 @@ public class CxxConstructorArg implements HasTests {
   public Optional<ImmutableMap<CxxSource.Type, ImmutableList<String>>> langPreprocessorFlags;
   public Optional<ImmutableList<String>> linkerFlags;
   public Optional<PatternMatchedCollection<ImmutableList<String>>> platformLinkerFlags;
-  public Optional<ImmutableSet<Path>> frameworkSearchPaths;
+  public Optional<ImmutableSortedSet<FrameworkPath>> frameworks;
+  public Optional<ImmutableSortedSet<FrameworkPath>> libraries;
   public Optional<ImmutableList<SourcePath>> lexSrcs;
   public Optional<ImmutableList<SourcePath>> yaccSrcs;
   public Optional<ImmutableSortedSet<BuildTarget>> deps;

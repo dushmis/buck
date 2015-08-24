@@ -18,12 +18,11 @@ package com.facebook.buck.cli;
 
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.parser.BuildTargetParser;
+import com.facebook.buck.parser.BuildTargetPatternParser;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Function;
-import com.google.common.base.Preconditions;
-import com.google.common.collect.Collections2;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
+import com.google.common.collect.TreeMultimap;
 import com.google.devtools.build.lib.query2.engine.QueryEnvironment;
 import com.google.devtools.build.lib.query2.engine.QueryException;
 
@@ -59,64 +58,91 @@ public class QueryCommand extends AbstractCommand {
     this.arguments = arguments;
   }
 
+  public List<String> getMultipleQueryInputsFormattedAsBuildTargets(BuckConfig buckConfig) {
+    // Don't consider the first argument as input because it is the query expression format.
+    return getCommandLineBuildTargetNormalizer(buckConfig).normalizeAll(
+        arguments.subList(1, arguments.size()));
+  }
+
   @Override
   public int runWithoutHelp(CommandRunnerParams params) throws IOException, InterruptedException {
+    if (getArguments().isEmpty()) {
+      params.getConsole().printBuildFailure("Must specify at least a the query expression");
+      return 1;
+    }
 
-    if (getArguments().size() != 1) {
-      params.getConsole().printBuildFailure("Specify a single argument: the query expression");
+    // We're not using any of Bazel's settings.
+    Set<QueryEnvironment.Setting> settings = new HashSet<>();
+    BuckQueryEnvironment env = new BuckQueryEnvironment(params, settings, getEnableProfiling());
+
+    String query = getArguments().get(0);
+    if (query.contains("%s")) {
+      return runMultipleQuery(params, env);
+    } else {
+      return runSingleQuery(params, env);
+    }
+  }
+
+  /**
+   * Evaluate multiple queries in a single `buck query` run. Usage:
+   *   buck query <query format> <input1> <input2> <...> <inputN>
+   */
+  private int runMultipleQuery(CommandRunnerParams params, BuckQueryEnvironment env)
+      throws IOException, InterruptedException {
+    if (getArguments().size() < 2) {
+      params.getConsole().printBuildFailure(
+          "Specify one or more input targets after the query expression format");
       return 1;
     }
 
     try {
-      // We're not using any of Bazel's settings.
-      Set<QueryEnvironment.Setting> settings = new HashSet<>();
-      BuckQueryEnvironment env = new BuckQueryEnvironment(params, settings, getEnableProfiling());
+      String queryFormat = getArguments().get(0);
+      TreeMultimap<BuildTarget, BuildTarget> queryResultMap = TreeMultimap.create();
 
-      String query = getArguments().get(0);
-      Set<BuildTarget> queryResult = env.evaluateQuery(query);
+      for (String input : getMultipleQueryInputsFormattedAsBuildTargets(params.getBuckConfig())) {
+        BuildTarget target = BuildTargetParser.INSTANCE.parse(
+            input,
+            BuildTargetPatternParser.fullyQualified());
+        String query = queryFormat.replace("%s", input);
+        Set<BuildTarget> queryResult = env.evaluateQuery(query);
+        queryResultMap.putAll(target, queryResult);
+      }
 
-      LOG.debug("Printing out the following targets: " + queryResult);
+      LOG.debug("Printing out the following targets: " + queryResultMap);
       if (shouldGenerateJsonOutput()) {
-        printJSON(params, queryResult);
+        CommandHelper.printJSON(params, queryResultMap);
       } else {
-        printToConsole(params, queryResult);
+        CommandHelper.printToConsole(params, queryResultMap);
       }
     } catch (QueryException e) {
       params.getConsole().printBuildFailureWithoutStacktrace(e);
       return 1;
     }
+    return 0;
+  }
 
+  private int runSingleQuery(CommandRunnerParams params, BuckQueryEnvironment env)
+      throws IOException, InterruptedException {
+    try {
+      String query = getArguments().get(0);
+      Set<BuildTarget> queryResult = env.evaluateQuery(query);
+
+      LOG.debug("Printing out the following targets: " + queryResult);
+      if (shouldGenerateJsonOutput()) {
+        CommandHelper.printJSON(params, queryResult);
+      } else {
+        CommandHelper.printToConsole(params, queryResult);
+      }
+    } catch (QueryException e) {
+      params.getConsole().printBuildFailureWithoutStacktrace(e);
+      return 1;
+    }
     return 0;
   }
 
   @Override
   public boolean isReadOnly() {
     return true;
-  }
-
-  private void printJSON(
-      CommandRunnerParams params,
-      Set<BuildTarget> targets) throws IOException {
-    Set<String> targetsNames = ImmutableSet.copyOf(
-        Collections2.transform(
-            targets,
-            new Function<BuildTarget, String>() {
-              @Override
-              public String apply(BuildTarget input) {
-                return Preconditions.checkNotNull(input.getFullyQualifiedName());
-              }
-            }));
-    params.getObjectMapper().writeValue(
-      params.getConsole().getStdOut(),
-      targetsNames);
-  }
-
-  private void printToConsole(
-      CommandRunnerParams params,
-      Set<BuildTarget> targets) {
-    for (BuildTarget target : targets) {
-      params.getConsole().getStdOut().println(target.getFullyQualifiedName());
-    }
   }
 
   @Override

@@ -25,6 +25,7 @@ import com.facebook.buck.cxx.CxxLibraryDescription;
 import com.facebook.buck.cxx.CxxPlatform;
 import com.facebook.buck.cxx.CxxPreprocessMode;
 import com.facebook.buck.cxx.DefaultCxxPlatforms;
+import com.facebook.buck.cxx.InferBuckConfig;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.model.FlavorDomain;
@@ -71,6 +72,7 @@ public class ThriftCxxEnhancerTest {
   private static final CxxLibraryDescription CXX_LIBRARY_DESCRIPTION =
       new CxxLibraryDescription(
           CXX_BUCK_CONFIG,
+          new InferBuckConfig(BUCK_CONFIG),
           CXX_PLATFORMS,
           CxxPreprocessMode.SEPARATE);
   private static final ThriftCxxEnhancer ENHANCER_CPP =
@@ -109,6 +111,7 @@ public class ThriftCxxEnhancerTest {
         "language",
         ImmutableSet.<String>of(),
         ImmutableList.<Path>of(),
+        ImmutableSet.<Path>of(),
         ImmutableMap.<Path, SourcePath>of());
   }
 
@@ -324,9 +327,11 @@ public class ThriftCxxEnhancerTest {
             "test_types.h",
             "test_types.cpp",
             "test_types.tcc",
+            "test_types_custom_protocol.h",
             "Test.h",
             "Test.cpp",
             "Test_client.cpp",
+            "Test_custom_protocol.h",
             "Test.tcc"),
         ENHANCER_CPP2.getGeneratedThriftSources(
             ImmutableSet.<String>of(),
@@ -359,9 +364,11 @@ public class ThriftCxxEnhancerTest {
             "test_types.tcc",
             "test_layouts.h",
             "test_layouts.cpp",
+            "test_types_custom_protocol.h",
             "Test.h",
             "Test.cpp",
             "Test_client.cpp",
+            "Test_custom_protocol.h",
             "Test.tcc"),
         ENHANCER_CPP2.getGeneratedThriftSources(
             ImmutableSet.of("frozen2"),
@@ -388,9 +395,11 @@ public class ThriftCxxEnhancerTest {
             "test_types.h",
             "test_types.cpp",
             "test_types.tcc",
+            "test_types_custom_protocol.h",
             "Test.h",
             "Test.cpp",
             "Test_client.cpp",
+            "Test_custom_protocol.h",
             "Test.tcc"),
         ENHANCER_CPP2.getGeneratedThriftSources(
             ImmutableSet.of("bootstrap"),
@@ -421,9 +430,11 @@ public class ThriftCxxEnhancerTest {
             "test_types.h",
             "test_types.cpp",
             "test_types.tcc",
+            "test_types_custom_protocol.h",
             "Test.h",
             "Test.cpp",
             "Test_client.cpp",
+            "Test_custom_protocol.h",
             "Test.tcc"),
         ENHANCER_CPP2.getGeneratedThriftSources(
             ImmutableSet.of("templates"),
@@ -453,9 +464,11 @@ public class ThriftCxxEnhancerTest {
             "test_types.h",
             "test_types.cpp",
             "test_types.tcc",
+            "test_types_custom_protocol.h",
             "Test.h",
             "Test.cpp",
             "Test_client.cpp",
+            "Test_custom_protocol.h",
             "Test.tcc"),
         ENHANCER_CPP2.getGeneratedThriftSources(
             ImmutableSet.of("perfhash"),
@@ -484,9 +497,11 @@ public class ThriftCxxEnhancerTest {
             "test_types.h",
             "test_types.cpp",
             "test_types.tcc",
+            "test_types_custom_protocol.h",
             "Test.h",
             "Test.cpp",
             "Test_client.cpp",
+            "Test_custom_protocol.h",
             "Test_processmap_binary.cpp",
             "Test_processmap_compact.cpp",
             "Test.tcc"),
@@ -580,6 +595,7 @@ public class ThriftCxxEnhancerTest {
     CxxLibraryDescription cxxLibraryDescription =
         new CxxLibraryDescription(
             CXX_BUCK_CONFIG,
+            new InferBuckConfig(BUCK_CONFIG),
             CXX_PLATFORMS,
             CxxPreprocessMode.SEPARATE) {
           @Override

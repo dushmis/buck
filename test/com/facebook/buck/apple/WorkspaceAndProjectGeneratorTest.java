@@ -30,6 +30,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeThat;
 
 import com.facebook.buck.apple.xcode.XCScheme;
 import com.facebook.buck.apple.xcode.xcodeproj.PBXAggregateTarget;
@@ -40,6 +41,8 @@ import com.facebook.buck.cli.FakeBuckConfig;
 import com.facebook.buck.cxx.CxxPlatform;
 import com.facebook.buck.cxx.CxxPlatformUtils;
 import com.facebook.buck.event.BuckEventBusFactory;
+import com.facebook.buck.io.AlwaysFoundExecutableFinder;
+import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.js.ReactNativeBuckConfig;
 import com.facebook.buck.model.BuildTarget;
@@ -51,6 +54,7 @@ import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetGraphToActionGraph;
 import com.facebook.buck.rules.TargetNode;
+import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.facebook.buck.shell.GenruleBuilder;
@@ -58,7 +62,7 @@ import com.facebook.buck.shell.GenruleDescription;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.testutil.TargetGraphFactory;
 import com.facebook.buck.timing.SettableFakeClock;
-import com.facebook.buck.util.NullFileHashCache;
+import com.facebook.buck.util.cache.NullFileHashCache;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -170,6 +174,7 @@ public class WorkspaceAndProjectGeneratorTest {
     TargetNode<?> fooBinNode = AppleBundleBuilder
         .createBuilder(fooBinTarget)
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.APP))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setBinary(fooBinBinaryTarget)
         .setTests(Optional.of(ImmutableSortedSet.of(fooBinTestTarget)))
         .build();
@@ -186,12 +191,14 @@ public class WorkspaceAndProjectGeneratorTest {
         .createBuilder(bazTestTarget)
         .setDeps(Optional.of(ImmutableSortedSet.of(bazLibTarget)))
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setUseBuckHeaderMaps(Optional.of(Boolean.TRUE))
         .build();
 
     TargetNode<?> fooTestNode = AppleTestBuilder
         .createBuilder(fooTestTarget)
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setDeps(Optional.of(ImmutableSortedSet.of(bazLibTarget)))
         .setUseBuckHeaderMaps(Optional.of(Boolean.TRUE))
         .build();
@@ -200,6 +207,7 @@ public class WorkspaceAndProjectGeneratorTest {
         .createBuilder(fooBinTestTarget)
         .setDeps(Optional.of(ImmutableSortedSet.of(fooBinTarget)))
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setUseBuckHeaderMaps(Optional.of(Boolean.TRUE))
         .build();
 
@@ -242,6 +250,8 @@ public class WorkspaceAndProjectGeneratorTest {
         false /* combinedProject */,
         false /* buildWithBuck */,
         ImmutableList.<String>of(),
+        new AlwaysFoundExecutableFinder(),
+        ImmutableMap.<String, String>of(),
         PLATFORMS,
         DEFAULT_PLATFORM,
         "BUCK",
@@ -306,6 +316,8 @@ public class WorkspaceAndProjectGeneratorTest {
         true /* combinedProject */,
         false /* buildWithBuck */,
         ImmutableList.<String>of(),
+        new AlwaysFoundExecutableFinder(),
+        ImmutableMap.<String, String>of(),
         PLATFORMS,
         DEFAULT_PLATFORM,
         "BUCK",
@@ -355,6 +367,8 @@ public class WorkspaceAndProjectGeneratorTest {
         false /* combinedProject */,
         false /* buildWithBuck */,
         ImmutableList.<String>of(),
+        new AlwaysFoundExecutableFinder(),
+        ImmutableMap.<String, String>of(),
         PLATFORMS,
         DEFAULT_PLATFORM,
         "BUCK",
@@ -433,6 +447,8 @@ public class WorkspaceAndProjectGeneratorTest {
         false /* combinedProject */,
         false /* buildWithBuck */,
         ImmutableList.<String>of(),
+        new AlwaysFoundExecutableFinder(),
+        ImmutableMap.<String, String>of(),
         PLATFORMS,
         DEFAULT_PLATFORM,
         "BUCK",
@@ -480,6 +496,8 @@ public class WorkspaceAndProjectGeneratorTest {
         true /* combinedProject */,
         false /* buildWithBuck */,
         ImmutableList.<String>of(),
+        new AlwaysFoundExecutableFinder(),
+        ImmutableMap.<String, String>of(),
         PLATFORMS,
         DEFAULT_PLATFORM,
         "BUCK",
@@ -494,6 +512,10 @@ public class WorkspaceAndProjectGeneratorTest {
 
   @Test
   public void buildWithBuck() throws IOException {
+    Optional<Path> buck = new ExecutableFinder().getOptionalExecutable(
+        Paths.get("buck"),
+        ImmutableMap.<String, String>of());
+    assumeThat(buck.isPresent(), is(true));
     WorkspaceAndProjectGenerator generator = new WorkspaceAndProjectGenerator(
         projectFilesystem,
         reactNativeBuckConfig,
@@ -504,6 +526,8 @@ public class WorkspaceAndProjectGeneratorTest {
         false /* combinedProject */,
         true /* buildWithBuck */,
         ImmutableList.<String>of(),
+        new AlwaysFoundExecutableFinder(),
+        ImmutableMap.<String, String>of(),
         PLATFORMS,
         DEFAULT_PLATFORM,
         "BUCK",
@@ -550,21 +574,25 @@ public class WorkspaceAndProjectGeneratorTest {
     TargetNode<AppleTestDescription.Arg> combinableTest1 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//foo", "combinableTest1").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(true))
         .build();
     TargetNode<AppleTestDescription.Arg> combinableTest2 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//bar", "combinableTest2").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(true))
         .build();
     TargetNode<AppleTestDescription.Arg> testMarkedUncombinable = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//foo", "testMarkedUncombinable").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(false))
         .build();
     TargetNode<AppleTestDescription.Arg> anotherTest = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//foo", "anotherTest").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.OCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(true))
         .build();
     TargetNode<AppleNativeTargetDescriptionArg> library = AppleLibraryBuilder
@@ -602,6 +630,8 @@ public class WorkspaceAndProjectGeneratorTest {
         false /* combinedProject */,
         false /* buildWithBuck */,
         ImmutableList.<String>of(),
+        new AlwaysFoundExecutableFinder(),
+        ImmutableMap.<String, String>of(),
         PLATFORMS,
         DEFAULT_PLATFORM,
         "BUCK",
@@ -692,11 +722,13 @@ public class WorkspaceAndProjectGeneratorTest {
     TargetNode<AppleTestDescription.Arg> combinableTest1 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//foo", "test1").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(true))
         .build();
     TargetNode<AppleTestDescription.Arg> combinableTest2 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//bar", "test2").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(true))
         .build();
 
@@ -738,11 +770,13 @@ public class WorkspaceAndProjectGeneratorTest {
     TargetNode<AppleTestDescription.Arg> combinableTest1 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//foo", "test1").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(true))
         .build();
     TargetNode<AppleTestDescription.Arg> combinableTest2 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//bar", "test2").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.OCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(true))
         .build();
 
@@ -788,11 +822,13 @@ public class WorkspaceAndProjectGeneratorTest {
     TargetNode<AppleTestDescription.Arg> combinableTest1 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//foo", "test1").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(true))
         .build();
     TargetNode<AppleTestDescription.Arg> combinableTest2 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//bar", "test2").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setConfigs(Optional.of(configs))
         .setCanGroup(Optional.of(true))
         .build();
@@ -835,11 +871,13 @@ public class WorkspaceAndProjectGeneratorTest {
     TargetNode<AppleTestDescription.Arg> combinableTest1 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//foo", "test1").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setCanGroup(Optional.of(true))
         .build();
     TargetNode<AppleTestDescription.Arg> combinableTest2 = AppleTestBuilder
         .createBuilder(BuildTarget.builder("//bar", "test2").build())
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setLinkerFlags(Optional.of(ImmutableList.of("-flag")))
         .setExportedLinkerFlags(Optional.of(ImmutableList.of("-exported-flag")))
         .setCanGroup(Optional.of(true))
@@ -927,6 +965,7 @@ public class WorkspaceAndProjectGeneratorTest {
     TargetNode<?> fooBinNode = AppleBundleBuilder
         .createBuilder(fooBinTarget)
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.APP))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setBinary(fooBinBinaryTarget)
         .setTests(Optional.of(ImmutableSortedSet.of(fooBinTestTarget)))
         .build();
@@ -943,12 +982,14 @@ public class WorkspaceAndProjectGeneratorTest {
         .createBuilder(bazTestTarget)
         .setDeps(Optional.of(ImmutableSortedSet.of(bazLibTarget)))
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setUseBuckHeaderMaps(Optional.of(Boolean.TRUE))
         .build();
 
     TargetNode<?> fooTestNode = AppleTestBuilder
         .createBuilder(fooTestTarget)
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setDeps(Optional.of(ImmutableSortedSet.of(bazLibTarget)))
         .setUseBuckHeaderMaps(Optional.of(Boolean.TRUE))
         .build();
@@ -957,6 +998,7 @@ public class WorkspaceAndProjectGeneratorTest {
         .createBuilder(fooBinTestTarget)
         .setDeps(Optional.of(ImmutableSortedSet.of(fooBinTarget)))
         .setExtension(Either.<AppleBundleExtension, String>ofLeft(AppleBundleExtension.XCTEST))
+        .setInfoPlist(new TestSourcePath("Info.plist"))
         .setUseBuckHeaderMaps(Optional.of(Boolean.TRUE))
         .build();
 
@@ -1010,6 +1052,8 @@ public class WorkspaceAndProjectGeneratorTest {
         false /* combinedProject */,
         false /* buildWithBuck */,
         ImmutableList.<String>of(),
+        new AlwaysFoundExecutableFinder(),
+        ImmutableMap.<String, String>of(),
         PLATFORMS,
         DEFAULT_PLATFORM,
         "BUCK",
@@ -1157,6 +1201,8 @@ public class WorkspaceAndProjectGeneratorTest {
         false /* combinedProject */,
         false /* buildWithBuck */,
         ImmutableList.<String>of(),
+        new AlwaysFoundExecutableFinder(),
+        ImmutableMap.<String, String>of(),
         PLATFORMS,
         DEFAULT_PLATFORM,
         "BUCK",

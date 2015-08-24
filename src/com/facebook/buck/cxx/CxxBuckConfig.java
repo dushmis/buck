@@ -28,6 +28,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
 
 /**
  * Contains platform independent settings for C/C++ rules.
@@ -99,9 +100,16 @@ public class CxxBuckConfig {
   }
 
   public Optional<Path> getPath(String flavor, String name) {
-    return delegate
-        .getPath(cxxSection, flavor + "_" + name)
-        .or(delegate.getPath(cxxSection, name));
+    Optional<String> rawPath = delegate
+        .getValue(cxxSection, flavor + "_" + name)
+        .or(delegate.getValue(cxxSection, name));
+
+    if (!rawPath.isPresent()) {
+      return Optional.absent();
+    }
+
+    return Optional.fromNullable(
+        delegate.resolvePathThatMayBeOutsideTheProjectFilesystem(Paths.get(rawPath.get())));
   }
 
   public Optional<String> getDefaultPlatform() {
@@ -157,9 +165,39 @@ public class CxxBuckConfig {
         result = new GnuLinker(ld);
         break;
       case UNKNOWN:
+        result = new UnknownLinker(ld);
+        break;
       default:
         throw new RuntimeException(
-            "Invalid platform for linker. Must be one of {MACOS, LINUX, WINDOWS}");
+            "Invalid platform for linker. Must be one of {MACOS, LINUX, WINDOWS, UNKNOWN}");
+    }
+    return Optional.of(result);
+  }
+
+  /*
+   * Constructs the appropriate Archiver for the specified platform.
+   */
+  public Optional<Archiver> getArchiver(Tool ar) {
+    Optional<Platform> archiverPlatform = delegate
+        .getEnum(cxxSection, "archiver_platform", Platform.class);
+    if (!archiverPlatform.isPresent()) {
+      return Optional.absent();
+    }
+    Archiver result;
+    switch (archiverPlatform.get()) {
+      case MACOS:
+        result = new BsdArchiver(ar);
+        break;
+      case LINUX:
+      case WINDOWS:
+        result = new GnuArchiver(ar);
+        break;
+      case UNKNOWN:
+        result = new UnknownArchiver(ar);
+        break;
+      default:
+        throw new RuntimeException(
+            "Invalid platform for archiver. Must be one of {MACOS, LINUX, WINDOWS, UNKNOWN}");
     }
     return Optional.of(result);
   }

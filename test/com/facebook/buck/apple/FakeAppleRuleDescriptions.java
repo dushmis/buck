@@ -24,6 +24,7 @@ import com.facebook.buck.cxx.CxxLibraryDescription;
 import com.facebook.buck.cxx.CxxPlatform;
 import com.facebook.buck.cxx.CxxPreprocessMode;
 import com.facebook.buck.cxx.DefaultCxxPlatforms;
+import com.facebook.buck.cxx.InferBuckConfig;
 import com.facebook.buck.io.FakeExecutableFinder;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.FlavorDomain;
@@ -106,6 +107,7 @@ public class FakeAppleRuleDescriptions {
     new AppleLibraryDescription(
         new CxxLibraryDescription(
             new CxxBuckConfig(DEFAULT_BUCK_CONFIG),
+            new InferBuckConfig(DEFAULT_BUCK_CONFIG),
             DEFAULT_IPHONEOS_FLAVOR_DOMAIN,
             CxxPreprocessMode.COMBINED),
         DEFAULT_IPHONEOS_FLAVOR_DOMAIN);
@@ -117,6 +119,7 @@ public class FakeAppleRuleDescriptions {
     new AppleBinaryDescription(
         new CxxBinaryDescription(
             new CxxBuckConfig(DEFAULT_BUCK_CONFIG),
+            new InferBuckConfig(DEFAULT_BUCK_CONFIG),
             DEFAULT_IPHONEOS_PLATFORM.getCxxPlatform(),
             DEFAULT_IPHONEOS_FLAVOR_DOMAIN,
             CxxPreprocessMode.COMBINED));
@@ -130,7 +133,8 @@ public class FakeAppleRuleDescriptions {
           LIBRARY_DESCRIPTION,
           DEFAULT_IPHONEOS_FLAVOR_DOMAIN,
           DEFAULT_PLATFORM_FLAVORS_TO_APPLE_CXX_PLATFORMS,
-          DEFAULT_PLATFORM);
+          DEFAULT_PLATFORM,
+          ImmutableSet.<CodeSignIdentity>of(CodeSignIdentity.AD_HOC));
 
   /**
    * A fake apple_test description with an iOS platform for use in tests.
@@ -142,5 +146,6 @@ public class FakeAppleRuleDescriptions {
           LIBRARY_DESCRIPTION,
           DEFAULT_IPHONEOS_FLAVOR_DOMAIN,
           DEFAULT_PLATFORM_FLAVORS_TO_APPLE_CXX_PLATFORMS,
-          DEFAULT_PLATFORM);
+          DEFAULT_PLATFORM,
+          ImmutableSet.<CodeSignIdentity>of(CodeSignIdentity.AD_HOC));
 }

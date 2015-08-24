@@ -20,6 +20,7 @@ PLATFORM_SRCS = [
   'HashedFileTool.java',
   'ObjectFileScrubbers.java',
   'VersionedTool.java',
+  'WindowsLinker.java',
 ]
 java_immutables_library(
   name = 'platform',
@@ -45,8 +46,10 @@ java_immutables_library(
   deps = [
     ':platform',
     '//src/com/facebook/buck/android:packageable',
+    '//src/com/facebook/buck/apple/clang:headermap',
     '//src/com/facebook/buck/cli:config',
     '//src/com/facebook/buck/cxx/elf:elf',
+    '//src/com/facebook/buck/event:event',
     '//src/com/facebook/buck/graph:graph',
     '//src/com/facebook/buck/io:io',
     '//src/com/facebook/buck/java:nativelinkable',
@@ -72,6 +75,7 @@ java_immutables_library(
     '//src/com/facebook/buck/util/environment:platform',
     '//third-party/java/guava:guava',
     '//third-party/java/infer-annotations:infer-annotations',
+    '//third-party/java/jparsec:jparsec',
     '//third-party/java/jsr:jsr305',
     '//third-party/java/gson:gson',
   ],

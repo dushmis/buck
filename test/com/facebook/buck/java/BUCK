@@ -84,6 +84,7 @@ java_test(
   run_test_separately = True,
   deps = [
     ':testutil',
+    '//src/com/facebook/buck/util/environment:platform',
     '//test/com/facebook/buck/testutil/integration:integration',
     '//third-party/java/hamcrest:hamcrest',
     '//third-party/java/junit:junit',
@@ -141,6 +142,7 @@ java_test(
     '//src/com/facebook/buck/util:exceptions',
     '//src/com/facebook/buck/util:io',
     '//src/com/facebook/buck/util:util',
+    '//src/com/facebook/buck/util/cache:cache',
     '//src/com/facebook/buck/util/environment:platform',
     '//src/com/facebook/buck/zip:stream',
     '//test/com/facebook/buck/android:testutil',

@@ -23,16 +23,18 @@ import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.ArtifactCacheEvent;
 import com.facebook.buck.rules.BuildRuleEvent;
+import com.facebook.buck.rules.BuildRuleStatus;
 import com.facebook.buck.rules.CacheResult;
 import com.facebook.buck.rules.TestRunEvent;
 import com.facebook.buck.rules.TestSummaryEvent;
 import com.facebook.buck.step.StepEvent;
-import com.facebook.buck.test.TestResultSummaryVerbosity;
-import com.facebook.buck.test.TestRuleEvent;
 import com.facebook.buck.test.TestResultSummary;
+import com.facebook.buck.test.TestResultSummaryVerbosity;
 import com.facebook.buck.test.TestResults;
+import com.facebook.buck.test.TestRuleEvent;
 import com.facebook.buck.timing.Clock;
 import com.facebook.buck.util.Console;
+import com.facebook.buck.util.MoreIterables;
 import com.facebook.buck.util.environment.ExecutionEnvironment;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
@@ -41,6 +43,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
@@ -49,7 +52,6 @@ import java.io.IOException;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
@@ -58,6 +60,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Console that provides rich, updating ansi output about the current build.
@@ -163,9 +166,10 @@ public class SuperConsoleEventBusListener extends AbstractConsoleEventBusListene
 
   @VisibleForTesting
   synchronized void render() {
+    String lastRenderClear = clearLastRender();
     ImmutableList<String> lines = createRenderLinesAtTime(clock.currentTimeMillis());
-    String nextFrame = clearLastRender() + Joiner.on("\n").join(lines);
-    lastNumLinesPrinted = lines.size();
+    ImmutableList<String> logLines = createLogRenderLines();
+    lastNumLinesPrinted = lines.size() + logLines.size();
 
     // Synchronize on the DirtyPrintStreamDecorator to prevent interlacing of output.
     synchronized (console.getStdOut()) {
@@ -179,9 +183,20 @@ public class SuperConsoleEventBusListener extends AbstractConsoleEventBusListene
               "Stopping console output (stdout dirty %s, stderr dirty %s).",
               stdoutDirty, stderrDirty);
           stopRenderScheduler();
-        } else if (!nextFrame.isEmpty()) {
-          nextFrame = ansi.asNoWrap(nextFrame);
-          console.getStdErr().getRawStream().println(nextFrame);
+        } else if (!lastRenderClear.isEmpty() || !lines.isEmpty() || !logLines.isEmpty()) {
+          Iterable<String> renderedLines = Iterables.concat(
+              ansi.asNoWrap(
+                  MoreIterables.zipAndConcat(
+                      lines,
+                      Iterables.cycle("\n"))),
+              MoreIterables.zipAndConcat(
+                  logLines,
+                  Iterables.cycle("\n")));
+          StringBuilder fullFrame = new StringBuilder(lastRenderClear);
+          for (String part : renderedLines) {
+            fullFrame.append(part);
+          }
+          console.getStdErr().getRawStream().print(fullFrame);
         }
       }
     }
@@ -191,8 +206,7 @@ public class SuperConsoleEventBusListener extends AbstractConsoleEventBusListene
    * Creates a list of lines to be rendered at a given time.
    * @param currentTimeMillis The time in ms to use when computing elapsed times.
    */
-  @VisibleForTesting
-  ImmutableList<String> createRenderLinesAtTime(long currentTimeMillis) {
+  private ImmutableList<String> createRenderLinesAtTime(long currentTimeMillis) {
     ImmutableList.Builder<String> lines = ImmutableList.builder();
 
     if (parseStarted == null && parseFinished == null) {
@@ -299,28 +313,34 @@ public class SuperConsoleEventBusListener extends AbstractConsoleEventBusListene
           installFinished,
           lines);
     }
-    renderLogMessages(lines);
     return lines.build();
   }
 
   /**
    * Adds log messages for rendering.
-   * @param lines Builder of lines to render this frame.
    */
-  private void renderLogMessages(ImmutableList.Builder<String> lines) {
-    if (logEvents.isEmpty()) {
-      return;
+  private ImmutableList<String> createLogRenderLines() {
+    ImmutableList.Builder<String> lines = ImmutableList.builder();
+    if (!logEvents.isEmpty()) {
+      ImmutableList.Builder<String> logEventLinesBuilder = ImmutableList.builder();
+      for (ConsoleEvent logEvent : logEvents) {
+        formatConsoleEvent(logEvent, logEventLinesBuilder);
+      }
+      ImmutableList<String> logEventLines = logEventLinesBuilder.build();
+      if (!logEventLines.isEmpty()) {
+        lines.add("Log:");
+        lines.addAll(logEventLines);
+      }
     }
+    return lines.build();
+  }
 
-    ImmutableList.Builder<String> logEventLinesBuilder = ImmutableList.builder();
-    for (ConsoleEvent logEvent : logEvents) {
-      formatConsoleEvent(logEvent, logEventLinesBuilder);
-    }
-    ImmutableList<String> logEventLines = logEventLinesBuilder.build();
-    if (!logEventLines.isEmpty()) {
-      lines.add("Log:");
-      lines.addAll(logEventLines);
-    }
+  @VisibleForTesting
+  protected ImmutableList<String> createAllRenderLines(long currentTimeMillis) {
+    return ImmutableList.<String>builder()
+        .addAll(createRenderLinesAtTime(currentTimeMillis))
+        .addAll(createLogRenderLines())
+        .build();
   }
 
   /**
@@ -499,13 +519,15 @@ public class SuperConsoleEventBusListener extends AbstractConsoleEventBusListene
   public void buildRuleFinished(BuildRuleEvent.Finished finished) {
     threadsToRunningBuildRuleEvent.put(finished.getThreadId(), Optional.<BuildRuleEvent>absent());
     accumulatedRuleTime.remove(finished.getBuildRule().getBuildTarget());
-    CacheResult cacheResult = finished.getCacheResult();
-    if (cacheResult.getType() != CacheResult.Type.LOCAL_KEY_UNCHANGED_HIT) {
-      updated.incrementAndGet();
-      if (cacheResult.getType() == CacheResult.Type.HIT) {
-        cacheHits.incrementAndGet();
-      } else if (cacheResult.getType() == CacheResult.Type.ERROR) {
-        cacheErrors.incrementAndGet();
+    if (finished.getStatus() == BuildRuleStatus.SUCCESS) {
+      CacheResult cacheResult = finished.getCacheResult();
+      if (cacheResult.getType() != CacheResult.Type.LOCAL_KEY_UNCHANGED_HIT) {
+        updated.incrementAndGet();
+        if (cacheResult.getType() == CacheResult.Type.HIT) {
+          cacheHits.incrementAndGet();
+        } else if (cacheResult.getType() == CacheResult.Type.ERROR) {
+          cacheErrors.incrementAndGet();
+        }
       }
     }
   }

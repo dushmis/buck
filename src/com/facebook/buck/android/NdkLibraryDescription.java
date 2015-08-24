@@ -59,6 +59,7 @@ import com.google.common.base.Suppliers;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 
@@ -194,9 +195,6 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
       // it technically should be added to the top-level rule.
       deps.addAll(
           pathResolver.filterBuildRuleInputs(
-              cxxPreprocessorInput.getIncludes().getPrefixHeaders()));
-      deps.addAll(
-          pathResolver.filterBuildRuleInputs(
               cxxPreprocessorInput.getIncludes().getNameToPathMap().values()));
       deps.addAll(resolver.getAllRules(cxxPreprocessorInput.getRules()));
 
@@ -204,6 +202,10 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
       // NDK build.
       Iterable<String> ppflags = Iterables.concat(
           cxxPreprocessorInput.getPreprocessorFlags().get(CxxSource.Type.C),
+          MoreIterables.zipAndConcat(
+              Iterables.cycle("-I"),
+              FluentIterable.from(cxxPreprocessorInput.getHeaderMaps())
+                  .transform(Functions.toStringFunction())),
           MoreIterables.zipAndConcat(
               Iterables.cycle("-I"),
               FluentIterable.from(cxxPreprocessorInput.getIncludeRoots())
@@ -225,6 +227,7 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
               Predicates.or(
                   Predicates.instanceOf(NativeLinkable.class),
                   Predicates.instanceOf(NdkLibrary.class)),
+              ImmutableSet.<BuildRule>of(),
               /* reverse */ true);
 
       // We add any dependencies from the native linkable input to this rule, even though
@@ -315,7 +318,7 @@ public class NdkLibraryDescription implements Description<NdkLibraryDescription.
     final String contents = Joiner.on(System.lineSeparator()).join(outputLinesBuilder.build());
 
     return new Pair<BuildRule, Iterable<BuildRule>>(
-        new WriteFile(makefileParams, pathResolver, contents, makefilePath),
+        new WriteFile(makefileParams, pathResolver, contents, makefilePath, /* executable */ false),
         deps.build());
   }
 

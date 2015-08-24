@@ -16,7 +16,10 @@
 
 package com.facebook.buck.util;
 
+import com.google.common.collect.FluentIterable;
+
 import java.io.PrintStream;
+import java.util.Collections;
 
 /**
  * Encapsulates the specifics of writing to a particular kind of terminal.
@@ -56,7 +59,15 @@ public final class Ansi {
   private static final String STOP_WRAPPING = "\u001B[?7l";
   private static final String RESUME_WRAPPING = "\u001B[?7h";
 
+  private static final int ANSI_PREVIOUS_LINE_STRING_CACHE_MAX_LINES = 22;
+  private static final String[] ANSI_PREVIOUS_LINE_STRING_CACHE =
+      new String[ANSI_PREVIOUS_LINE_STRING_CACHE_MAX_LINES];
+
+  private static final String ANSI_ERASE_LINE = String.format(ERASE_IN_LINE, 2);
+
   private final boolean isAnsiTerminal;
+
+  private final String clearLineString;
 
   private static final Ansi noTtyAnsi = new Ansi(false /* isAnsiTerminal */);
   private static final Ansi forceTtyAnsi = new Ansi(true /* isAnsiTerminal */);
@@ -66,6 +77,7 @@ public final class Ansi {
    */
   public Ansi(boolean isAnsiTerminal) {
     this.isAnsiTerminal = isAnsiTerminal;
+    clearLineString = isAnsiTerminal ? ANSI_ERASE_LINE : "";
   }
 
   public static Ansi withoutTty() {
@@ -116,11 +128,13 @@ public final class Ansi {
     return wrapWithColor(HIGHLIGHTED_SUCCESS_SEQUENCE, text);
   }
 
-  public String asNoWrap(String text) {
+  public Iterable<String> asNoWrap(Iterable<String> textParts) {
     if (isAnsiTerminal) {
-      return STOP_WRAPPING + text + RESUME_WRAPPING;
+      return FluentIterable.from(Collections.singleton(STOP_WRAPPING))
+          .append(textParts)
+          .append(RESUME_WRAPPING);
     } else {
-      return text;
+      return textParts;
     }
   }
 
@@ -174,10 +188,20 @@ public final class Ansi {
    * Moves the cursor {@code y} lines up.
    */
   public String cursorPreviousLine(int y) {
-    if (isAnsiTerminal) {
-      return String.format(CURSOR_PREVIOUS_LINE, y);
-    } else {
+    if (!isAnsiTerminal) {
       return "";
+    }
+
+    if (y >= ANSI_PREVIOUS_LINE_STRING_CACHE_MAX_LINES) {
+      return String.format(CURSOR_PREVIOUS_LINE, y);
+    }
+
+    synchronized (ANSI_PREVIOUS_LINE_STRING_CACHE) {
+      if (ANSI_PREVIOUS_LINE_STRING_CACHE[y] == null) {
+        ANSI_PREVIOUS_LINE_STRING_CACHE[y] = String.format(CURSOR_PREVIOUS_LINE, y);
+      }
+
+      return ANSI_PREVIOUS_LINE_STRING_CACHE[y];
     }
   }
 
@@ -185,11 +209,7 @@ public final class Ansi {
    * Clears the line the cursor is currently on.
    */
   public String clearLine() {
-    if (isAnsiTerminal) {
-      return String.format(ERASE_IN_LINE, 2);
-    } else {
-      return "";
-    }
+    return clearLineString;
   }
 
   public static enum SeverityLevel { OK, WARNING, ERROR }

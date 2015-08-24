@@ -19,18 +19,21 @@ package com.facebook.buck.util;
 
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.ConsoleEvent;
+import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.timing.Clock;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Charsets;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
 import com.google.common.eventbus.EventBus;
 import com.google.common.io.ByteStreams;
 
@@ -43,9 +46,11 @@ import java.nio.file.Paths;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -59,11 +64,18 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
   private static final Logger LOG = Logger.get(WatchmanWatcher.class);
   private static final int DEFAULT_OVERFLOW_THRESHOLD = 10000;
   private static final long DEFAULT_TIMEOUT_MILLIS = TimeUnit.SECONDS.toMillis(10);
+  private static final String WATCHMAN_DIRNAME_MIN_VERSION = "3.1";
+  private static final String WATCHMAN_WILDMATCH_GLOB_MIN_VERSION = "3.6.0";
 
-  private final Supplier<Process> watchmanProcessSupplier;
+  public enum Capability {
+      DIRNAME,
+      WILDMATCH_GLOB
+  };
+
   private final EventBus fileChangeEventBus;
   private final Clock clock;
   private final ObjectMapper objectMapper;
+  private final ProcessExecutor processExecutor;
   private final String query;
 
   /**
@@ -83,12 +95,14 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
                          EventBus fileChangeEventBus,
                          Clock clock,
                          ObjectMapper objectMapper,
+                         ProcessExecutor processExecutor,
                          Iterable<Path> ignorePaths,
-                         Iterable<String> ignoreGlobs) {
-    this(createProcessSupplier(),
-        fileChangeEventBus,
+                         Iterable<String> ignoreGlobs,
+                         Set<Capability> watchmanCapabilities) {
+    this(fileChangeEventBus,
         clock,
         objectMapper,
+        processExecutor,
         DEFAULT_OVERFLOW_THRESHOLD,
         DEFAULT_TIMEOUT_MILLIS,
         createQuery(
@@ -97,21 +111,22 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
             watchPrefix,
             UUID.randomUUID().toString(),
             ignorePaths,
-            ignoreGlobs));
+            ignoreGlobs,
+            watchmanCapabilities));
   }
 
   @VisibleForTesting
-  WatchmanWatcher(Supplier<Process> processSupplier,
-                  EventBus fileChangeEventBus,
+  WatchmanWatcher(EventBus fileChangeEventBus,
                   Clock clock,
                   ObjectMapper objectMapper,
+                  ProcessExecutor processExecutor,
                   int overflow,
                   long timeoutMillis,
                   String query) {
-    this.watchmanProcessSupplier = processSupplier;
     this.fileChangeEventBus = fileChangeEventBus;
     this.clock = clock;
     this.objectMapper = objectMapper;
+    this.processExecutor = processExecutor;
     this.overflow = overflow;
     this.timeoutMillis = timeoutMillis;
     this.query = query;
@@ -124,7 +139,8 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
       Optional<String> watchPrefix,
       String uuid,
       Iterable<Path> ignorePaths,
-      Iterable<String> ignoreGlobs) {
+      Iterable<String> ignoreGlobs,
+      Set<Capability> watchmanCapabilities) {
     List<Object> queryParams = new ArrayList<>();
     queryParams.add("query");
     queryParams.add(watchRoot);
@@ -141,6 +157,11 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
     // Exclude all directories.
     excludeAnyOf.add(Lists.newArrayList("type", "d"));
 
+    Path projectRoot = Paths.get(watchRoot);
+    if (watchPrefix.isPresent()) {
+      projectRoot = projectRoot.resolve(watchPrefix.get());
+    }
+
     // Exclude all files under directories in project.ignorePaths.
     //
     // Note that it's OK to exclude .git in a query (event though it's
@@ -148,20 +169,30 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
     // because watchman's .git cookie magic is done before the query
     // is applied.
     for (Path ignorePath : ignorePaths) {
-      excludeAnyOf.add(
-          Lists.newArrayList(
-              "match",
-              ignorePath.toString() + "/*",
-              "wholename"));
+      if (ignorePath.isAbsolute()) {
+        ignorePath = MorePaths.relativize(projectRoot, ignorePath);
+      }
+      if (watchmanCapabilities.contains(Capability.DIRNAME)) {
+        excludeAnyOf.add(
+            Lists.newArrayList(
+                "dirname",
+                ignorePath.toString()));
+      } else {
+        excludeAnyOf.add(
+            Lists.newArrayList(
+                "match",
+                ignorePath.toString() + "/*",
+                "wholename"));
+      }
     }
 
-    // Exclude all files matching globs in project.ignoreGlobs.
+    // Exclude all filenames matching globs. We explicitly don't match
+    // against the full path ("wholename"), just the filename.
     for (String ignoreGlob : ignoreGlobs) {
       excludeAnyOf.add(
           Lists.newArrayList(
               "match",
-              ignoreGlob,
-              "wholename"));
+              ignoreGlob));
     }
 
     sinceParams.put(
@@ -182,26 +213,6 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
     }
   }
 
-  private static Supplier<Process> createProcessSupplier() {
-    final ProcessBuilder processBuilder = new ProcessBuilder(
-        "watchman",
-        "--server-encoding=json",
-        "--no-pretty",
-        "-j");
-
-    return new Supplier<Process>() {
-      @Override
-      public Process get() {
-        try {
-          LOG.debug("Starting watchman command: %s", processBuilder.command());
-          return processBuilder.start();
-        } catch (IOException e) {
-          throw Throwables.propagate(e);
-        }
-      }
-    };
-  }
-
   /**
    * Query Watchman for file change events. If too many events are pending or an error occurs
    * an overflow event is posted to the EventBus signalling that events may have been lost
@@ -211,7 +222,10 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
    */
   @Override
   public void postEvents(BuckEventBus buckEventBus) throws IOException, InterruptedException {
-    Process watchmanProcess = watchmanProcessSupplier.get();
+    ProcessExecutor.LaunchedProcess watchmanProcess = processExecutor.launchProcess(
+        ProcessExecutorParams.builder()
+            .addCommand("watchman", "--server-encoding=json", "--no-pretty", "-j")
+            .build());
     try {
       LOG.debug("Writing query to Watchman: %s", query);
       watchmanProcess.getOutputStream().write(query.getBytes(Charsets.US_ASCII));
@@ -267,7 +281,8 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
 
         if (shouldOverflow) {
           postWatchEvent(createOverflowEvent());
-          watchmanProcess.destroy();
+          processExecutor.destroyLaunchedProcess(watchmanProcess);
+          processExecutor.waitForLaunchedProcess(watchmanProcess);
           return;
         }
 
@@ -332,7 +347,7 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
       }
       int watchmanExitCode;
       LOG.debug("Posted %d Watchman events. Waiting for subprocess to exit...", eventCount);
-      watchmanExitCode = watchmanProcess.waitFor();
+      watchmanExitCode = processExecutor.waitForLaunchedProcess(watchmanProcess);
       if (watchmanExitCode != 0) {
         LOG.error("Watchman exited with error code %d", watchmanExitCode);
         postWatchEvent(createOverflowEvent()); // Events may have been lost, signal overflow.
@@ -346,13 +361,15 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
     } catch (InterruptedException e) {
       LOG.warn(e, "Killing Watchman process on interrupted exception");
       postWatchEvent(createOverflowEvent()); // Events may have been lost, signal overflow.
-      watchmanProcess.destroy();
+      processExecutor.destroyLaunchedProcess(watchmanProcess);
+      processExecutor.waitForLaunchedProcess(watchmanProcess);
       Thread.currentThread().interrupt();
       throw e;
     } catch (IOException e) {
       LOG.error(e, "Killing Watchman process on I/O exception");
       postWatchEvent(createOverflowEvent()); // Events may have been lost, signal overflow.
-      watchmanProcess.destroy();
+      processExecutor.destroyLaunchedProcess(watchmanProcess);
+      processExecutor.waitForLaunchedProcess(watchmanProcess);
       throw e;
     }
   }
@@ -447,17 +464,40 @@ public class WatchmanWatcher implements ProjectFilesystemWatcher {
   }
 
   /**
-   * @return true if "watchman --version" can be executed successfully
+   * @return The capabilities of the Watchman server if available.
    */
-  public static boolean isWatchmanAvailable() throws InterruptedException {
+  public static ImmutableSet<Capability> getWatchmanCapabilities(
+      ProcessExecutor processExecutor,
+      ObjectMapper objectMapper) throws InterruptedException {
+    EnumSet<Capability> watchmanCapabilities = EnumSet.noneOf(Capability.class);
     try {
-      LOG.debug("Checking if Watchman is available..");
-      boolean available = new ProcessBuilder("watchman", "--version").start().waitFor() == 0;
-      LOG.debug("Watchman available: %d", available);
-      return available;
+      ProcessExecutor.LaunchedProcess watchmanVersionProcess = processExecutor.launchProcess(
+          ProcessExecutorParams.builder()
+              .addCommand("watchman", "version")
+              .build());
+      Map<String, String> watchmanVersionOutput = objectMapper.readValue(
+          watchmanVersionProcess.getInputStream(),
+          new TypeReference<Map<String, String>>() { });
+      int exitCode = processExecutor.waitForLaunchedProcess(watchmanVersionProcess);
+      if (exitCode != 0) {
+        LOG.error("Error %d executing watchman version", exitCode);
+      } else {
+        Optional<String> version = Optional.fromNullable(watchmanVersionOutput.get("version"));
+        if (version.isPresent()) {
+          VersionStringComparator comparator = new VersionStringComparator();
+          if (comparator.compare(version.get(), WATCHMAN_DIRNAME_MIN_VERSION) >= 0) {
+            watchmanCapabilities.add(Capability.DIRNAME);
+          }
+          if (comparator.compare(version.get(), WATCHMAN_WILDMATCH_GLOB_MIN_VERSION) >= 0) {
+            watchmanCapabilities.add(Capability.WILDMATCH_GLOB);
+          }
+        } else {
+          LOG.warn("No version present in watchman version output: %s", watchmanVersionOutput);
+        }
+      }
     } catch (IOException e) {
       LOG.error(e, "Could not check if Watchman is available");
-      return false; // Could not execute watchman.
     }
+    return Sets.immutableEnumSet(watchmanCapabilities);
   }
 }

@@ -29,7 +29,6 @@ import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.ImplicitDepsInferringDescription;
 import com.facebook.buck.rules.SourcePathResolver;
-import com.facebook.buck.rules.SymlinkTree;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
@@ -48,25 +47,28 @@ public class CxxBinaryDescription implements
   public static final BuildRuleType TYPE = BuildRuleType.of("cxx_binary");
 
   private final CxxBuckConfig cxxBuckConfig;
+  private final InferBuckConfig inferBuckConfig;
   private final CxxPlatform defaultCxxPlatform;
   private final FlavorDomain<CxxPlatform> cxxPlatforms;
   private final CxxPreprocessMode preprocessMode;
 
   public CxxBinaryDescription(
       CxxBuckConfig cxxBuckConfig,
+      InferBuckConfig inferBuckConfig,
       CxxPlatform defaultCxxPlatform,
       FlavorDomain<CxxPlatform> cxxPlatforms,
       CxxPreprocessMode preprocessMode) {
     this.cxxBuckConfig = cxxBuckConfig;
+    this.inferBuckConfig = inferBuckConfig;
     this.defaultCxxPlatform = defaultCxxPlatform;
     this.cxxPlatforms = cxxPlatforms;
     this.preprocessMode = preprocessMode;
   }
 
   /**
-   * @return a {@link com.facebook.buck.rules.SymlinkTree} for the headers of this C/C++ binary.
+   * @return a {@link com.facebook.buck.cxx.HeaderSymlinkTree} for the headers of this C/C++ binary.
    */
-  public static <A extends Arg> SymlinkTree createHeaderSymlinkTreeBuildRule(
+  public static <A extends Arg> HeaderSymlinkTree createHeaderSymlinkTreeBuildRule(
       BuildRuleParams params,
       BuildRuleResolver resolver,
       CxxPlatform cxxPlatform,
@@ -149,6 +151,28 @@ public class CxxBinaryDescription implements
           cxxLinkAndCompileRules.compileRules);
     }
 
+    if (flavors.contains(CxxInferEnhancer.INFER)) {
+      return CxxInferEnhancer.requireInferAnalyzeAndReportBuildRuleForCxxDescriptionArg(
+          targetGraph,
+          params,
+          resolver,
+          pathResolver,
+          cxxPlatform,
+          args,
+          new CxxInferTools(inferBuckConfig));
+    }
+
+    if (flavors.contains(CxxInferEnhancer.INFER_ANALYZE)) {
+      return CxxInferEnhancer.requireInferAnalyzeBuildRuleForCxxDescriptionArg(
+          targetGraph,
+          params,
+          resolver,
+          pathResolver,
+          cxxPlatform,
+          args,
+          new CxxInferTools(inferBuckConfig));
+    }
+
     CxxLinkAndCompileRules cxxLinkAndCompileRules =
         CxxDescriptionEnhancer.createBuildRulesForCxxBinaryDescriptionArg(
             targetGraph,
@@ -169,13 +193,13 @@ public class CxxBinaryDescription implements
     //     By using another BuildRule, we can keep the original target graph dependency tree while
     //     preventing it from affecting link parallelism.
     return new CxxBinary(
-        params.appendExtraDeps(cxxLinkAndCompileRules.executable.getInputs(pathResolver)),
+        params.appendExtraDeps(cxxLinkAndCompileRules.executable.getDeps(pathResolver)),
         resolver,
         pathResolver,
         cxxLinkAndCompileRules.cxxLink.getOutput(),
         cxxLinkAndCompileRules.cxxLink,
         cxxLinkAndCompileRules.executable,
-        args.frameworkSearchPaths.get(),
+        args.frameworks.get(),
         args.tests.get());
   }
 
@@ -211,7 +235,9 @@ public class CxxBinaryDescription implements
         flavors,
         ImmutableSet.of(
             CxxDescriptionEnhancer.HEADER_SYMLINK_TREE_FLAVOR,
-            CxxCompilationDatabase.COMPILATION_DATABASE));
+            CxxCompilationDatabase.COMPILATION_DATABASE,
+            CxxInferEnhancer.INFER,
+            CxxInferEnhancer.INFER_ANALYZE));
 
     return flavors.isEmpty();
   }

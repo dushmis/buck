@@ -30,6 +30,7 @@ import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.BuildRules;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.Hint;
 import com.facebook.buck.rules.SourcePath;
@@ -40,6 +41,7 @@ import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
+import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
@@ -51,31 +53,40 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Ordering;
+import com.google.common.collect.Sets;
 
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.Set;
 
 public class AppleBundleDescription implements Description<AppleBundleDescription.Arg>, Flavored {
   public static final BuildRuleType TYPE = BuildRuleType.of("apple_bundle");
 
+  private static final ImmutableSet<Flavor> SUPPORTED_LIBRARY_FLAVORS = ImmutableSet.of(
+      CxxDescriptionEnhancer.STATIC_FLAVOR,
+      CxxDescriptionEnhancer.SHARED_FLAVOR);
+
   private final AppleBinaryDescription appleBinaryDescription;
   private final AppleLibraryDescription appleLibraryDescription;
   private final FlavorDomain<CxxPlatform> cxxPlatformFlavorDomain;
   private final ImmutableMap<Flavor, AppleCxxPlatform> platformFlavorsToAppleCxxPlatforms;
   private final CxxPlatform defaultCxxPlatform;
+  private final ImmutableSet<CodeSignIdentity> allValidCodeSignIdentities;
 
   public AppleBundleDescription(
       AppleBinaryDescription appleBinaryDescription,
       AppleLibraryDescription appleLibraryDescription,
       FlavorDomain<CxxPlatform> cxxPlatformFlavorDomain,
       Map<Flavor, AppleCxxPlatform> platformFlavorsToAppleCxxPlatforms,
-      CxxPlatform defaultCxxPlatform) {
+      CxxPlatform defaultCxxPlatform,
+      ImmutableSet<CodeSignIdentity> allValidCodeSignIdentities) {
     this.appleBinaryDescription = appleBinaryDescription;
     this.appleLibraryDescription = appleLibraryDescription;
     this.cxxPlatformFlavorDomain = cxxPlatformFlavorDomain;
     this.platformFlavorsToAppleCxxPlatforms =
         ImmutableMap.copyOf(platformFlavorsToAppleCxxPlatforms);
     this.defaultCxxPlatform = defaultCxxPlatform;
+    this.allValidCodeSignIdentities = allValidCodeSignIdentities;
   }
 
   @Override
@@ -149,17 +160,13 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
 
     SourcePathResolver sourcePathResolver = new SourcePathResolver(resolver);
 
-    CollectedAssetCatalogs collectedAssetCatalogs =
-        AppleDescriptions.createBuildRulesForTransitiveAssetCatalogDependencies(
+    Optional<AppleAssetCatalog> assetCatalog =
+        AppleDescriptions.createBuildRuleForTransitiveAssetCatalogDependencies(
             targetGraph,
             params,
             sourcePathResolver,
             appleCxxPlatform.getAppleSdk().getApplePlatform(),
             appleCxxPlatform.getActool());
-
-    Optional<AppleAssetCatalog> mergedAssetCatalog = collectedAssetCatalogs.getMergedAssetCatalog();
-    ImmutableSet<AppleAssetCatalog> bundledAssetCatalogs =
-        collectedAssetCatalogs.getBundledAssetCatalogs();
 
     // TODO(user): Sort through the changes needed to make project generation work with
     // binary being optional.
@@ -169,8 +176,7 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
         args.binary,
         ImmutableSet.<BuildRule>builder()
             .add(flavoredBinaryRule)
-            .addAll(mergedAssetCatalog.asSet())
-            .addAll(bundledAssetCatalogs)
+            .addAll(assetCatalog.asSet())
             .addAll(
                 BuildRules.toBuildRulesFor(
                     params.getBuildTarget(),
@@ -183,6 +189,9 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
                             bundleVariantFiles))))
             .build());
 
+    ImmutableSet<SourcePath> extensionBundlePaths = collectFirstLevelAppleDependencyBundles(
+        params.getDeps());
+
     return new AppleBundle(
         bundleParamsWithFlavoredBinaryDep,
         sourcePathResolver,
@@ -194,23 +203,47 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
         bundleDirs,
         bundleFiles,
         dirsContainingResourceDirs,
+        extensionBundlePaths,
         Optional.of(bundleVariantFiles),
         appleCxxPlatform.getIbtool(),
         appleCxxPlatform.getDsymutil(),
         appleCxxPlatform.getCxxPlatform().getStrip(),
-        bundledAssetCatalogs,
-        mergedAssetCatalog,
+        assetCatalog,
         args.getTests(),
-        appleCxxPlatform.getAppleSdk().getApplePlatform().getName(),
-        appleCxxPlatform.getAppleSdk().getName());
+        appleCxxPlatform.getAppleSdk(),
+        allValidCodeSignIdentities,
+        args.provisioningProfileSearchPath);
   }
 
-  private static <A extends Arg> BuildRule getFlavoredBinaryRule(
+  private <A extends Arg> BuildRule getFlavoredBinaryRule(
       TargetGraph targetGraph,
       final BuildRuleParams params,
       final BuildRuleResolver resolver,
       A args) {
+    // Cxx targets must have one Platform Flavor set otherwise nothing gets compiled.
+    ImmutableSet<Flavor> flavors = params.getBuildTarget()
+        .withoutFlavors(ImmutableSet.of(ReactNativeFlavors.DO_NOT_BUNDLE))
+        .getFlavors();
+    if (!cxxPlatformFlavorDomain.containsAnyOf(flavors)) {
+      flavors = new ImmutableSet.Builder<Flavor>()
+          .addAll(flavors)
+          .add(defaultCxxPlatform.getFlavor())
+          .build();
+    }
+
     final TargetNode<?> binaryTargetNode = Preconditions.checkNotNull(targetGraph.get(args.binary));
+    // If the binary target of the AppleBundle is an AppleLibrary then the build flavor
+    // must be specified.
+    if (binaryTargetNode.getDescription() instanceof AppleLibraryDescription &&
+        (Sets.intersection(
+            SUPPORTED_LIBRARY_FLAVORS,
+            binaryTargetNode.getBuildTarget().getFlavors()).size() != 1)) {
+      throw new HumanReadableException(
+          "AppleExtension bundle [%s] must have exactly one of these flavors: [%s].",
+          binaryTargetNode.getBuildTarget().toString(),
+          Joiner.on(", ").join(SUPPORTED_LIBRARY_FLAVORS));
+    }
+
     BuildRuleParams binaryRuleParams = new BuildRuleParams(
         args.binary,
         Suppliers.ofInstance(
@@ -225,15 +258,12 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
                 binaryTargetNode.getExtraDeps())),
         params.getProjectFilesystem(),
         params.getRuleKeyBuilderFactory());
+
     return CxxDescriptionEnhancer.requireBuildRule(
         targetGraph,
         binaryRuleParams,
         resolver,
-        params
-            .getBuildTarget()
-            .withoutFlavors(ImmutableSet.of(ReactNativeFlavors.DO_NOT_BUNDLE))
-            .getFlavors()
-            .toArray(new Flavor[0]));
+        flavors.toArray(new Flavor[0]));
   }
 
   private static BuildRuleParams getBundleParamsWithUpdatedDeps(
@@ -257,14 +287,39 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
                 .toSortedSet(Ordering.natural())));
   }
 
+  private ImmutableSet<SourcePath> collectFirstLevelAppleDependencyBundles(
+      ImmutableSortedSet<BuildRule> deps) {
+    ImmutableSet.Builder<SourcePath> extensionBundlePaths = ImmutableSet.builder();
+    // We only care about the direct layer of dependencies. ExtensionBundles inside ExtensionBundles
+    // do not get pulled in to the top-level Bundle.
+    for (BuildRule rule : deps) {
+      if (rule instanceof AppleBundle) {
+        AppleBundle appleBundle = (AppleBundle) rule;
+        if (AppleBundleExtension.APPEX.toFileExtension().equals(appleBundle.getExtension())) {
+          Path outputPath = Preconditions.checkNotNull(
+              appleBundle.getPathToOutput(),
+              "Path cannot be null for AppleBundle [%s].",
+              appleBundle);
+          SourcePath sourcePath = new BuildTargetSourcePath(
+              appleBundle.getBuildTarget(),
+              outputPath);
+          extensionBundlePaths.add(sourcePath);
+        }
+      }
+    }
+
+    return extensionBundlePaths.build();
+  }
+
   @SuppressFieldNotInitialized
   public static class Arg implements HasAppleBundleFields, HasTests {
     public Either<AppleBundleExtension, String> extension;
     public BuildTarget binary;
-    public Optional<SourcePath> infoPlist;
+    public SourcePath infoPlist;
     public Optional<ImmutableMap<String, String>> infoPlistSubstitutions;
     public Optional<ImmutableMap<String, SourcePath>> headers;
     public Optional<ImmutableSortedSet<BuildTarget>> deps;
+    public Optional<SourcePath> provisioningProfileSearchPath;
     @Hint(isDep = false) public Optional<ImmutableSortedSet<BuildTarget>> tests;
     public Optional<String> xcodeProductType;
 
@@ -274,7 +329,7 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
     }
 
     @Override
-    public Optional<SourcePath> getInfoPlist() {
+    public SourcePath getInfoPlist() {
       return infoPlist;
     }
 

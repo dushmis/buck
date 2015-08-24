@@ -51,6 +51,7 @@ import com.facebook.buck.apple.AppleSdkPaths;
 import com.facebook.buck.apple.AppleTestDescription;
 import com.facebook.buck.apple.AppleToolchain;
 import com.facebook.buck.apple.AppleToolchainDiscovery;
+import com.facebook.buck.apple.CodeSignIdentity;
 import com.facebook.buck.apple.CoreDataModelDescription;
 import com.facebook.buck.apple.XcodePostbuildScriptDescription;
 import com.facebook.buck.apple.XcodePrebuildScriptDescription;
@@ -64,6 +65,7 @@ import com.facebook.buck.cxx.CxxPlatforms;
 import com.facebook.buck.cxx.CxxPythonExtensionDescription;
 import com.facebook.buck.cxx.CxxTestDescription;
 import com.facebook.buck.cxx.DefaultCxxPlatforms;
+import com.facebook.buck.cxx.InferBuckConfig;
 import com.facebook.buck.cxx.PrebuiltCxxLibraryDescription;
 import com.facebook.buck.d.DBinaryDescription;
 import com.facebook.buck.d.DBuckConfig;
@@ -192,13 +194,11 @@ public class KnownBuildRuleTypes {
 
   public static KnownBuildRuleTypes createInstance(
       BuckConfig config,
-      ProjectFilesystem projectFilesystem,
       ProcessExecutor processExecutor,
       AndroidDirectoryResolver androidDirectoryResolver,
       PythonEnvironment pythonEnv) throws InterruptedException, IOException {
     return createBuilder(
         config,
-        projectFilesystem,
         processExecutor,
         androidDirectoryResolver,
         pythonEnv).build();
@@ -254,7 +254,6 @@ public class KnownBuildRuleTypes {
   @VisibleForTesting
   static Builder createBuilder(
       BuckConfig config,
-      ProjectFilesystem projectFilesystem,
       ProcessExecutor processExecutor,
       AndroidDirectoryResolver androidDirectoryResolver,
       PythonEnvironment pythonEnv) throws InterruptedException, IOException {
@@ -370,9 +369,8 @@ public class KnownBuildRuleTypes {
     ProGuardConfig proGuardConfig = new ProGuardConfig(config);
 
     PythonBuckConfig pyConfig = new PythonBuckConfig(config, new ExecutableFinder());
-
-    // Look up the path to the main module we use for python tests.
-    Path pythonPathToPythonTestMain = pyConfig.getPathToTestMain();
+    PythonBinaryDescription pythonBinaryDescription =
+        new PythonBinaryDescription(pyConfig, pythonEnv, defaultCxxPlatform, cxxPlatforms);
 
     // Look up the timeout to apply to entire test rules.
     Optional<Long> testRuleTimeoutMs = config.getLong("test", "rule_timeout");
@@ -394,15 +392,19 @@ public class KnownBuildRuleTypes {
     JavacOptions androidBinaryOptions = JavacOptions.builder(defaultJavacOptions)
         .build();
 
+    InferBuckConfig inferBuckConfig = new InferBuckConfig(config);
+
     CxxBinaryDescription cxxBinaryDescription =
         new CxxBinaryDescription(
             cxxBuckConfig,
+            inferBuckConfig,
             defaultCxxPlatform,
             cxxPlatforms,
             cxxBuckConfig.getPreprocessMode());
 
     CxxLibraryDescription cxxLibraryDescription = new CxxLibraryDescription(
         cxxBuckConfig,
+        inferBuckConfig,
         cxxPlatforms,
         cxxBuckConfig.getPreprocessMode());
 
@@ -422,6 +424,9 @@ public class KnownBuildRuleTypes {
             Executors.newFixedThreadPool(
                 SmartDexingStep.determineOptimalThreadCount(),
                 new CommandThreadFactory("SmartDexing")));
+
+    Supplier<ImmutableSet<CodeSignIdentity>> codeSignIdentitiesSupplier =
+        AppleConfig.createCodeSignIdentitiesSupplier(processExecutor);
 
     builder.register(new AndroidAarDescription(new AndroidManifestDescription(), ndkCxxPlatforms));
     builder.register(
@@ -450,7 +455,8 @@ public class KnownBuildRuleTypes {
             appleLibraryDescription,
             cxxPlatforms,
             platformFlavorsToAppleCxxPlatforms,
-            defaultCxxPlatform);
+            defaultCxxPlatform,
+            codeSignIdentitiesSupplier.get());
     builder.register(appleBundleDescription);
     builder.register(new AppleResourceDescription());
     builder.register(
@@ -460,7 +466,8 @@ public class KnownBuildRuleTypes {
             appleLibraryDescription,
             cxxPlatforms,
             platformFlavorsToAppleCxxPlatforms,
-            defaultCxxPlatform));
+            defaultCxxPlatform,
+            codeSignIdentitiesSupplier.get()));
     builder.register(new CoreDataModelDescription());
     builder.register(cxxBinaryDescription);
     builder.register(cxxLibraryDescription);
@@ -492,23 +499,12 @@ public class KnownBuildRuleTypes {
     builder.register(new PrebuiltOCamlLibraryDescription());
     builder.register(new PrebuiltPythonLibraryDescription());
     builder.register(new ProjectConfigDescription());
-    builder.register(
-        new PythonBinaryDescription(
-            pyConfig.getPathToPex(),
-            pyConfig.getPathToPexExecuter(),
-            pyConfig.getPexExtension(),
-            pythonEnv,
-            defaultCxxPlatform,
-            cxxPlatforms));
+    builder.register(pythonBinaryDescription);
     builder.register(new PythonLibraryDescription());
     builder.register(
         new PythonTestDescription(
-            projectFilesystem,
-            pyConfig.getPathToPex(),
-            pyConfig.getPathToPexExecuter(),
-            pyConfig.getPexExtension(),
-            pythonPathToPythonTestMain,
-            pythonEnv,
+            pythonBinaryDescription,
+            pyConfig,
             defaultCxxPlatform,
             cxxPlatforms));
     builder.register(new RemoteFileDescription(downloader));

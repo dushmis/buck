@@ -30,6 +30,7 @@ import com.facebook.buck.rules.coercer.FrameworkPath;
 import com.facebook.buck.rules.coercer.SourceList;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Function;
+import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -158,23 +159,16 @@ public class AppleDescriptionsTest {
         ImmutableSortedSet.of(
             FrameworkPath.ofSourceTreePath(
                 new SourceTreePath(
-                    PBXReference.SourceTree.SDKROOT,
-                    Paths.get("usr/lib/libz.dylib"))),
-            FrameworkPath.ofSourcePath(
-                new PathSourcePath(projectFilesystem, Paths.get("Vendor/Foo/libFoo.a"))),
-            FrameworkPath.ofSourceTreePath(
-                new SourceTreePath(
                     PBXReference.SourceTree.DEVELOPER_DIR,
-                    Paths.get("Library/Frameworks/XCTest.framework"))),
+                    Paths.get("Library/Frameworks/XCTest.framework"),
+                    Optional.<String>absent())),
             FrameworkPath.ofSourcePath(
                 new PathSourcePath(projectFilesystem, Paths.get("Vendor/Bar/Bar.framework")))));
 
     assertEquals(
         ImmutableList.of(
-            "-lz",
             "-framework", "XCTest",
-            "-framework", "Bar",
-            "-lFoo"),
+            "-framework", "Bar"),
         linkerFlags);
   }
 
@@ -201,13 +195,15 @@ public class AppleDescriptionsTest {
             FrameworkPath.ofSourceTreePath(
                 new SourceTreePath(
                     PBXReference.SourceTree.SDKROOT,
-                    Paths.get("usr/lib/libz.dylib"))),
+                    Paths.get("usr/lib/libz.dylib"),
+                    Optional.<String>absent())),
             FrameworkPath.ofSourcePath(
                 new PathSourcePath(projectFilesystem, Paths.get("Vendor/Foo/libFoo.a"))),
             FrameworkPath.ofSourceTreePath(
                 new SourceTreePath(
                     PBXReference.SourceTree.DEVELOPER_DIR,
-                    Paths.get("Library/Frameworks/XCTest.framework"))),
+                    Paths.get("Library/Frameworks/XCTest.framework"),
+                    Optional.<String>absent())),
             FrameworkPath.ofSourcePath(
                 new PathSourcePath(projectFilesystem, Paths.get("Vendor/Bar/Bar.framework")))));
 

@@ -16,6 +16,7 @@
 
 package com.facebook.buck.cxx;
 
+import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
@@ -25,6 +26,7 @@ import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyAppendable;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.keys.SupportsDependencyFileRuleKey;
 import com.facebook.buck.rules.keys.SupportsInputBasedRuleKey;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MkdirStep;
@@ -41,7 +43,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Ordering;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -50,7 +54,7 @@ import java.util.Map;
  */
 public class CxxPreprocessAndCompile
     extends AbstractBuildRule
-    implements RuleKeyAppendable, SupportsInputBasedRuleKey {
+    implements RuleKeyAppendable, SupportsInputBasedRuleKey, SupportsDependencyFileRuleKey {
 
   @AddToRuleKey
   private final CxxPreprocessAndCompileStep.Operation operation;
@@ -69,7 +73,10 @@ public class CxxPreprocessAndCompile
   private final CxxSource.Type inputType;
   private final ImmutableSet<Path> includeRoots;
   private final ImmutableSet<Path> systemIncludeRoots;
+  private final ImmutableSet<Path> headerMaps;
   private final ImmutableSet<Path> frameworkRoots;
+  @AddToRuleKey
+  private final Optional<SourcePath> prefixHeader;
   @AddToRuleKey
   private final ImmutableList<CxxHeaders> includes;
   private final DebugPathSanitizer sanitizer;
@@ -90,7 +97,9 @@ public class CxxPreprocessAndCompile
       CxxSource.Type inputType,
       ImmutableSet<Path> includeRoots,
       ImmutableSet<Path> systemIncludeRoots,
+      ImmutableSet<Path> headerMaps,
       ImmutableSet<Path> frameworkRoots,
+      Optional<SourcePath> prefixHeader,
       ImmutableList<CxxHeaders> includes,
       DebugPathSanitizer sanitizer) {
     super(params, resolver);
@@ -112,7 +121,9 @@ public class CxxPreprocessAndCompile
     this.inputType = inputType;
     this.includeRoots = includeRoots;
     this.systemIncludeRoots = systemIncludeRoots;
+    this.headerMaps = headerMaps;
     this.frameworkRoots = frameworkRoots;
+    this.prefixHeader = prefixHeader;
     this.includes = includes;
     this.sanitizer = sanitizer;
   }
@@ -146,6 +157,8 @@ public class CxxPreprocessAndCompile
         ImmutableSet.<Path>of(),
         ImmutableSet.<Path>of(),
         ImmutableSet.<Path>of(),
+        ImmutableSet.<Path>of(),
+        Optional.<SourcePath>absent(),
         ImmutableList.<CxxHeaders>of(),
         sanitizer);
   }
@@ -164,7 +177,9 @@ public class CxxPreprocessAndCompile
       CxxSource.Type inputType,
       ImmutableSet<Path> includeRoots,
       ImmutableSet<Path> systemIncludeRoots,
+      ImmutableSet<Path> headerMaps,
       ImmutableSet<Path> frameworkRoots,
+      Optional<SourcePath> prefixHeader,
       ImmutableList<CxxHeaders> includes,
       DebugPathSanitizer sanitizer) {
     return new CxxPreprocessAndCompile(
@@ -182,7 +197,9 @@ public class CxxPreprocessAndCompile
         inputType,
         includeRoots,
         systemIncludeRoots,
+        headerMaps,
         frameworkRoots,
+        prefixHeader,
         includes,
         sanitizer);
   }
@@ -204,7 +221,9 @@ public class CxxPreprocessAndCompile
       CxxSource.Type inputType,
       ImmutableSet<Path> includeRoots,
       ImmutableSet<Path> systemIncludeRoots,
+      ImmutableSet<Path> headerMaps,
       ImmutableSet<Path> frameworkRoots,
+      Optional<SourcePath> prefixHeader,
       ImmutableList<CxxHeaders> includes,
       DebugPathSanitizer sanitizer,
       CxxPreprocessMode strategy) {
@@ -225,7 +244,9 @@ public class CxxPreprocessAndCompile
         inputType,
         includeRoots,
         systemIncludeRoots,
+        headerMaps,
         frameworkRoots,
+        prefixHeader,
         includes,
         sanitizer);
   }
@@ -260,6 +281,10 @@ public class CxxPreprocessAndCompile
     }
 
     return builder;
+  }
+
+  private Path getDepFilePath() {
+    return output.getFileSystem().getPath(output.toString() + ".dep");
   }
 
   @VisibleForTesting
@@ -306,6 +331,7 @@ public class CxxPreprocessAndCompile
     return new CxxPreprocessAndCompileStep(
         operation,
         output,
+        getDepFilePath(),
         getResolver().getPath(input),
         inputType,
         preprocessorCommand,
@@ -349,18 +375,18 @@ public class CxxPreprocessAndCompile
 
   private ImmutableList<String> getPreprocessorSuffix() {
     Preconditions.checkState(operation.isPreprocess());
-    ImmutableSet.Builder<SourcePath> prefixHeaders = ImmutableSet.builder();
-    for (CxxHeaders cxxHeaders : includes) {
-      prefixHeaders.addAll(cxxHeaders.getPrefixHeaders());
-    }
     return ImmutableList.<String>builder()
         .addAll(rulePreprocessorFlags.get())
         .addAll(
             MoreIterables.zipAndConcat(
                 Iterables.cycle("-include"),
-                FluentIterable.from(prefixHeaders.build())
+                FluentIterable.from(prefixHeader.asSet())
                     .transform(getResolver().getPathFunction())
                     .transform(Functions.toStringFunction())))
+        .addAll(
+            MoreIterables.zipAndConcat(
+                Iterables.cycle("-I"),
+                Iterables.transform(headerMaps, Functions.toStringFunction())))
         .addAll(
             MoreIterables.zipAndConcat(
                 Iterables.cycle("-I"),
@@ -454,6 +480,47 @@ public class CxxPreprocessAndCompile
 
   public ImmutableList<CxxHeaders> getIncludes() {
     return includes;
+  }
+
+  @Override
+  public boolean useDependencyFileRuleKeys() {
+    return operation.isPreprocess();
+  }
+
+  @Override
+  public ImmutableList<Path> getInputsAfterBuildingLocally() throws IOException {
+    SourcePathResolver resolver = getResolver();
+    ImmutableList.Builder<Path> inputs = ImmutableList.builder();
+
+    // If present, include all inputs coming from the preprocessor tool.
+    if (preprocessor.isPresent()) {
+      inputs.addAll(
+          Ordering.natural().immutableSortedCopy(
+              resolver.getAllPaths(preprocessor.get().getInputs())));
+    }
+
+    // If present, include all inputs coming from the compiler tool.
+    if (compiler.isPresent()) {
+      inputs.addAll(
+          Ordering.natural().immutableSortedCopy(
+              resolver.getAllPaths(compiler.get().getInputs())));
+    }
+
+    // Add the input.
+    inputs.add(resolver.getPath(input));
+
+    // Add prefix header.
+    if (prefixHeader.isPresent()) {
+      inputs.add(resolver.getPath(prefixHeader.get()));
+    }
+
+    // Add all dynamically detected header dependencies.
+    inputs.addAll(
+        Iterables.transform(
+            getProjectFilesystem().readLines(getDepFilePath()),
+            MorePaths.TO_PATH));
+
+    return inputs.build();
   }
 
 }

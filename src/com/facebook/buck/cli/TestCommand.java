@@ -35,6 +35,7 @@ import com.facebook.buck.rules.TargetGraphToActionGraph;
 import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.TargetNodes;
 import com.facebook.buck.rules.TestRule;
+import com.facebook.buck.rules.keys.DependencyFileRuleKeyBuilderFactory;
 import com.facebook.buck.rules.keys.InputBasedRuleKeyBuilderFactory;
 import com.facebook.buck.step.AdbOptions;
 import com.facebook.buck.step.DefaultStepRunner;
@@ -337,8 +338,13 @@ public class TestCommand extends BuildCommand {
       CachingBuildEngine cachingBuildEngine =
           new CachingBuildEngine(
               pool.getExecutor(),
+              params.getFileHashCache(),
               getBuildEngineMode().or(params.getBuckConfig().getBuildEngineMode()),
+              params.getBuckConfig().getBuildDepFiles(),
               new InputBasedRuleKeyBuilderFactory(
+                  params.getFileHashCache(),
+                  new SourcePathResolver(targetGraphToActionGraph.getRuleResolver())),
+              new DependencyFileRuleKeyBuilderFactory(
                   params.getFileHashCache(),
                   new SourcePathResolver(targetGraphToActionGraph.getRuleResolver())));
       try (Build build = createBuild(
@@ -359,10 +365,11 @@ public class TestCommand extends BuildCommand {
           Optional.of(getTargetDeviceOptions()))) {
 
         // Build all of the test rules.
-        int exitCode = build.executeAndPrintFailuresToConsole(
+        int exitCode = build.executeAndPrintFailuresToEventBus(
             testRules,
             isKeepGoing(),
-            params.getConsole(),
+            params.getBuckEventBus(),
+            params.getConsole().getAnsi(),
             getPathToBuildReport(params.getBuckConfig()));
         params.getBuckEventBus().post(BuildEvent.finished(started, exitCode));
         if (exitCode != 0) {

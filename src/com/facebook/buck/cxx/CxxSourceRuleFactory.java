@@ -69,6 +69,7 @@ public class CxxSourceRuleFactory {
   private final CxxPlatform cxxPlatform;
   private final ImmutableList<CxxPreprocessorInput> cxxPreprocessorInput;
   private final ImmutableList<String> compilerFlags;
+  private final Optional<SourcePath> prefixHeader;
 
   private final Supplier<ImmutableList<BuildRule>> preprocessDeps = Suppliers.memoize(
       new Supplier<ImmutableList<BuildRule>>() {
@@ -82,7 +83,6 @@ public class CxxSourceRuleFactory {
             builder.addAll(
                 pathResolver.filterBuildRuleInputs(
                     ImmutableList.<SourcePath>builder()
-                        .addAll(input.getIncludes().getPrefixHeaders())
                         .addAll(input.getIncludes().getNameToPathMap().values())
                         .build()));
 
@@ -117,6 +117,17 @@ public class CxxSourceRuleFactory {
             public ImmutableSet<Path> get() {
               return FluentIterable.from(cxxPreprocessorInput)
                   .transformAndConcat(CxxPreprocessorInput.GET_SYSTEM_INCLUDE_ROOTS)
+                  .toSet();
+            }
+          });
+
+  private final Supplier<ImmutableSet<Path>> headerMaps =
+      Suppliers.memoize(
+          new Supplier<ImmutableSet<Path>>() {
+            @Override
+            public ImmutableSet<Path> get() {
+              return FluentIterable.from(cxxPreprocessorInput)
+                  .transformAndConcat(CxxPreprocessorInput.GET_HEADER_MAPS)
                   .toSet();
             }
           });
@@ -164,13 +175,15 @@ public class CxxSourceRuleFactory {
       SourcePathResolver pathResolver,
       CxxPlatform cxxPlatform,
       ImmutableList<CxxPreprocessorInput> cxxPreprocessorInput,
-      ImmutableList<String> compilerFlags) {
+      ImmutableList<String> compilerFlags,
+      Optional<SourcePath> prefixHeader) {
     this.params = params;
     this.resolver = resolver;
     this.pathResolver = pathResolver;
     this.cxxPlatform = cxxPlatform;
     this.cxxPreprocessorInput = cxxPreprocessorInput;
     this.compilerFlags = compilerFlags;
+    this.prefixHeader = prefixHeader;
   }
 
   private String getOutputName(String name) {
@@ -266,7 +279,9 @@ public class CxxSourceRuleFactory {
         source.getType(),
         includeRoots.get(),
         systemIncludeRoots.get(),
+        headerMaps.get(),
         frameworkRoots.get(),
+        prefixHeader,
         includes.get(),
         cxxPlatform.getDebugPathSanitizer());
     resolver.addToIndex(result);
@@ -323,6 +338,16 @@ public class CxxSourceRuleFactory {
                     COMPILE_FLAVOR_PREFIX + "%s%s",
                     pic == PicType.PIC ? "pic-" : "",
                     outputName)))
+        .build();
+  }
+
+  public BuildTarget createInferCaptureBuildTarget(String name) {
+    String outputName = Flavor.replaceInvalidCharacters(getCompileOutputName(name));
+    return BuildTarget
+        .builder(params.getBuildTarget())
+        .addFlavors(cxxPlatform.getFlavor())
+        .addFlavors(
+            ImmutableFlavor.of(String.format("infer-capture-%s", outputName)))
         .build();
   }
 
@@ -399,7 +424,7 @@ public class CxxSourceRuleFactory {
     ImmutableSortedSet<BuildRule> dependencies =
         ImmutableSortedSet.<BuildRule>naturalOrder()
             // Add dependencies on any build rules used to create the compiler.
-            .addAll(compiler.getInputs(pathResolver))
+            .addAll(compiler.getDeps(pathResolver))
             // If a build rule generates our input source, add that as a dependency.
             .addAll(pathResolver.filterBuildRuleInputs(source.getPath()))
             .build();
@@ -462,7 +487,7 @@ public class CxxSourceRuleFactory {
 
     ImmutableCollection<BuildRule> toolInputs =
         toolOptional.isPresent()
-            ? toolOptional.get().getInputs(pathResolver)
+            ? toolOptional.get().getDeps(pathResolver)
             : ImmutableSet.<BuildRule>of();
 
     return ImmutableSortedSet.<BuildRule>naturalOrder()
@@ -523,6 +548,57 @@ public class CxxSourceRuleFactory {
         .build();
   }
 
+  public CxxInferCapture requireInferCaptureBuildRule(
+      String name,
+      CxxSource source,
+      PicType pic,
+      CxxInferTools inferTools) {
+    BuildTarget target = createInferCaptureBuildTarget(name);
+
+    Optional<CxxInferCapture> existingRule = resolver.getRuleOptionalWithType(
+        target, CxxInferCapture.class);
+    if (existingRule.isPresent()) {
+      return existingRule.get();
+    }
+
+    return createInferCaptureBuildRule(target, name, source, pic, inferTools);
+  }
+
+  public CxxInferCapture createInferCaptureBuildRule(
+      BuildTarget target,
+      String name,
+      CxxSource source,
+      PicType pic,
+      CxxInferTools inferTools) {
+    Preconditions.checkArgument(CxxSourceTypes.isPreprocessableType(source.getType()));
+
+    LOG.verbose("Creating preprocessed InferCapture build rule %s for %s", target, source);
+
+    CxxInferCapture result = new CxxInferCapture(
+        params.copyWithChanges(
+            target,
+            Suppliers.ofInstance(
+                computeSourcePreprocessorAndToolDeps(Optional.<Tool>absent(), source)),
+            Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of())),
+        pathResolver,
+        Optional.of(CxxSourceTypes.getPlatformPreprocessFlags(cxxPlatform, source.getType())),
+        Optional.of(preprocessorFlags.getUnchecked(source.getType())),
+        Optional.of(computePlatformCompilerFlags(pic, source)),
+        Optional.of(computeRuleCompilerFlags(source)),
+        source.getPath(),
+        source.getType(),
+        getCompileOutputPath(target, name),
+        includeRoots.get(),
+        systemIncludeRoots.get(),
+        headerMaps.get(),
+        frameworkRoots.get(),
+        prefixHeader,
+        inferTools,
+        cxxPlatform.getDebugPathSanitizer());
+    resolver.addToIndex(result);
+    return result;
+  }
+
   /**
    * @return a {@link CxxPreprocessAndCompile} rule that preprocesses, compiles, and assembles the
    *    given {@link CxxSource}.
@@ -562,7 +638,9 @@ public class CxxSourceRuleFactory {
         source.getType(),
         includeRoots.get(),
         systemIncludeRoots.get(),
+        headerMaps.get(),
         frameworkRoots.get(),
+        prefixHeader,
         includes.get(),
         cxxPlatform.getDebugPathSanitizer(),
         strategy);
@@ -586,6 +664,33 @@ public class CxxSourceRuleFactory {
     }
 
     return createPreprocessAndCompileBuildRule(resolver, name, source, pic, strategy);
+  }
+
+
+  public ImmutableSet<CxxInferCapture> createInferCaptureBuildRules(
+      ImmutableMap<String, CxxSource> sources,
+      PicType pic,
+      CxxInferTools inferTools) {
+
+    ImmutableSet.Builder<CxxInferCapture> objects = ImmutableSet.builder();
+
+    for (Map.Entry<String, CxxSource> entry : sources.entrySet()) {
+      String name = entry.getKey();
+      CxxSource source = entry.getValue();
+
+      Preconditions.checkState(
+          CxxSourceTypes.isPreprocessableType(source.getType()),
+          "Only preprocessable source types are currently supported");
+
+      CxxInferCapture rule = requireInferCaptureBuildRule(
+          name,
+          source,
+          pic,
+          inferTools);
+      objects.add(rule);
+    }
+
+    return objects.build();
   }
 
   private ImmutableMap<CxxPreprocessAndCompile, SourcePath> requirePreprocessAndCompileRules(
@@ -664,6 +769,7 @@ public class CxxSourceRuleFactory {
       CxxPlatform cxxPlatform,
       ImmutableList<CxxPreprocessorInput> cxxPreprocessorInput,
       ImmutableList<String> compilerFlags,
+      Optional<SourcePath> prefixHeader,
       CxxPreprocessMode strategy,
       ImmutableMap<String, CxxSource> sources,
       PicType pic) {
@@ -674,7 +780,8 @@ public class CxxSourceRuleFactory {
             pathResolver,
             cxxPlatform,
             cxxPreprocessorInput,
-            compilerFlags);
+            compilerFlags,
+            prefixHeader);
     return factory.requirePreprocessAndCompileRules(resolver, strategy, sources, pic);
   }
 

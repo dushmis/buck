@@ -38,6 +38,7 @@ import com.facebook.buck.rules.CachingBuildEngine;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetGraphToActionGraph;
+import com.facebook.buck.rules.keys.DependencyFileRuleKeyBuilderFactory;
 import com.facebook.buck.rules.keys.InputBasedRuleKeyBuilderFactory;
 import com.facebook.buck.step.AdbOptions;
 import com.facebook.buck.step.TargetDevice;
@@ -343,8 +344,13 @@ public class BuildCommand extends AbstractCommand {
              params.getAndroidPlatformTargetSupplier(),
              new CachingBuildEngine(
                  pool.getExecutor(),
+                 params.getFileHashCache(),
                  getBuildEngineMode().or(params.getBuckConfig().getBuildEngineMode()),
+                 params.getBuckConfig().getBuildDepFiles(),
                  new InputBasedRuleKeyBuilderFactory(
+                     params.getFileHashCache(),
+                     new SourcePathResolver(resolver)),
+                 new DependencyFileRuleKeyBuilderFactory(
                      params.getFileHashCache(),
                      new SourcePathResolver(resolver))),
              artifactCache,
@@ -358,10 +364,11 @@ public class BuildCommand extends AbstractCommand {
              Optional.<AdbOptions>absent(),
              Optional.<TargetDeviceOptions>absent())) {
       lastBuild = build;
-      int exitCode = build.executeAndPrintFailuresToConsole(
+      int exitCode = build.executeAndPrintFailuresToEventBus(
           buildTargets,
           isKeepGoing(),
-          params.getConsole(),
+          params.getBuckEventBus(),
+          params.getConsole().getAnsi(),
           getPathToBuildReport(params.getBuckConfig()));
       params.getBuckEventBus().post(BuildEvent.finished(started, exitCode));
       return exitCode;

@@ -22,6 +22,7 @@ import com.facebook.buck.event.BuckEventListener;
 import com.facebook.buck.event.ChromeTraceEvent;
 import com.facebook.buck.event.CompilerPluginDurationEvent;
 import com.facebook.buck.event.InstallEvent;
+import com.facebook.buck.event.SimplePerfEvent;
 import com.facebook.buck.event.StartActivityEvent;
 import com.facebook.buck.event.TraceEvent;
 import com.facebook.buck.event.UninstallEvent;
@@ -29,6 +30,8 @@ import com.facebook.buck.io.PathListing;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.AnnotationProcessingEvent;
 import com.facebook.buck.java.tracing.JavacPhaseEvent;
+import com.facebook.buck.json.ParseBuckFileEvent;
+import com.facebook.buck.log.CommandThreadFactory;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildId;
 import com.facebook.buck.parser.ParseEvent;
@@ -45,12 +48,16 @@ import com.facebook.buck.util.BestCompressionGZIPOutputStream;
 import com.facebook.buck.util.BuckConstant;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.Optionals;
+import com.facebook.buck.util.concurrent.MoreExecutors;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.CaseFormat;
 import com.google.common.base.Functions;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Maps;
 import com.google.common.eventbus.Subscribe;
 
 import java.io.IOException;
@@ -60,7 +67,8 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -68,6 +76,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class ChromeTraceBuildListener implements BuckEventListener {
   private static final Logger LOG = Logger.get(ChromeTraceBuildListener.class);
+  private static final int TIMEOUT_SECONDS = 30;
 
   private final ProjectFilesystem projectFilesystem;
   private final Clock clock;
@@ -75,17 +84,23 @@ public class ChromeTraceBuildListener implements BuckEventListener {
   private final boolean compressTraces;
   private final ObjectMapper mapper;
   private final ThreadLocal<SimpleDateFormat> dateFormat;
-  private ConcurrentLinkedQueue<ChromeTraceEvent> eventList =
-      new ConcurrentLinkedQueue<ChromeTraceEvent>();
+  private final Path tracePath;
+  private final OutputStream traceStream;
+  private final JsonGenerator jsonGenerator;
+
+  private final ExecutorService outputExecutor;
+
 
   public ChromeTraceBuildListener(
       ProjectFilesystem projectFilesystem,
+      BuildId buildId,
       Clock clock,
       ObjectMapper objectMapper,
       int tracesToKeep,
-      boolean compressTraces) {
+      boolean compressTraces) throws IOException {
     this(
         projectFilesystem,
+        buildId,
         clock,
         objectMapper,
         Locale.US,
@@ -97,12 +112,13 @@ public class ChromeTraceBuildListener implements BuckEventListener {
   @VisibleForTesting
   ChromeTraceBuildListener(
       ProjectFilesystem projectFilesystem,
+      BuildId buildId,
       Clock clock,
       ObjectMapper objectMapper,
       final Locale locale,
       final TimeZone timeZone,
       int tracesToKeep,
-      boolean compressTraces) {
+      boolean compressTraces) throws IOException {
     this.projectFilesystem = projectFilesystem;
     this.clock = clock;
     this.mapper = objectMapper;
@@ -116,11 +132,24 @@ public class ChromeTraceBuildListener implements BuckEventListener {
     };
     this.tracesToKeep = tracesToKeep;
     this.compressTraces = compressTraces;
+    this.outputExecutor = MoreExecutors.newSingleThreadExecutor(
+        new CommandThreadFactory(getClass().getName()));
+    TracePathAndStream tracePathAndStream = createPathAndStream(buildId);
+    this.tracePath = tracePathAndStream.getPath();
+    this.traceStream = tracePathAndStream.getStream();
+    this.jsonGenerator = objectMapper.getJsonFactory().createJsonGenerator(this.traceStream);
+
+    this.jsonGenerator.writeStartArray();
     addProcessMetadataEvent();
   }
 
+  @VisibleForTesting
+  Path getTracePath() {
+    return tracePath;
+  }
+
   private void addProcessMetadataEvent() {
-    eventList.add(
+    submitTraceEvent(
         new ChromeTraceEvent(
             "buck",
             "process_name",
@@ -154,24 +183,41 @@ public class ChromeTraceBuildListener implements BuckEventListener {
     }
   }
 
-  @Override
-  public void outputTrace(BuildId buildId) {
+  private TracePathAndStream createPathAndStream(BuildId buildId) {
+    String filenameTime = dateFormat.get().format(new Date(clock.currentTimeMillis()));
+    String traceName = String.format("build.%s.%s.trace", filenameTime, buildId);
+    if (compressTraces) {
+      traceName = traceName + ".gz";
+    }
+    Path tracePath = BuckConstant.BUCK_TRACE_DIR.resolve(traceName);
     try {
-      String filenameTime = dateFormat.get().format(new Date(clock.currentTimeMillis()));
-      String traceName = String.format("build.%s.%s.trace", filenameTime, buildId);
-      if (compressTraces) {
-        traceName = traceName + ".gz";
-      }
-      Path tracePath = BuckConstant.BUCK_TRACE_DIR.resolve(traceName);
       projectFilesystem.createParentDirs(tracePath);
       OutputStream stream = projectFilesystem.newFileOutputStream(tracePath);
       if (compressTraces) {
         stream = new BestCompressionGZIPOutputStream(stream, true);
       }
+      return new TracePathAndStream(tracePath, stream);
+    } catch (IOException e) {
+      throw new HumanReadableException(e, "Unable to write trace file: " + e);
+    }
+  }
 
+  @Override
+  public void outputTrace(BuildId buildId) {
+    try {
       LOG.debug("Writing Chrome trace to %s", tracePath);
-      mapper.writeValue(stream, eventList);
+      outputExecutor.shutdown();
+      try {
+        if (!outputExecutor.awaitTermination(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+          LOG.warn("Failed to log buck trace %s.  Trace might be corrupt", tracePath);
+        }
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
 
+      jsonGenerator.writeEndArray();
+      jsonGenerator.close();
+      traceStream.close();
       String symlinkName = compressTraces ? "build.trace.gz" : "build.trace";
       Path symlinkPath = BuckConstant.BUCK_TRACE_DIR.resolve(symlinkName);
       projectFilesystem.createSymLink(
@@ -306,6 +352,61 @@ public class ChromeTraceBuildListener implements BuckEventListener {
         ImmutableMap.of(
             "targets",
             Joiner.on(",").join(finished.getBuildTargets())),
+        finished);
+  }
+
+  @Subscribe
+  public void simplePerfEvent(SimplePerfEvent perfEvent) {
+    ChromeTraceEvent.Phase phase = null;
+    switch (perfEvent.getEventType()) {
+      case STARTED:
+        phase = ChromeTraceEvent.Phase.BEGIN;
+        break;
+      case FINISHED:
+        phase = ChromeTraceEvent.Phase.END;
+        break;
+      case UPDATED:
+        phase = ChromeTraceEvent.Phase.IMMEDIATE;
+        break;
+    }
+    if (phase == null) {
+      throw new IllegalStateException(
+          "Unsupported perf event type: " + perfEvent.getEventType());
+    }
+
+    writeChromeTraceEvent(
+        "buck",
+        CaseFormat.UPPER_CAMEL.converterTo(CaseFormat.LOWER_UNDERSCORE).convert(
+            perfEvent.getEventId().getValue()),
+        phase,
+        ImmutableMap.copyOf(
+            Maps.transformValues(perfEvent.getEventInfo(), Functions.toStringFunction())),
+        perfEvent);
+  }
+
+  @Subscribe
+  public void parseBuckFileStarted(ParseBuckFileEvent.Started started) {
+    writeChromeTraceEvent(
+        "buck",
+        "parse_file",
+        ChromeTraceEvent.Phase.BEGIN,
+        ImmutableMap.of(
+            "path",
+            started.getBuckFilePath().toString()),
+        started);
+  }
+
+  @Subscribe
+  public void parseBuckFileFinished(ParseBuckFileEvent.Finished finished) {
+    writeChromeTraceEvent(
+        "buck",
+        "parse_file",
+        ChromeTraceEvent.Phase.END,
+        ImmutableMap.of(
+            "path",
+            finished.getBuckFilePath().toString(),
+            "num_rules",
+            Integer.toString(finished.getNumRules())),
         finished);
   }
 
@@ -529,13 +630,48 @@ public class ChromeTraceBuildListener implements BuckEventListener {
       String name,
       ChromeTraceEvent.Phase phase,
       ImmutableMap<String, String> arguments,
-      BuckEvent event) {
-    eventList.add(new ChromeTraceEvent(category,
+      final BuckEvent event) {
+    final ChromeTraceEvent chromeTraceEvent = new ChromeTraceEvent(category,
         name,
         phase,
         0,
         event.getThreadId(),
         TimeUnit.NANOSECONDS.toMicros(event.getNanoTime()),
-        arguments));
+        arguments);
+    submitTraceEvent(chromeTraceEvent);
+  }
+
+  @SuppressWarnings("PMD.EmptyCatchBlock")
+  private void submitTraceEvent(final ChromeTraceEvent chromeTraceEvent) {
+    outputExecutor.submit(new Callable<Void>() {
+      @Override
+      public Void call() throws Exception {
+        try {
+          mapper.writeValue(jsonGenerator, chromeTraceEvent);
+        } catch (IOException e) {
+          // Swallow any failures to write.
+        }
+        return null;
+      }
+    });
+  }
+
+  private class TracePathAndStream {
+    private final Path path;
+    private final OutputStream stream;
+
+
+    public TracePathAndStream(Path path, OutputStream stream) {
+      this.path = path;
+      this.stream = stream;
+    }
+
+    public Path getPath() {
+      return path;
+    }
+
+    public OutputStream getStream() {
+      return stream;
+    }
   }
 }

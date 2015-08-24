@@ -88,6 +88,7 @@ java_library(
   srcs = WATCHMAN_WATCHER_SRCS,
   deps = [
     ':exceptions',
+    ':io',
     ':util',
     '//src/com/facebook/buck/event:event',
     '//src/com/facebook/buck/io:io',
@@ -119,7 +120,6 @@ java_immutables_library(
     '//src/com/facebook/buck/log:api',
     '//src/com/facebook/buck/zip:stream',
     '//third-party/java/aosp:aosp',
-    '//third-party/java/ini4j:ini4j',
     '//third-party/java/jsr:jsr305',
   ],
   visibility = [

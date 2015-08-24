@@ -33,6 +33,7 @@ import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.TestExecutionContext;
+import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Function;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
@@ -113,6 +114,7 @@ public class CopyNativeLibrariesTest {
             ImmutableSet.<SourcePath>of(new TestSourcePath("lib1"), new TestSourcePath("lib2")),
             ImmutableSet.<TargetCpuType>of(),
             ImmutableMap.<TargetCpuType, NdkCxxPlatform>of(),
+            ImmutableMap.<Pair<TargetCpuType, String>, SourcePath>of(),
             ImmutableMap.<Pair<TargetCpuType, String>, SourcePath>of());
 
     ImmutableList<Step> steps =
@@ -148,7 +150,11 @@ public class CopyNativeLibrariesTest {
     // Invoke copyNativeLibrary to populate the steps.
     ImmutableList.Builder<Step> stepsBuilder = ImmutableList.builder();
     CopyNativeLibraries.copyNativeLibrary(
-        Paths.get(sourceDir), Paths.get(destinationDir), cpuFilters, stepsBuilder);
+        new FakeProjectFilesystem(),
+        Paths.get(sourceDir),
+        Paths.get(destinationDir),
+        cpuFilters,
+        stepsBuilder);
     ImmutableList<Step> steps = stepsBuilder.build();
 
     assertEquals(steps.size(), expectedCommandDescriptions.size());

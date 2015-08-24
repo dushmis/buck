@@ -40,6 +40,7 @@ java_test(
     '//src/com/facebook/buck/util:exceptions',
     '//src/com/facebook/buck/util:io',
     '//src/com/facebook/buck/util:util',
+    '//src/com/facebook/buck/util/cache:cache',
     '//test/com/facebook/buck/cli:FakeBuckConfig',
     '//test/com/facebook/buck/cxx:testutil',
     '//test/com/facebook/buck/event:testutil',
@@ -75,6 +76,7 @@ java_test(
   resources = glob(['testdata/**']),
   deps = [
     ':testutil',
+    '//src/com/facebook/buck/apple:rules',
     '//src/com/facebook/buck/model:model',
     '//src/com/facebook/buck/util:constants',
     '//src/com/facebook/buck/util:exceptions',

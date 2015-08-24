@@ -109,6 +109,10 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
       sources.add(base + "_reflection.cpp");
     }
 
+    if (cpp2) {
+      sources.add(base + "_types_custom_protocol.h");
+    }
+
     for (String service : services) {
 
       sources.add(service + ".h");
@@ -116,6 +120,7 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
 
       if (cpp2) {
         sources.add(service + "_client.cpp");
+        sources.add(service + "_custom_protocol.h");
       }
 
       if (separateProcessmap) {
@@ -258,6 +263,7 @@ public class ThriftCxxEnhancer implements ThriftLanguageSpecificEnhancer {
     langArgs.headerNamespace = args.cppHeaderNamespace;
     langArgs.srcs = Optional.of(SourceWithFlagsList.ofNamedSources(srcs));
     langArgs.exportedHeaders = Optional.of(SourceList.ofNamedSources(headers));
+    langArgs.canBeAsset = Optional.absent();
 
     return cxxLibraryDescription.createBuildRule(targetGraph, langParams, resolver, langArgs);
   }

@@ -711,7 +711,8 @@ AppleSdkPaths appleSdkPaths =
               pathResolver,
               entry.getValue().getCxxPlatform(),
               ImmutableList.<CxxPreprocessorInput>of(),
-              ImmutableList.<String>of());
+              ImmutableList.<String>of(),
+              Optional.<SourcePath>absent());
       CxxPreprocessAndCompile rule;
       switch (operation) {
         case PREPROCESS_AND_COMPILE:
@@ -788,7 +789,8 @@ AppleSdkPaths appleSdkPaths =
               Linker.LinkableDepType.SHARED,
               ImmutableList.<BuildRule>of(),
               Optional.<Linker.CxxRuntimeType>absent(),
-              Optional.<SourcePath>absent());
+              Optional.<SourcePath>absent(),
+              ImmutableSet.<BuildRule>of());
       RuleKey.Builder builder = ruleKeyBuilderFactory.newInstance(rule);
       ruleKeys.put(entry.getKey(), builder.build());
     }

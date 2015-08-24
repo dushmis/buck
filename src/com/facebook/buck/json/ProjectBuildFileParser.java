@@ -18,6 +18,7 @@ package com.facebook.buck.json;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import com.facebook.buck.bser.BserDeserializer;
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.log.Logger;
@@ -29,6 +30,8 @@ import com.facebook.buck.util.Escaper;
 import com.facebook.buck.util.InputStreamConsumer;
 import com.facebook.buck.util.MoreThrowables;
 import com.facebook.buck.util.NamedTemporaryFile;
+import com.facebook.buck.util.ProcessExecutor;
+import com.facebook.buck.util.ProcessExecutorParams;
 import com.facebook.buck.util.Threads;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Charsets;
@@ -73,24 +76,32 @@ public class ProjectBuildFileParser implements AutoCloseable {
           "buck.path_to_pathlib_py",
           "third-party/py/pathlib/pathlib.py"));
 
+  private static final Path PATH_TO_PYWATCHMAN = Paths.get(
+      System.getProperty(
+          "buck.path_to_pywatchman",
+          "build/pywatchman"));
+
   private static final Logger LOG = Logger.get(ProjectBuildFileParser.class);
+
+  private enum BuckPyOutputFormat {
+    JSON,
+    BSER
+  };
 
   private final ImmutableMap<String, String> environment;
 
   private Optional<Path> pathToBuckPy;
 
-  @Nullable private Process buckPyProcess;
+  @Nullable private ProcessExecutor.LaunchedProcess buckPyProcess;
+  private BuckPyOutputFormat buckPyOutputFormat;
   @Nullable BuildFileToJsonParser buckPyStdoutParser;
   @Nullable private BufferedWriter buckPyStdinWriter;
 
-  private final Path projectRoot;
-  private final String pythonInterpreter;
-  private final boolean allowEmptyGlobs;
-  private final String buildFileName;
-  private final Iterable<String> defaultIncludes;
-  private final ImmutableSet<Description<?>> descriptions;
+  private final ProjectBuildFileParserOptions options;
   private final Console console;
   private final BuckEventBus buckEventBus;
+  private final ProcessExecutor processExecutor;
+  private final BserDeserializer bserDeserializer;
 
   private boolean isInitialized;
   private boolean isClosed;
@@ -101,25 +112,18 @@ public class ProjectBuildFileParser implements AutoCloseable {
   @Nullable private ProjectBuildFileParseEvents.Started projectBuildFileParseEventStarted;
 
   protected ProjectBuildFileParser(
-      Path projectRoot,
-      String pythonInterpreter,
-      boolean allowEmptyGlobs,
-      String buildFileName,
-      Iterable<String> defaultIncludes,
-      ImmutableSet<Description<?>> descriptions,
+      ProjectBuildFileParserOptions options,
       Console console,
       ImmutableMap<String, String> environment,
-      BuckEventBus buckEventBus) {
-    this.projectRoot = projectRoot;
-    this.pythonInterpreter = pythonInterpreter;
-    this.allowEmptyGlobs = allowEmptyGlobs;
-    this.buildFileName = buildFileName;
-    this.defaultIncludes = defaultIncludes;
-    this.descriptions = descriptions;
+      BuckEventBus buckEventBus,
+      ProcessExecutor processExecutor) {
     this.pathToBuckPy = Optional.absent();
+    this.options = options;
     this.console = console;
     this.environment = environment;
     this.buckEventBus = buckEventBus;
+    this.processExecutor = processExecutor;
+    this.bserDeserializer = new BserDeserializer(BserDeserializer.KeyOrdering.SORTED);
   }
 
   public void setEnableProfiling(boolean enableProfiling) {
@@ -157,15 +161,16 @@ public class ProjectBuildFileParser implements AutoCloseable {
     projectBuildFileParseEventStarted = new ProjectBuildFileParseEvents.Started();
     buckEventBus.post(projectBuildFileParseEventStarted);
 
-    ProcessBuilder processBuilder = new ProcessBuilder(buildArgs());
-    processBuilder.environment().clear();
-    processBuilder.environment().putAll(environment);
+    ProcessExecutorParams params = ProcessExecutorParams.builder()
+        .setCommand(buildArgs())
+        .setEnvironment(environment)
+        .build();
 
     LOG.debug(
         "Starting buck.py command: %s environment: %s",
-        processBuilder.command(),
-        processBuilder.environment());
-    buckPyProcess = processBuilder.start();
+        params.getCommand(),
+        params.getEnvironment());
+    buckPyProcess = processExecutor.launchProcess(params);
     LOG.debug("Started process %s successfully", buckPyProcess);
 
     OutputStream stdin = buckPyProcess.getOutputStream();
@@ -188,14 +193,24 @@ public class ProjectBuildFileParser implements AutoCloseable {
     buckPyStdinWriter = new BufferedWriter(new OutputStreamWriter(stdin));
 
     Reader reader = new InputStreamReader(buckPyProcess.getInputStream(), Charsets.UTF_8);
-    buckPyStdoutParser = new BuildFileToJsonParser(reader);
+    // We explicitly do not close this reader, since it closes the underlying stream.
+    BufferedReader bufferedReader = new BufferedReader(reader);
+    String format = bufferedReader.readLine();
+    if (format == null) {
+      throw new RuntimeException("Cannot determine buck.py output format");
+    }
+    buckPyOutputFormat = BuckPyOutputFormat.valueOf(format);
+
+    if (buckPyOutputFormat == BuckPyOutputFormat.JSON) {
+      buckPyStdoutParser = new BuildFileToJsonParser(reader);
+    }
   }
 
   private ImmutableList<String> buildArgs() throws IOException {
     // Invoking buck.py and read JSON-formatted build rules from its stdout.
     ImmutableList.Builder<String> argBuilder = ImmutableList.builder();
 
-    argBuilder.add(pythonInterpreter);
+    argBuilder.add(options.getPythonInterpreter());
 
     // Ask python to unbuffer stdout so that we can coordinate based on the output as it is
     // produced.
@@ -209,17 +224,29 @@ public class ProjectBuildFileParser implements AutoCloseable {
       argBuilder.add(profileOutputFile.get().toString());
     }
 
-    argBuilder.add(getPathToBuckPy(descriptions).toString());
+    argBuilder.add(getPathToBuckPy(options.getDescriptions()).toString());
 
-    if (allowEmptyGlobs) {
+    if (options.getAllowEmptyGlobs()) {
       argBuilder.add("--allow_empty_globs");
     }
 
-    argBuilder.add("--project_root", projectRoot.toAbsolutePath().toString());
-    argBuilder.add("--build_file_name", buildFileName);
+    if (options.getUseWatchmanGlob()) {
+      argBuilder.add("--use_watchman_glob");
+    }
+
+    if (options.getWatchmanProjectPrefix().isPresent()) {
+      argBuilder.add("--watchman_project_prefix", options.getWatchmanProjectPrefix().get());
+    }
+
+    if (options.getWatchmanWatchRoot().isPresent()) {
+      argBuilder.add("--watchman_watch_root", options.getWatchmanWatchRoot().get());
+    }
+
+    argBuilder.add("--project_root", options.getProjectRoot().toAbsolutePath().toString());
+    argBuilder.add("--build_file_name", options.getBuildFileName());
 
     // Add the --include flags.
-    for (String include : defaultIncludes) {
+    for (String include : options.getDefaultIncludes()) {
       argBuilder.add("--include");
       argBuilder.add(include);
     }
@@ -257,26 +284,44 @@ public class ProjectBuildFileParser implements AutoCloseable {
   }
 
   @VisibleForTesting
+  @SuppressWarnings("unchecked")
   protected List<Map<String, Object>> getAllRulesInternal(Path buildFile)
       throws IOException {
     ensureNotClosed();
     initIfNeeded();
 
     // Check isInitialized implications (to avoid Eradicate warnings).
-    Preconditions.checkNotNull(buckPyStdoutParser);
     Preconditions.checkNotNull(buckPyStdinWriter);
     Preconditions.checkNotNull(buckPyProcess);
 
+    ParseBuckFileEvent.Started parseBuckFileStarted = ParseBuckFileEvent.started(buildFile);
+    buckEventBus.post(parseBuckFileStarted);
     String buildFileString = buildFile.toString();
     LOG.verbose("Writing to buck.py stdin: %s", buildFileString);
     buckPyStdinWriter.write(buildFileString);
     buckPyStdinWriter.newLine();
     buckPyStdinWriter.flush();
 
-    LOG.debug("Parsing output of process %s...", buckPyProcess);
-    List<Map<String, Object>> result = buckPyStdoutParser.nextRules();
+    LOG.debug("Parsing output of process %s using format %s...", buckPyProcess, buckPyOutputFormat);
+    List<Map<String, Object>> result;
+    if (buckPyOutputFormat == BuckPyOutputFormat.BSER) {
+      try {
+        Object deserializedValue = bserDeserializer.deserializeBserValue(
+            buckPyProcess.getInputStream());
+        Preconditions.checkState(deserializedValue instanceof List<?>);
+        result = (List<Map<String, Object>>) deserializedValue;
+      } catch (BserDeserializer.BserEofException e) {
+        LOG.error(e, "Parser exited while decoding BSER data");
+        throw new IOException("Parser exited unexpectedly", e);
+      }
+    } else {
+      Preconditions.checkNotNull(buckPyStdoutParser);
+      result = buckPyStdoutParser.nextRules();
+    }
     LOG.verbose("Got rules: %s", result);
-    LOG.debug("Parsed %d rules from process", result.size());
+    int numRules = result.size();
+    LOG.debug("Parsed %d rules from process", numRules);
+    buckEventBus.post(ParseBuckFileEvent.finished(parseBuckFileStarted, numRules));
     return result;
   }
 
@@ -291,14 +336,15 @@ public class ProjectBuildFileParser implements AutoCloseable {
       if (isInitialized) {
 
         // Check isInitialized implications (to avoid Eradicate warnings).
-        Preconditions.checkNotNull(buckPyStdoutParser);
         Preconditions.checkNotNull(buckPyStdinWriter);
         Preconditions.checkNotNull(buckPyProcess);
 
-        try {
-          buckPyStdoutParser.close();
-        } catch (IOException e) {
-          // This is bad, but we swallow this so we can still close the other objects.
+        if (buckPyStdoutParser != null) {
+          try {
+            buckPyStdoutParser.close();
+          } catch (IOException e) {
+            // This is bad, but we swallow this so we can still close the other objects.
+          }
         }
 
         // Allow buck.py to terminate gracefully.
@@ -319,7 +365,7 @@ public class ProjectBuildFileParser implements AutoCloseable {
         }
 
         LOG.debug("Waiting for process %s to exit...", buckPyProcess);
-        int exitCode = buckPyProcess.waitFor();
+        int exitCode = processExecutor.waitForLaunchedProcess(buckPyProcess);
         if (exitCode != 0) {
           LOG.error("Process %s exited with error code %d", buckPyProcess, exitCode);
           throw BuildFileParseException.createForUnknownParseError(
@@ -401,11 +447,15 @@ public class ProjectBuildFileParser implements AutoCloseable {
     try (Writer out = Files.newBufferedWriter(buckDotPy, UTF_8)) {
       URL resource = Resources.getResource(BUCK_PY_RESOURCE);
       String pathlibDir = PATH_TO_PATHLIB_PY.getParent().toString();
+      String watchmanDir = PATH_TO_PYWATCHMAN.toString();
       out.write(
           "from __future__ import with_statement\n" +
           "import sys\n" +
           "sys.path.insert(0, \"" +
-              Escaper.escapeAsBashString(MorePaths.pathWithUnixSeparators(pathlibDir)) + "\")\n");
+              Escaper.escapeAsBashString(MorePaths.pathWithUnixSeparators(pathlibDir)) + "\")\n" +
+          "sys.path.insert(0, \"" +
+              Escaper.escapeAsBashString(MorePaths.pathWithUnixSeparators(watchmanDir)) + "\")\n");
+
       Resources.asCharSource(resource, UTF_8).copyTo(out);
       out.write("\n\n");
 

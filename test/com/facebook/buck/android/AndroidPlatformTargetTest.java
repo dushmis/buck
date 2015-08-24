@@ -313,6 +313,49 @@ public class AndroidPlatformTargetTest {
   }
 
   @Test
+  public void testLooksForOptionalLibraries() throws IOException {
+    File androidSdkDir = tempDir.newFolder();
+    Path pathToAndroidSdkDir = androidSdkDir.toPath();
+    AndroidDirectoryResolver androidDirectoryResolver =
+        new FakeAndroidDirectoryResolver(
+            Optional.of(androidSdkDir.toPath()),
+            /* androidNdkDir */ Optional.<Path>absent(),
+            /* ndkVersion */ Optional.<String>absent());
+    File optionalLibsDir = new File(androidSdkDir, "platforms/android-23/optional");
+    optionalLibsDir.mkdirs();
+    Files.touch(new File(optionalLibsDir, "httpclient.jar"));
+    Files.touch(new File(optionalLibsDir, "telemetry.jar"));
+
+    File addOnsLibsDir = new File(androidSdkDir, "add-ons/addon-google_apis-google-23/libs");
+    addOnsLibsDir.mkdirs();
+    Files.touch(new File(addOnsLibsDir, "effects.jar"));
+    Files.touch(new File(addOnsLibsDir, "maps.jar"));
+    Files.touch(new File(addOnsLibsDir, "usb.jar"));
+
+    String platformId = "Google Inc.:Google APIs:23";
+    Optional<AndroidPlatformTarget> androidPlatformTargetOption =
+        AndroidPlatformTarget.getTargetForId(
+            platformId,
+            androidDirectoryResolver,
+            /* aaptOverride */ Optional.<Path>absent());
+
+    AndroidPlatformTarget androidPlatformTarget = androidPlatformTargetOption.get();
+    assertEquals(platformId, androidPlatformTarget.getName());
+    assertEquals(
+        ImmutableList.of(
+            pathToAndroidSdkDir.resolve("platforms/android-23/android.jar"),
+            pathToAndroidSdkDir.resolve("platforms/android-23/optional/httpclient.jar"),
+            pathToAndroidSdkDir.resolve("platforms/android-23/optional/telemetry.jar"),
+            pathToAndroidSdkDir.resolve("add-ons/addon-google_apis-google-23/libs/effects.jar"),
+            pathToAndroidSdkDir.resolve("add-ons/addon-google_apis-google-23/libs/maps.jar"),
+            pathToAndroidSdkDir.resolve("add-ons/addon-google_apis-google-23/libs/usb.jar")),
+        androidPlatformTarget.getBootclasspathEntries());
+    assertEquals(
+        pathToAndroidSdkDir.resolve("platforms/android-23/android.jar"),
+        androidPlatformTarget.getAndroidJar());
+  }
+
+  @Test
   public void testThrowsExceptionWhenAddOnsDirectoryIsMissing() throws IOException {
     File androidSdkDir = tempDir.newFolder();
     String platformId = "Google Inc.:Google APIs:17";
@@ -438,12 +481,12 @@ public class AndroidPlatformTargetTest {
   public void testPlatformTargetPattern() {
     testPlatformTargetRegex("Google Inc.:Google APIs:8", true, "8");
     testPlatformTargetRegex("Google Inc.:Google APIs:17", true, "17");
+    testPlatformTargetRegex("Google Inc.:Google APIs:MNC", true, "MNC");
     testPlatformTargetRegex("android-8", true, "8");
     testPlatformTargetRegex("android-17", true, "17");
+    testPlatformTargetRegex("android-MNC", true, "MNC");
     testPlatformTargetRegex("Google Inc.:Google APIs:", false, "");
-    testPlatformTargetRegex("Google Inc.:Google APIs:blah", false, "");
     testPlatformTargetRegex("android-", false, "");
-    testPlatformTargetRegex("android-blah", false, "");
   }
 
   private void testPlatformTargetRegex(String input, boolean matches, String id) {

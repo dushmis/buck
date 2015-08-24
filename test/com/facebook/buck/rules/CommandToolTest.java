@@ -24,7 +24,7 @@ import com.facebook.buck.rules.keys.RuleKeyBuilder;
 import com.facebook.buck.shell.GenruleBuilder;
 import com.facebook.buck.testutil.FakeFileHashCache;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
-import com.facebook.buck.util.FileHashCache;
+import com.facebook.buck.util.cache.FileHashCache;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
@@ -60,8 +60,11 @@ public class CommandToolTest {
         Matchers.contains(
             Preconditions.checkNotNull(rule.getPathToOutput()).toAbsolutePath().toString()));
     assertThat(
-        tool.getInputs(pathResolver),
+        tool.getDeps(pathResolver),
         Matchers.contains(rule));
+    assertThat(
+        tool.getInputs(),
+        Matchers.contains(path));
 
     // Test command and inputs when using the path in a format.
     tool =
@@ -74,8 +77,11 @@ public class CommandToolTest {
             "prefix:" +
             Preconditions.checkNotNull(rule.getPathToOutput()).toAbsolutePath().toString()));
     assertThat(
-        tool.getInputs(pathResolver),
+        tool.getDeps(pathResolver),
         Matchers.contains(rule));
+    assertThat(
+        tool.getInputs(),
+        Matchers.contains(path));
   }
 
   @Test
@@ -120,8 +126,11 @@ public class CommandToolTest {
             .build();
 
     assertThat(
-        tool.getInputs(pathResolver),
+        tool.getDeps(pathResolver),
         Matchers.contains(rule));
+    assertThat(
+        tool.getInputs(),
+        Matchers.contains(path));
   }
 
   @Test

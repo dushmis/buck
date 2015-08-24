@@ -30,11 +30,10 @@ import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.FakeBuildContext;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.FakeBuildableContext;
+import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TestSourcePath;
-import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
-import com.facebook.buck.step.TestExecutionContext;
 import com.facebook.buck.step.fs.MkdirStep;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.testutil.MoreAsserts;
@@ -59,7 +58,19 @@ public class CxxCompilationDatabaseTest {
         .addAllFlavors(
             ImmutableSet.of(CxxCompilationDatabase.COMPILATION_DATABASE))
         .build();
-    BuildRuleParams testBuildRuleParams = new FakeBuildRuleParamsBuilder(testBuildTarget).build();
+
+    final String root = "/Users/user/src";
+    final Path fakeRoot = Paths.get(root);
+    ProjectFilesystem filesystem = new FakeProjectFilesystem() {
+      @Override
+      public Path resolve(Path relativePath) {
+        return fakeRoot.resolve(relativePath);
+      }
+    };
+
+    BuildRuleParams testBuildRuleParams = new FakeBuildRuleParamsBuilder(testBuildTarget)
+        .setProjectFilesystem(filesystem)
+        .build();
 
     BuildRuleResolver testBuildRuleResolver = new BuildRuleResolver();
     SourcePathResolver testSourcePathResolver = new SourcePathResolver(testBuildRuleResolver);
@@ -82,7 +93,9 @@ public class CxxCompilationDatabaseTest {
       case SEPARATE:
         operation = CxxPreprocessAndCompileStep.Operation.COMPILE;
         CxxPreprocessAndCompile preprocessRule = new CxxPreprocessAndCompile(
-            new FakeBuildRuleParamsBuilder(preprocessTarget).build(),
+            new FakeBuildRuleParamsBuilder(preprocessTarget)
+                .setProjectFilesystem(filesystem)
+                .build(),
             testSourcePathResolver,
             operation,
             Optional.<Preprocessor>of(
@@ -100,20 +113,27 @@ public class CxxCompilationDatabaseTest {
                 Paths.get("test")),
             ImmutableSet.<Path>of(),
             ImmutableSet.<Path>of(),
+            ImmutableSet.<Path>of(),
+            Optional.<SourcePath>absent(),
             ImmutableList.<CxxHeaders>of(),
             CxxPlatforms.DEFAULT_DEBUG_PATH_SANITIZER);
         rules.add(preprocessRule);
         compileBuildRuleParams = new FakeBuildRuleParamsBuilder(compileTarget)
+            .setProjectFilesystem(filesystem)
             .setDeps(ImmutableSortedSet.<BuildRule>of(preprocessRule))
             .build();
         break;
       case COMBINED:
         operation = CxxPreprocessAndCompileStep.Operation.COMPILE_MUNGE_DEBUGINFO;
-        compileBuildRuleParams = new FakeBuildRuleParamsBuilder(compileTarget).build();
+        compileBuildRuleParams = new FakeBuildRuleParamsBuilder(compileTarget)
+            .setProjectFilesystem(filesystem)
+            .build();
         break;
       case PIPED:
         operation = CxxPreprocessAndCompileStep.Operation.PIPED_PREPROCESS_AND_COMPILE;
-        compileBuildRuleParams = new FakeBuildRuleParamsBuilder(compileTarget).build();
+        compileBuildRuleParams = new FakeBuildRuleParamsBuilder(compileTarget)
+            .setProjectFilesystem(filesystem)
+            .build();
         break;
       default:
         throw new RuntimeException("Invalid strategy");
@@ -138,6 +158,8 @@ public class CxxCompilationDatabaseTest {
                 Paths.get("test")),
             ImmutableSet.<Path>of(),
             ImmutableSet.<Path>of(),
+            ImmutableSet.<Path>of(),
+            Optional.<SourcePath>absent(),
             ImmutableList.<CxxHeaders>of(),
             CxxPlatforms.DEFAULT_DEBUG_PATH_SANITIZER));
 
@@ -160,22 +182,10 @@ public class CxxCompilationDatabaseTest {
     assertTrue(buildSteps.get(1) instanceof
             CxxCompilationDatabase.GenerateCompilationCommandsJson);
 
-    final String root = "/Users/user/src";
-    final Path fakeRoot = Paths.get(root);
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem() {
-      @Override
-      public Path resolve(Path relativePath) {
-        return fakeRoot.resolve(relativePath);
-      }
-    };
-    ExecutionContext context = TestExecutionContext
-        .newBuilder()
-        .setProjectFilesystem(projectFilesystem)
-        .build();
     CxxCompilationDatabase.GenerateCompilationCommandsJson step =
         (CxxCompilationDatabase.GenerateCompilationCommandsJson) buildSteps.get(1);
     Iterable<CxxCompilationDatabaseEntry> observedEntries =
-        step.createEntries(context);
+        step.createEntries();
     Iterable<CxxCompilationDatabaseEntry> expectedEntries =
         ImmutableList.of(
           new CxxCompilationDatabaseEntry(
@@ -197,6 +207,9 @@ public class CxxCompilationDatabaseTest {
             "-x",
             "c++",
             "-c",
+            "-MD",
+            "-MF",
+            "test.o.dep.tmp",
             "test.cpp",
             "-o",
             "test.o"));
@@ -221,12 +234,23 @@ public class CxxCompilationDatabaseTest {
 
   @Test
   public void testCompilationDatabseWithSeperatedPreprocessAndCompileStrategy() {
+    String root = "/Users/user/src";
+    final Path fakeRoot = Paths.get(root);
+    ProjectFilesystem filesystem = new FakeProjectFilesystem() {
+      @Override
+      public Path resolve(Path relativePath) {
+        return fakeRoot.resolve(relativePath);
+      }
+    };
+
     BuildTarget testBuildTarget = BuildTarget
         .builder(BuildTargetFactory.newInstance("//foo:baz"))
         .addAllFlavors(
             ImmutableSet.of(CxxCompilationDatabase.COMPILATION_DATABASE))
         .build();
-    BuildRuleParams testBuildRuleParams = new FakeBuildRuleParamsBuilder(testBuildTarget).build();
+    BuildRuleParams testBuildRuleParams = new FakeBuildRuleParamsBuilder(testBuildTarget)
+        .setProjectFilesystem(filesystem)
+        .build();
 
     BuildRuleResolver testBuildRuleResolver = new BuildRuleResolver();
     SourcePathResolver testSourcePathResolver = new SourcePathResolver(testBuildRuleResolver);
@@ -237,6 +261,7 @@ public class CxxCompilationDatabaseTest {
             ImmutableFlavor.of("preprocess-test.cpp"))
         .build();
     BuildRuleParams preprocessBuildRuleParams = new FakeBuildRuleParamsBuilder(preprocessTarget)
+        .setProjectFilesystem(filesystem)
         .build();
     CxxPreprocessAndCompile testPreprocessRule = new CxxPreprocessAndCompile(
         preprocessBuildRuleParams,
@@ -257,6 +282,8 @@ public class CxxCompilationDatabaseTest {
             Paths.get("test")),
         ImmutableSet.<Path>of(),
         ImmutableSet.<Path>of(),
+        ImmutableSet.<Path>of(),
+        Optional.<SourcePath>absent(),
         ImmutableList.<CxxHeaders>of(),
         CxxPlatforms.DEFAULT_DEBUG_PATH_SANITIZER);
 
@@ -266,6 +293,7 @@ public class CxxCompilationDatabaseTest {
             ImmutableFlavor.of("compile-test.cpp"))
         .build();
     BuildRuleParams compileBuildRuleParams = new FakeBuildRuleParamsBuilder(compileTarget)
+        .setProjectFilesystem(filesystem)
         .setDeps(ImmutableSortedSet.<BuildRule>of(testPreprocessRule))
         .build();
     CxxPreprocessAndCompile testCompileRule = new CxxPreprocessAndCompile(
@@ -284,6 +312,8 @@ public class CxxCompilationDatabaseTest {
         ImmutableSet.<Path>of(),
         ImmutableSet.<Path>of(),
         ImmutableSet.<Path>of(),
+        ImmutableSet.<Path>of(),
+        Optional.<SourcePath>absent(),
         ImmutableList.<CxxHeaders>of(),
         CxxPlatforms.DEFAULT_DEBUG_PATH_SANITIZER);
 
@@ -306,22 +336,10 @@ public class CxxCompilationDatabaseTest {
     assertTrue(buildSteps.get(1) instanceof
             CxxCompilationDatabase.GenerateCompilationCommandsJson);
 
-    final String root = "/Users/user/src";
-    final Path fakeRoot = Paths.get(root);
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem() {
-      @Override
-      public Path resolve(Path relativePath) {
-        return fakeRoot.resolve(relativePath);
-      }
-    };
-    ExecutionContext context = TestExecutionContext
-        .newBuilder()
-        .setProjectFilesystem(projectFilesystem)
-        .build();
     CxxCompilationDatabase.GenerateCompilationCommandsJson step =
         (CxxCompilationDatabase.GenerateCompilationCommandsJson) buildSteps.get(1);
     Iterable<CxxCompilationDatabaseEntry> observedEntries =
-        step.createEntries(context);
+        step.createEntries();
     Iterable<CxxCompilationDatabaseEntry> expectedEntries =
         ImmutableList.of(
             new CxxCompilationDatabaseEntry(
