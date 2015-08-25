@@ -814,22 +814,24 @@ public class ProjectGenerator {
     // and add any shell script rules here
     ImmutableList.Builder<TargetNode<?>> preScriptPhases = ImmutableList.builder();
     ImmutableList.Builder<TargetNode<?>> postScriptPhases = ImmutableList.builder();
+    boolean skipRNBundle = ReactNativeFlavors.skipBundling(buildTargetNode.getBuildTarget());
     if (bundle.isPresent() && targetNode != bundle.get()) {
       collectBuildScriptDependencies(
           targetGraph.getAll(bundle.get().getDeclaredDeps()),
           preScriptPhases,
-          postScriptPhases);
+          postScriptPhases,
+          skipRNBundle);
     }
     collectBuildScriptDependencies(
         targetGraph.getAll(targetNode.getDeclaredDeps()),
         preScriptPhases,
-        postScriptPhases);
+        postScriptPhases,
+        skipRNBundle);
     mutator.setPreBuildRunScriptPhases(preScriptPhases.build());
     if (copyFilesPhases.isPresent()) {
       mutator.setCopyFilesPhases(copyFilesPhases.get());
     }
     mutator.setPostBuildRunScriptPhases(postScriptPhases.build());
-    boolean skipRNBundle = ReactNativeFlavors.skipBundling(buildTargetNode.getBuildTarget());
     mutator.skipReactNativeBundle(skipRNBundle);
 
     if (skipRNBundle && reactNativeServer.isPresent()) {
@@ -943,20 +945,26 @@ public class ProjectGenerator {
             Joiner
                 .on(' ')
                 .join(
-                    Iterables.concat(
-                        targetNode.getConstructorArg().compilerFlags.get(),
-                        targetNode.getConstructorArg().preprocessorFlags.get(),
-                        collectRecursiveExportedPreprocessorFlags(ImmutableList.of(targetNode)))))
+                    Iterables.transform(
+                        Iterables.concat(
+                            targetNode.getConstructorArg().compilerFlags.get(),
+                            targetNode.getConstructorArg().preprocessorFlags.get(),
+                            collectRecursiveExportedPreprocessorFlags(
+                                ImmutableList.of(targetNode))),
+                        Escaper.BASH_ESCAPER)))
         .put(
             "OTHER_LDFLAGS",
             Joiner
                 .on(' ')
                 .join(
-                    MoreIterables.zipAndConcat(
-                        Iterables.cycle("-Xlinker"),
-                        Iterables.concat(
-                            targetNode.getConstructorArg().linkerFlags.get(),
-                            collectRecursiveExportedLinkerFlags(ImmutableList.of(targetNode))))));
+                    Iterables.transform(
+                        MoreIterables.zipAndConcat(
+                            Iterables.cycle("-Xlinker"),
+                            Iterables.concat(
+                                targetNode.getConstructorArg().linkerFlags.get(),
+                                collectRecursiveExportedLinkerFlags(
+                                    ImmutableList.of(targetNode)))),
+                        Escaper.BASH_ESCAPER)));
 
     ImmutableMap<CxxSource.Type, ImmutableList<String>> langPreprocessorFlags =
         targetNode.getConstructorArg().langPreprocessorFlags.get();
@@ -1144,12 +1152,13 @@ public class ProjectGenerator {
             "LIBRARY_SEARCH_PATHS",
             Joiner.on(' ').join(collectRecursiveLibrarySearchPaths(tests)),
             "OTHER_LDFLAGS",
-            Joiner.on(' ').join(
-                MoreIterables.zipAndConcat(
-                    Iterables.cycle("-Xlinker"),
-                    Iterables.concat(
-                        key.getLinkerFlags(),
-                        collectRecursiveExportedLinkerFlags(tests))))));
+            Escaper.escapeAsBashString(
+                Joiner.on(' ').join(
+                    MoreIterables.zipAndConcat(
+                        Iterables.cycle("-Xlinker"),
+                        Iterables.concat(
+                            key.getLinkerFlags(),
+                            collectRecursiveExportedLinkerFlags(tests)))))));
     buildableCombinedTestTargets.add(result.target);
   }
 
@@ -1262,11 +1271,16 @@ public class ProjectGenerator {
   private void collectBuildScriptDependencies(
       Iterable<TargetNode<?>> targetNodes,
       ImmutableList.Builder<TargetNode<?>> preRules,
-      ImmutableList.Builder<TargetNode<?>> postRules) {
+      ImmutableList.Builder<TargetNode<?>> postRules,
+      boolean skipRNBundle) {
     for (TargetNode<?> targetNode : targetNodes) {
       BuildRuleType type = targetNode.getType();
-      if (type.equals(XcodePostbuildScriptDescription.TYPE) ||
-          type.equals(IosReactNativeLibraryDescription.TYPE)) {
+      if (type.equals(IosReactNativeLibraryDescription.TYPE)) {
+        postRules.add(targetNode);
+        if (!skipRNBundle) {
+          requiredBuildTargetsBuilder.add(targetNode.getBuildTarget());
+        }
+      } else if (type.equals(XcodePostbuildScriptDescription.TYPE)) {
         postRules.add(targetNode);
       } else if (
           type.equals(XcodePrebuildScriptDescription.TYPE) ||

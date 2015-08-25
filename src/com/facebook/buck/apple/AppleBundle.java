@@ -59,8 +59,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-import javax.annotation.Nullable;
-
 /**
  * Creates a bundle: a directory containing files and subdirectories, described by an Info.plist.
  */
@@ -250,7 +248,6 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
   }
 
   @Override
-  @Nullable
   public Path getPathToOutput() {
     return bundleRoot;
   }
@@ -428,7 +425,7 @@ public class AppleBundle extends AbstractBuildRule implements NativeTestable {
     }
 
     // Ensure the bundle directory is archived so we can fetch it later.
-    buildableContext.recordArtifact(bundleRoot);
+    buildableContext.recordArtifact(getPathToOutput());
 
     return stepsBuilder.build();
   }

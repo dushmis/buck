@@ -100,7 +100,7 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
   }
 
   @Override
-  public boolean hasFlavors(ImmutableSet<Flavor> flavors) {
+  public boolean hasFlavors(final ImmutableSet<Flavor> flavors) {
     if (appleLibraryDescription.hasFlavors(flavors)) {
       return true;
     }

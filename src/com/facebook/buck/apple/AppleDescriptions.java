@@ -34,7 +34,7 @@ import com.facebook.buck.rules.Tool;
 import com.facebook.buck.rules.coercer.FrameworkPath;
 import com.facebook.buck.rules.coercer.PatternMatchedCollection;
 import com.facebook.buck.rules.coercer.SourceList;
-import com.facebook.buck.rules.coercer.SourceWithFlagsList;
+import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
@@ -192,14 +192,18 @@ public class AppleDescriptions {
                     arg))
             .build();
 
-    output.srcs = Optional.of(SourceWithFlagsList.ofUnnamedSources(arg.srcs.get()));
-    output.platformSrcs = Optional.of(PatternMatchedCollection.<SourceWithFlagsList>of());
+    output.srcs = arg.srcs;
+    output.platformSrcs = Optional.of(
+        PatternMatchedCollection.<ImmutableSortedSet<SourceWithFlags>>of());
     output.headers = Optional.of(SourceList.ofNamedSources(headerMap));
     output.platformHeaders = Optional.of(PatternMatchedCollection.<SourceList>of());
     output.prefixHeader = arg.prefixHeader;
     output.compilerFlags = arg.compilerFlags;
     output.platformCompilerFlags = Optional.of(
         PatternMatchedCollection.<ImmutableList<String>>of());
+    output.preprocessorFlags = arg.preprocessorFlags;
+    output.platformPreprocessorFlags = arg.platformPreprocessorFlags;
+    output.langPreprocessorFlags = arg.langPreprocessorFlags;
     output.linkerFlags = Optional.of(
         FluentIterable
             .from(arg.frameworks.transform(frameworksToLinkerFlagsFunction(resolver)).get())
@@ -207,10 +211,6 @@ public class AppleDescriptions {
             .append(arg.linkerFlags.get())
             .toList());
     output.platformLinkerFlags = Optional.of(PatternMatchedCollection.<ImmutableList<String>>of());
-    output.preprocessorFlags = arg.preprocessorFlags;
-    output.platformPreprocessorFlags = Optional.of(
-        PatternMatchedCollection.<ImmutableList<String>>of());
-    output.langPreprocessorFlags = arg.langPreprocessorFlags;
     output.frameworks = arg.frameworks;
     output.libraries = arg.libraries;
     output.lexSrcs = Optional.of(ImmutableList.<SourcePath>of());
@@ -219,8 +219,8 @@ public class AppleDescriptions {
     // This is intentionally an empty string; we put all prefixes into
     // the header map itself.
     output.headerNamespace = Optional.of("");
-    output.tests = arg.tests;
     output.cxxRuntimeType = Optional.absent();
+    output.tests = arg.tests;
   }
 
   public static void populateCxxBinaryDescriptionArg(
@@ -279,7 +279,7 @@ public class AppleDescriptions {
     output.forceStatic = Optional.of(false);
     output.linkWhole = Optional.of(linkWhole);
     output.supportedPlatformsRegex = Optional.absent();
-    output.canBeAsset = Optional.absent();
+    output.canBeAsset = arg.canBeAsset;
   }
 
   @VisibleForTesting

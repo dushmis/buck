@@ -25,6 +25,7 @@ import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.CommandTool;
 import com.facebook.buck.rules.FakeBuildContext;
 import com.facebook.buck.rules.FakeBuildableContext;
 import com.facebook.buck.rules.RuleKey;
@@ -32,6 +33,7 @@ import com.facebook.buck.rules.RuleKeyBuilderFactory;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TestSourcePath;
+import com.facebook.buck.rules.Tool;
 import com.facebook.buck.rules.keys.DefaultRuleKeyBuilderFactory;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
@@ -40,6 +42,7 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 
 import org.junit.Test;
 
@@ -48,7 +51,8 @@ import java.nio.file.Paths;
 
 public class ThriftCompilerTest {
 
-  private static final SourcePath DEFAULT_COMPILER = new TestSourcePath("thrift");
+  private static final Tool DEFAULT_COMPILER =
+      new CommandTool.Builder().addArg(new TestSourcePath("thrift")).build();
   private static final ImmutableList<String> DEFAULT_FLAGS = ImmutableList.of("--allow-64-bits");
   private static final Path DEFAULT_OUTPUT_DIR = Paths.get("output-dir");
   private static final SourcePath DEFAULT_INPUT = new TestSourcePath("test.thrift");
@@ -62,6 +66,8 @@ public class ThriftCompilerTest {
       ImmutableMap.<Path, SourcePath>of(
           Paths.get("something.thrift"),
           new TestSourcePath("blah/something.thrift"));
+  private static final ImmutableSortedSet<String> DEFAULT_GENERATED_SOURCES =
+      ImmutableSortedSet.of("source1", "source2");
 
   private RuleKey generateRuleKey(
       RuleKeyBuilderFactory factory,
@@ -101,7 +107,8 @@ public class ThriftCompilerTest {
             DEFAULT_OPTIONS,
             DEFAULT_INCLUDE_ROOTS,
             DEFAULT_HEADER_MAPS,
-            DEFAULT_INCLUDES));
+            DEFAULT_INCLUDES,
+            DEFAULT_GENERATED_SOURCES));
 
     // Verify that changing the compiler causes a rulekey change.
     RuleKey compilerChange = generateRuleKey(
@@ -109,7 +116,7 @@ public class ThriftCompilerTest {
         new ThriftCompiler(
             params,
             resolver,
-            new TestSourcePath("different"),
+            new CommandTool.Builder().addArg(new TestSourcePath("different")).build(),
             DEFAULT_FLAGS,
             DEFAULT_OUTPUT_DIR,
             DEFAULT_INPUT,
@@ -117,7 +124,8 @@ public class ThriftCompilerTest {
             DEFAULT_OPTIONS,
             DEFAULT_INCLUDE_ROOTS,
             DEFAULT_HEADER_MAPS,
-            DEFAULT_INCLUDES));
+            DEFAULT_INCLUDES,
+            DEFAULT_GENERATED_SOURCES));
     assertNotEquals(defaultRuleKey, compilerChange);
 
     // Verify that changing the flags causes a rulekey change.
@@ -134,7 +142,8 @@ public class ThriftCompilerTest {
             DEFAULT_OPTIONS,
             DEFAULT_INCLUDE_ROOTS,
             DEFAULT_HEADER_MAPS,
-            DEFAULT_INCLUDES));
+            DEFAULT_INCLUDES,
+            DEFAULT_GENERATED_SOURCES));
     assertNotEquals(defaultRuleKey, flagsChange);
 
     // Verify that changing the flags causes a rulekey change.
@@ -151,7 +160,8 @@ public class ThriftCompilerTest {
             DEFAULT_OPTIONS,
             DEFAULT_INCLUDE_ROOTS,
             DEFAULT_HEADER_MAPS,
-            DEFAULT_INCLUDES));
+            DEFAULT_INCLUDES,
+            DEFAULT_GENERATED_SOURCES));
     assertNotEquals(defaultRuleKey, outputDirChange);
 
     // Verify that changing the input causes a rulekey change.
@@ -168,7 +178,8 @@ public class ThriftCompilerTest {
             DEFAULT_OPTIONS,
             DEFAULT_INCLUDE_ROOTS,
             DEFAULT_HEADER_MAPS,
-            DEFAULT_INCLUDES));
+            DEFAULT_INCLUDES,
+            DEFAULT_GENERATED_SOURCES));
     assertNotEquals(defaultRuleKey, inputChange);
 
     // Verify that changing the input causes a rulekey change.
@@ -185,7 +196,8 @@ public class ThriftCompilerTest {
             DEFAULT_OPTIONS,
             DEFAULT_INCLUDE_ROOTS,
             DEFAULT_HEADER_MAPS,
-            DEFAULT_INCLUDES));
+            DEFAULT_INCLUDES,
+            DEFAULT_GENERATED_SOURCES));
     assertNotEquals(defaultRuleKey, languageChange);
 
     // Verify that changing the input causes a rulekey change.
@@ -202,7 +214,8 @@ public class ThriftCompilerTest {
             ImmutableSet.of("different"),
             DEFAULT_INCLUDE_ROOTS,
             DEFAULT_HEADER_MAPS,
-            DEFAULT_INCLUDES));
+            DEFAULT_INCLUDES,
+            DEFAULT_GENERATED_SOURCES));
     assertNotEquals(defaultRuleKey, optionsChange);
 
     // Verify that changing the includes does *not* cause a rulekey change, since we use a
@@ -220,7 +233,8 @@ public class ThriftCompilerTest {
             DEFAULT_OPTIONS,
             ImmutableList.of(Paths.get("different")),
             DEFAULT_HEADER_MAPS,
-            DEFAULT_INCLUDES));
+            DEFAULT_INCLUDES,
+            DEFAULT_GENERATED_SOURCES));
     assertEquals(defaultRuleKey, includeRootsChange);
 
     // Verify that changing the header maps does *not* cause a rulekey change, since we use a
@@ -238,7 +252,8 @@ public class ThriftCompilerTest {
             DEFAULT_OPTIONS,
             DEFAULT_INCLUDE_ROOTS,
             ImmutableSet.of(Paths.get("different-header-map")),
-            DEFAULT_INCLUDES));
+            DEFAULT_INCLUDES,
+            DEFAULT_GENERATED_SOURCES));
     assertEquals(defaultRuleKey, headerMapKeyChange);
 
     // Verify that changing the name of the include causes a rulekey change.
@@ -257,7 +272,8 @@ public class ThriftCompilerTest {
             DEFAULT_HEADER_MAPS,
             ImmutableMap.<Path, SourcePath>of(
                 DEFAULT_INCLUDES.entrySet().iterator().next().getKey(),
-                new TestSourcePath("different"))));
+                new TestSourcePath("different")),
+            DEFAULT_GENERATED_SOURCES));
     assertNotEquals(defaultRuleKey, includesKeyChange);
 
     // Verify that changing the contents of an include causes a rulekey change.
@@ -276,7 +292,8 @@ public class ThriftCompilerTest {
             DEFAULT_HEADER_MAPS,
             ImmutableMap.of(
                 Paths.get("different"),
-                DEFAULT_INCLUDES.entrySet().iterator().next().getValue())));
+                DEFAULT_INCLUDES.entrySet().iterator().next().getValue()),
+            DEFAULT_GENERATED_SOURCES));
     assertNotEquals(defaultRuleKey, includesValueChange);
   }
 
@@ -297,13 +314,16 @@ public class ThriftCompilerTest {
         DEFAULT_OPTIONS,
         DEFAULT_INCLUDE_ROOTS,
         DEFAULT_HEADER_MAPS,
-        DEFAULT_INCLUDES);
+        DEFAULT_INCLUDES,
+        DEFAULT_GENERATED_SOURCES);
 
     ImmutableList<Step> expected = ImmutableList.of(
         new MakeCleanDirectoryStep(DEFAULT_OUTPUT_DIR),
         new ThriftCompilerStep(
-            pathResolver.getPath(DEFAULT_COMPILER),
-            DEFAULT_FLAGS,
+            ImmutableList.<String>builder()
+                .addAll(DEFAULT_COMPILER.getCommandPrefix(pathResolver))
+                .addAll(DEFAULT_FLAGS)
+                .build(),
             DEFAULT_OUTPUT_DIR,
             pathResolver.getPath(DEFAULT_INPUT),
             DEFAULT_LANGUAGE,

@@ -83,7 +83,7 @@ public class XctoolRunTestsStepTest {
     XctoolRunTestsStep step = new XctoolRunTestsStep(
         Paths.get("/path/to/xctool"),
         "iphonesimulator",
-        Optional.of("iPhone 5s"),
+        Optional.of("name=iPhone 5s"),
         ImmutableSet.<Path>of(),
         ImmutableMap.of(
             Paths.get("/path/to/FooAppTest.xctest"),
@@ -126,7 +126,7 @@ public class XctoolRunTestsStepTest {
     XctoolRunTestsStep step = new XctoolRunTestsStep(
         Paths.get("/path/to/xctool"),
         "iphonesimulator",
-        Optional.of("iPhone 5s"),
+        Optional.of("name=iPhone 5s,OS=8.2"),
         ImmutableSet.of(
             Paths.get("/path/to/FooLogicTest.xctest")),
         ImmutableMap.of(
@@ -144,7 +144,7 @@ public class XctoolRunTestsStepTest {
                     "-sdk",
                     "iphonesimulator",
                     "-destination",
-                    "name=iPhone 5s",
+                    "name=iPhone 5s,OS=8.2",
                     "run-tests",
                     "-logicTest",
                     "/path/to/FooLogicTest.xctest",

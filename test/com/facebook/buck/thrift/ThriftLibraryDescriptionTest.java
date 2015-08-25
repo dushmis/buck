@@ -42,6 +42,8 @@ import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.shell.Genrule;
 import com.facebook.buck.shell.GenruleBuilder;
+import com.facebook.buck.shell.ShBinary;
+import com.facebook.buck.shell.ShBinaryBuilder;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -123,6 +125,15 @@ public class ThriftLibraryDescriptionTest {
     @Override
     public Flavor getFlavor() {
       return flavor;
+    }
+
+    @Override
+    public ImmutableSortedSet<String> getGeneratedSources(
+        BuildTarget target,
+        ThriftConstructorArg args,
+        String thriftName,
+        ImmutableList<String> services) {
+      return ImmutableSortedSet.of();
     }
 
     @SuppressWarnings("unused")
@@ -212,15 +223,17 @@ public class ThriftLibraryDescriptionTest {
     SourcePath sourcePath = new TestSourcePath(sourceName);
 
     // Generate these rules using no deps.
-    ImmutableMap<String, ThriftCompiler> rules = desc.createThriftCompilerBuildRules(
-        flavoredParams,
-        resolver,
-        ThriftLibraryDescription.CompilerType.THRIFT,
-        ImmutableList.<String>of(),
-        language,
-        options,
-        ImmutableMap.of(sourceName, sourcePath),
-        ImmutableSortedSet.<ThriftLibrary>of());
+    ImmutableMap<String, ThriftCompiler> rules =
+        desc.createThriftCompilerBuildRules(
+            flavoredParams,
+            resolver,
+            ThriftLibraryDescription.CompilerType.THRIFT,
+            ImmutableList.<String>of(),
+            language,
+            options,
+            ImmutableMap.of(sourceName, sourcePath),
+            ImmutableSortedSet.<ThriftLibrary>of(),
+            ImmutableMap.of(sourceName, ImmutableSortedSet.<String>of()));
 
     // Now verify that the generated rule had no associated deps.
     assertSame(rules.size(), 1);
@@ -244,15 +257,17 @@ public class ThriftLibraryDescriptionTest {
         ImmutableMap.<Path, SourcePath>of());
 
     // Generate these rules using no deps.
-    rules = desc.createThriftCompilerBuildRules(
-        flavoredParams,
-        resolver,
-        ThriftLibraryDescription.CompilerType.THRIFT,
-        ImmutableList.<String>of(),
-        language,
-        options,
-        ImmutableMap.of(sourceName, sourcePath),
-        ImmutableSortedSet.of(lib));
+    rules =
+        desc.createThriftCompilerBuildRules(
+            flavoredParams,
+            resolver,
+            ThriftLibraryDescription.CompilerType.THRIFT,
+            ImmutableList.<String>of(),
+            language,
+            options,
+            ImmutableMap.of(sourceName, sourcePath),
+            ImmutableSortedSet.of(lib),
+            ImmutableMap.of(sourceName, ImmutableSortedSet.<String>of()));
 
     // Now verify that the generated rule has all the deps from the passed in thrift library.
     assertSame(rules.size(), 1);
@@ -270,15 +285,17 @@ public class ThriftLibraryDescriptionTest {
     SourcePath ruleSourcePath = new BuildTargetSourcePath(genrule.getBuildTarget());
 
     // Generate these rules using no deps and the genrule generated source.
-    rules = desc.createThriftCompilerBuildRules(
-        flavoredParams,
-        resolver,
-        ThriftLibraryDescription.CompilerType.THRIFT,
-        ImmutableList.<String>of(),
-        language,
-        options,
-        ImmutableMap.of(sourceName, ruleSourcePath),
-        ImmutableSortedSet.<ThriftLibrary>of());
+    rules =
+        desc.createThriftCompilerBuildRules(
+            flavoredParams,
+            resolver,
+            ThriftLibraryDescription.CompilerType.THRIFT,
+            ImmutableList.<String>of(),
+            language,
+            options,
+            ImmutableMap.of(sourceName, ruleSourcePath),
+            ImmutableSortedSet.<ThriftLibrary>of(),
+            ImmutableMap.of(sourceName, ImmutableSortedSet.<String>of()));
 
     // Now verify that the generated rule had no associated deps.
     assertSame(rules.size(), 1);
@@ -289,8 +306,10 @@ public class ThriftLibraryDescriptionTest {
         rule.getDeps());
 
     // Create a build rule that represents the thrift rule.
-    FakeBuildRule thriftRule = createFakeBuildRule("//thrift:target", pathResolver);
-    resolver.addToIndex(thriftRule);
+    ShBinary thriftRule =
+        (ShBinary) new ShBinaryBuilder(BuildTargetFactory.newInstance("//thrift:target"))
+            .setMain(new TestSourcePath("thrift.sh"))
+            .build(resolver);
     filesystem.mkdirs(thriftRule.getBuildTarget().getBasePath());
     filesystem.touch(thriftRule.getBuildTarget().getBasePath().resolve("BUCK"));
 
@@ -305,15 +324,17 @@ public class ThriftLibraryDescriptionTest {
         ImmutableList.<ThriftLanguageSpecificEnhancer>of());
 
     // Generate these rules using no deps with a compiler target.
-    rules = desc.createThriftCompilerBuildRules(
-        flavoredParams,
-        resolver,
-        ThriftLibraryDescription.CompilerType.THRIFT,
-        ImmutableList.<String>of(),
-        language,
-        options,
-        ImmutableMap.of(sourceName, sourcePath),
-        ImmutableSortedSet.<ThriftLibrary>of());
+    rules =
+        desc.createThriftCompilerBuildRules(
+            flavoredParams,
+            resolver,
+            ThriftLibraryDescription.CompilerType.THRIFT,
+            ImmutableList.<String>of(),
+            language,
+            options,
+            ImmutableMap.of(sourceName, sourcePath),
+            ImmutableSortedSet.<ThriftLibrary>of(),
+            ImmutableMap.of(sourceName, ImmutableSortedSet.<String>of()));
 
     // Now verify that the generated rule only has deps from the compiler target.
     assertSame(rules.size(), 1);
@@ -423,7 +444,10 @@ public class ThriftLibraryDescriptionTest {
     final ImmutableList<String> thriftServices2 = ImmutableList.of();
 
     // Create a build rule that represents the thrift rule.
-    final FakeBuildRule thriftRule = createFakeBuildRule("//thrift:target", pathResolver);
+    final ShBinary thriftRule =
+        (ShBinary) new ShBinaryBuilder(BuildTargetFactory.newInstance("//thrift:target"))
+            .setMain(new TestSourcePath("thrift.sh"))
+            .build(resolver);
     resolver.addToIndex(thriftRule);
     filesystem.mkdirs(thriftRule.getBuildTarget().getBasePath());
     filesystem.touch(thriftRule.getBuildTarget().getBasePath().resolve("BUCK"));

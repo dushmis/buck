@@ -34,6 +34,7 @@ import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.CommandTool;
 import com.facebook.buck.rules.FakeBuildRule;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.SourcePath;
@@ -104,7 +105,9 @@ public class ThriftCxxEnhancerTest {
         BuildRuleParamsFactory.createTrivialBuildRuleParams(
             BuildTargetFactory.newInstance(target)),
         resolver,
-        new TestSourcePath("compiler"),
+        new CommandTool.Builder()
+            .addArg(new TestSourcePath("compiler"))
+            .build(),
         ImmutableList.<String>of(),
         Paths.get("output"),
         new TestSourcePath("source"),
@@ -112,7 +115,8 @@ public class ThriftCxxEnhancerTest {
         ImmutableSet.<String>of(),
         ImmutableList.<Path>of(),
         ImmutableSet.<Path>of(),
-        ImmutableMap.<Path, SourcePath>of());
+        ImmutableMap.<Path, SourcePath>of(),
+        ImmutableSortedSet.<String>of());
   }
 
   @Test
@@ -303,11 +307,11 @@ public class ThriftCxxEnhancerTest {
   }
 
   @Test
-  public void getGeneratedThriftSources() {
+  public void getGeneratedSources() {
 
     // Test with no options.
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -316,12 +320,12 @@ public class ThriftCxxEnhancerTest {
             "test_reflection.cpp",
             "Test.h",
             "Test.cpp"),
-        ENHANCER_CPP.getGeneratedThriftSources(
-            ImmutableSet.<String>of(),
+        ENHANCER_CPP.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.<String>of()));
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -333,14 +337,14 @@ public class ThriftCxxEnhancerTest {
             "Test_client.cpp",
             "Test_custom_protocol.h",
             "Test.tcc"),
-        ENHANCER_CPP2.getGeneratedThriftSources(
-            ImmutableSet.<String>of(),
+        ENHANCER_CPP2.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.<String>of()));
 
     // Test with "frozen" option.
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -351,12 +355,12 @@ public class ThriftCxxEnhancerTest {
             "test_reflection.cpp",
             "Test.h",
             "Test.cpp"),
-        ENHANCER_CPP.getGeneratedThriftSources(
-            ImmutableSet.of("frozen2"),
+        ENHANCER_CPP.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("frozen2")));
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -370,26 +374,26 @@ public class ThriftCxxEnhancerTest {
             "Test_client.cpp",
             "Test_custom_protocol.h",
             "Test.tcc"),
-        ENHANCER_CPP2.getGeneratedThriftSources(
-            ImmutableSet.of("frozen2"),
+        ENHANCER_CPP2.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("frozen2")));
 
     // Test with "bootstrap" option.
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
             "test_types.cpp",
             "Test.h",
             "Test.cpp"),
-        ENHANCER_CPP.getGeneratedThriftSources(
-            ImmutableSet.of("bootstrap"),
+        ENHANCER_CPP.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("bootstrap")));
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -401,14 +405,14 @@ public class ThriftCxxEnhancerTest {
             "Test_client.cpp",
             "Test_custom_protocol.h",
             "Test.tcc"),
-        ENHANCER_CPP2.getGeneratedThriftSources(
-            ImmutableSet.of("bootstrap"),
+        ENHANCER_CPP2.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("bootstrap")));
 
     // Test with "templates" option.
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -419,12 +423,12 @@ public class ThriftCxxEnhancerTest {
             "Test.h",
             "Test.cpp",
             "Test.tcc"),
-        ENHANCER_CPP.getGeneratedThriftSources(
-            ImmutableSet.of("templates"),
+        ENHANCER_CPP.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("templates")));
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -436,14 +440,14 @@ public class ThriftCxxEnhancerTest {
             "Test_client.cpp",
             "Test_custom_protocol.h",
             "Test.tcc"),
-        ENHANCER_CPP2.getGeneratedThriftSources(
-            ImmutableSet.of("templates"),
+        ENHANCER_CPP2.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("templates")));
 
     // Test with "perfhash" option.
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -453,12 +457,12 @@ public class ThriftCxxEnhancerTest {
             "Test.h",
             "Test.cpp",
             "Test_gperf.tcc"),
-        ENHANCER_CPP.getGeneratedThriftSources(
-            ImmutableSet.of("perfhash"),
+        ENHANCER_CPP.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("perfhash")));
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -470,14 +474,14 @@ public class ThriftCxxEnhancerTest {
             "Test_client.cpp",
             "Test_custom_protocol.h",
             "Test.tcc"),
-        ENHANCER_CPP2.getGeneratedThriftSources(
-            ImmutableSet.of("perfhash"),
+        ENHANCER_CPP2.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("perfhash")));
 
     // Test with "separate_processmap" option.
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -486,12 +490,12 @@ public class ThriftCxxEnhancerTest {
             "test_reflection.cpp",
             "Test.h",
             "Test.cpp"),
-        ENHANCER_CPP.getGeneratedThriftSources(
-            ImmutableSet.of("separate_processmap"),
+        ENHANCER_CPP.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("separate_processmap")));
     assertEquals(
-        ImmutableList.of(
+        ImmutableSortedSet.of(
             "test_constants.h",
             "test_constants.cpp",
             "test_types.h",
@@ -505,10 +509,10 @@ public class ThriftCxxEnhancerTest {
             "Test_processmap_binary.cpp",
             "Test_processmap_compact.cpp",
             "Test.tcc"),
-        ENHANCER_CPP2.getGeneratedThriftSources(
-            ImmutableSet.of("separate_processmap"),
+        ENHANCER_CPP2.getGeneratedSources(
             "test.thrift",
-            ImmutableList.of("Test")));
+            ImmutableList.of("Test"),
+            ImmutableSet.of("separate_processmap")));
   }
 
   @Test
@@ -612,8 +616,8 @@ public class ThriftCxxEnhancerTest {
             }
             for (Map.Entry<String, SourceWithFlags> source : cppSrcs.entrySet()) {
               assertThat(
-                  args.srcs.get().getNamedSources().get().get(source.getKey()),
-                  Matchers.equalTo(source.getValue()));
+                  args.srcs.get(),
+                  Matchers.hasItem(source.getValue()));
             }
             return super.createBuildRule(targetGraph, params, resolver, args);
           }
