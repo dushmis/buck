@@ -18,9 +18,11 @@ package com.facebook.buck.cli;
 
 import com.facebook.buck.android.AdbHelper;
 import com.facebook.buck.apple.AppleBundle;
+import com.facebook.buck.apple.AppleBundleDescription;
 import com.facebook.buck.apple.AppleConfig;
 import com.facebook.buck.apple.AppleInfoPlistParsing;
 import com.facebook.buck.apple.ApplePlatform;
+import com.facebook.buck.apple.device.AppleDeviceHelper;
 import com.facebook.buck.apple.simulator.AppleCoreSimulatorServiceController;
 import com.facebook.buck.apple.simulator.AppleSimulator;
 import com.facebook.buck.apple.simulator.AppleSimulatorController;
@@ -33,22 +35,31 @@ import com.facebook.buck.event.InstallEvent;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.js.ReactNativeBuckConfig;
 import com.facebook.buck.js.ReactNativeFlavors;
+import com.facebook.buck.json.BuildFileParseException;
 import com.facebook.buck.log.Logger;
+import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.model.BuildTargetException;
+import com.facebook.buck.model.Flavor;
+import com.facebook.buck.parser.ParserConfig;
+import com.facebook.buck.parser.TargetNodeSpec;
 import com.facebook.buck.rules.ActionGraph;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.InstallableApk;
+import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.step.AdbOptions;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.TargetDeviceOptions;
 import com.facebook.buck.util.ProcessExecutor;
 import com.facebook.buck.util.ProcessExecutorParams;
 import com.facebook.buck.util.UnixUserIdFetcher;
+import com.facebook.infer.annotation.Assertions;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 
 import org.kohsuke.args4j.Option;
@@ -138,8 +149,8 @@ public class InstallCommand extends BuildCommand {
   @Nullable
   private String activity = null;
 
-  public AdbOptions adbOptions() {
-    return adbOptions.getAdbOptions();
+  public AdbOptions adbOptions(BuckConfig buckConfig) {
+    return adbOptions.getAdbOptions(buckConfig);
   }
 
   public TargetDeviceOptions targetDeviceOptions() {
@@ -176,8 +187,42 @@ public class InstallCommand extends BuildCommand {
       return 1;
     }
 
+    // TODO(user): Cache argument parsing.
+    Optional<String> helperTarget = Optional.absent();
+    try {
+      TargetNodeSpec spec = parseArgumentsAsTargetNodeSpecs(
+          params.getBuckConfig(),
+          params.getRepository().getFilesystem().getIgnorePaths(),
+          getArguments()).get(0);
+
+      BuildTarget target = params.getParser().resolveTargetSpec(
+          spec,
+          new ParserConfig(params.getBuckConfig()),
+          params.getBuckEventBus(),
+          params.getConsole(),
+          params.getEnvironment(),
+          getEnableProfiling()).iterator().next();
+      TargetNode<?> node = params.getParser().getTargetNode(target);
+      if (node != null &&
+          node.getDescription().getBuildRuleType().equals(AppleBundleDescription.TYPE)) {
+        for (Flavor flavor : node.getBuildTarget().getFlavors()) {
+          if (ApplePlatform.needsInstallHelper(flavor.getName())) {
+            AppleConfig appleConfig = new AppleConfig(params.getBuckConfig());
+
+            Optional<BuildTarget> deviceHelperTarget = appleConfig.getAppleDeviceHelperTarget();
+            if (deviceHelperTarget.isPresent()) {
+              helperTarget = Optional.of(deviceHelperTarget.get().toString());
+            }
+          }
+        }
+      }
+    } catch (BuildTargetException | BuildFileParseException e) {
+      params.getConsole().printBuildFailureWithoutStacktrace(e);
+      return 1;
+    }
+
     // Build the specified target.
-    int exitCode = super.runWithoutHelp(params);
+    int exitCode = super.run(params, helperTarget);
     if (exitCode != 0) {
       return exitCode;
     }
@@ -190,7 +235,7 @@ public class InstallCommand extends BuildCommand {
     if (buildRule instanceof InstallableApk) {
       ExecutionContext.Builder builder = ExecutionContext.builder()
           .setExecutionContext(build.getExecutionContext())
-          .setAdbOptions(Optional.<AdbOptions>of(adbOptions()))
+          .setAdbOptions(Optional.<AdbOptions>of(adbOptions(params.getBuckConfig())))
           .setTargetDeviceOptions(Optional.<TargetDeviceOptions>of(targetDeviceOptions()));
       return installApk(
           params,
@@ -261,11 +306,138 @@ public class InstallCommand extends BuildCommand {
       case ApplePlatform.Name.IPHONESIMULATOR:
         return installAppleBundleForSimulator(params, appleBundle, projectFilesystem,
             processExecutor);
-
+      case ApplePlatform.Name.IPHONEOS:
+        return installAppleBundleForDevice(params, appleBundle, projectFilesystem,
+            processExecutor);
       default:
         params.getConsole().printBuildFailure("Install not yet supported for platform " +
             appleBundle.getPlatformName() + ".");
         return FAILURE;
+    }
+  }
+
+  private InstallResult installAppleBundleForDevice(
+      CommandRunnerParams params,
+      AppleBundle appleBundle,
+      ProjectFilesystem projectFilesystem,
+      ProcessExecutor processExecutor) throws IOException, InterruptedException {
+    // TODO(user): This should be shared with the build and passed down.
+    AppleConfig appleConfig = new AppleConfig(params.getBuckConfig());
+
+    final Path helperPath;
+    Optional<BuildTarget> helperTarget = appleConfig.getAppleDeviceHelperTarget();
+    if (helperTarget.isPresent()) {
+      Build build = super.getBuild();
+      ActionGraph graph = build.getActionGraph();
+      BuildRule buildRule = graph.findBuildRuleByTarget(helperTarget.get());
+      if (buildRule == null) {
+        params.getConsole().printBuildFailure(
+            String.format(
+                "Cannot install %s (could not resolve build rule for device helper target %s)",
+                appleBundle.getFullyQualifiedName(), helperTarget.get().getBaseName()));
+        return FAILURE;
+      }
+      Path buildRuleOutputPath = buildRule.getPathToOutput();
+      if (buildRuleOutputPath == null) {
+        params.getConsole().printBuildFailure(
+            String.format(
+                "Cannot install %s (device helper target %s does not specify an output)",
+                appleBundle.getFullyQualifiedName(), helperTarget.get().getBaseName()));
+        return FAILURE;
+      }
+      helperPath = projectFilesystem.resolve(buildRuleOutputPath);
+    } else {
+      Optional<Path> helperOverridePath = appleConfig.getAppleDeviceHelperPath();
+      if (helperOverridePath.isPresent()) {
+        helperPath = projectFilesystem.resolve(helperOverridePath.get());
+      } else {
+        params.getConsole().printBuildFailure(
+            String.format(
+                "Cannot install %s (could not find path to device install helper tool)",
+                appleBundle.getFullyQualifiedName()));
+        return FAILURE;
+      }
+    }
+
+    AppleDeviceHelper helper = new AppleDeviceHelper(processExecutor, helperPath);
+    ImmutableMap<String, String> connectedDevices = helper.getConnectedDevices();
+
+    if (connectedDevices.size() == 0) {
+      params.getConsole().printBuildFailure(
+          String.format(
+              "Cannot install %s (no connected devices found)",
+              appleBundle.getFullyQualifiedName()));
+      return FAILURE;
+    }
+
+    String selectedUdid = null;
+
+    if (targetDeviceOptions().hasSerialNumber()) {
+      String udidPrefix = Assertions.assertNotNull(
+          targetDeviceOptions().getSerialNumber()).toLowerCase();
+      for (String udid : connectedDevices.keySet()) {
+        if (udid.startsWith(udidPrefix)) {
+          selectedUdid = udid;
+          break;
+        }
+      }
+
+      if (selectedUdid == null) {
+        params.getConsole().printBuildFailure(
+            String.format(
+                "Cannot install %s to the device %s (no connected devices with that UDID/prefix)",
+                appleBundle.getFullyQualifiedName(), udidPrefix));
+        return FAILURE;
+      }
+    } else {
+      if (connectedDevices.size() > 1) {
+        LOG.warn(
+            "More than one connected device found, and no device ID specified.  A device will be" +
+                " arbitrarily picked.");
+      }
+
+      selectedUdid = connectedDevices.keySet().iterator().next();
+    }
+
+    LOG.info(
+        "Installing " + appleBundle.getFullyQualifiedName() + " to device " + selectedUdid + " (" +
+            connectedDevices.get(selectedUdid) + ")");
+
+    if (helper.installBundleOnDevice(
+        selectedUdid,
+        projectFilesystem.resolve(Preconditions.checkNotNull(appleBundle.getPathToOutput())))) {
+      params.getConsole().printSuccess(
+          "Installed " + appleBundle.getFullyQualifiedName() + " to device " + selectedUdid + " (" +
+              connectedDevices.get(selectedUdid) + ")");
+      if (run) {
+        Optional<String> appleBundleId;
+        try (InputStream bundlePlistStream =
+                 projectFilesystem.getInputStreamForRelativePath(appleBundle.getInfoPlistPath())){
+          appleBundleId = AppleInfoPlistParsing.getBundleIdFromPlistStream(bundlePlistStream);
+        }
+        if (!appleBundleId.isPresent()) {
+          params.getConsole().printBuildFailure(
+              String.format(
+                  "Cannot run %s (could not get bundle ID from %s)",
+                  appleBundle.getFullyQualifiedName(),
+                  appleBundle.getInfoPlistPath()));
+          return FAILURE;
+        }
+
+        if (waitForDebugger) {
+          LOG.warn(WAIT_FOR_DEBUGGER_LONG_ARG + " not yet implemented for devices.");
+        }
+
+        if (helper.runBundleOnDevice(selectedUdid, appleBundleId.get())) {
+          return InstallResult.builder().setExitCode(0).build();
+        } else {
+          return FAILURE;
+        }
+      } else {
+        return InstallResult.builder().setExitCode(0).build();
+      }
+    } else {
+      return FAILURE;
     }
   }
 

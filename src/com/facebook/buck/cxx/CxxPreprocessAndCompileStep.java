@@ -17,6 +17,9 @@
 package com.facebook.buck.cxx;
 
 import com.facebook.buck.event.ConsoleEvent;
+import com.facebook.buck.event.PerfEventId;
+import com.facebook.buck.event.SimplePerfEvent;
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
@@ -57,6 +60,7 @@ public class CxxPreprocessAndCompileStep implements Step {
 
   private static final Logger LOG = Logger.get(CxxPreprocessAndCompileStep.class);
 
+  private final ProjectFilesystem filesystem;
   private final Operation operation;
   private final Path output;
   private final Path depFile;
@@ -76,6 +80,7 @@ public class CxxPreprocessAndCompileStep implements Step {
   );
 
   public CxxPreprocessAndCompileStep(
+      ProjectFilesystem filesystem,
       Operation operation,
       Path output,
       Path depFile,
@@ -88,6 +93,8 @@ public class CxxPreprocessAndCompileStep implements Step {
       Optional<Function<String, Iterable<String>>> extraLineProcessor) {
     Preconditions.checkState(operation.isPreprocess() == preprocessorCommand.isPresent());
     Preconditions.checkState(operation.isCompile() == compilerCommand.isPresent());
+
+    this.filesystem = filesystem;
     this.operation = operation;
     this.output = output;
     this.depFile = depFile;
@@ -183,9 +190,9 @@ public class CxxPreprocessAndCompileStep implements Step {
    *
    * @return Half-configured ProcessBuilder
    */
-  private ProcessBuilder makeSubprocessBuilder(ExecutionContext context) {
+  private ProcessBuilder makeSubprocessBuilder() {
     ProcessBuilder builder = new ProcessBuilder();
-    builder.directory(context.getProjectDirectoryRoot().toAbsolutePath().toFile());
+    builder.directory(filesystem.getRootPath().toAbsolutePath().toFile());
     builder.redirectError(ProcessBuilder.Redirect.PIPE);
 
     // A forced compilation directory is set in the constructor.  Now, we can't actually force
@@ -205,8 +212,8 @@ public class CxxPreprocessAndCompileStep implements Step {
         // We only need to expand the working directory if compiling, as we override it in the
         // preprocessed otherwise.
         operation == Operation.COMPILE_MUNGE_DEBUGINFO ?
-            sanitizer.getExpandedPath(context.getProjectDirectoryRoot().toAbsolutePath()) :
-            context.getProjectDirectoryRoot().toAbsolutePath().toString());
+            sanitizer.getExpandedPath(filesystem.getRootPath().toAbsolutePath()) :
+            filesystem.getRootPath().toAbsolutePath().toString());
 
     return builder;
   }
@@ -261,12 +268,12 @@ public class CxxPreprocessAndCompileStep implements Step {
   private int executePiped(ExecutionContext context)
       throws IOException, InterruptedException {
     ByteArrayOutputStream preprocessError = new ByteArrayOutputStream();
-    ProcessBuilder preprocessBuilder = makeSubprocessBuilder(context);
+    ProcessBuilder preprocessBuilder = makeSubprocessBuilder();
     preprocessBuilder.command(makePreprocessCommand());
     preprocessBuilder.redirectOutput(ProcessBuilder.Redirect.PIPE);
 
     ByteArrayOutputStream compileError = new ByteArrayOutputStream();
-    ProcessBuilder compileBuilder = makeSubprocessBuilder(context);
+    ProcessBuilder compileBuilder = makeSubprocessBuilder();
     compileBuilder.command(
         makeCompileCommand(
             "-",
@@ -293,21 +300,21 @@ public class CxxPreprocessAndCompileStep implements Step {
           new FunctionLineProcessorThread(
               preprocess.getErrorStream(),
               preprocessError,
-              createErrorLineProcessor(context.getProjectDirectoryRoot()));
+              createErrorLineProcessor(filesystem.getRootPath()));
       errorProcessorPreprocess.start();
 
       errorProcessorCompile =
           new FunctionLineProcessorThread(
               compile.getErrorStream(),
               compileError,
-              createErrorLineProcessor(context.getProjectDirectoryRoot()));
+              createErrorLineProcessor(filesystem.getRootPath()));
       errorProcessorCompile.start();
 
       lineDirectiveMunger =
           new FunctionLineProcessorThread(
               preprocess.getInputStream(),
               compile.getOutputStream(),
-              createPreprocessOutputLineProcessor(context.getProjectDirectoryRoot()));
+              createPreprocessOutputLineProcessor(filesystem.getRootPath()));
       lineDirectiveMunger.start();
 
       int compileStatus = compile.waitFor();
@@ -369,7 +376,7 @@ public class CxxPreprocessAndCompileStep implements Step {
   }
 
   private int executeOther(ExecutionContext context) throws Exception {
-    ProcessBuilder builder = makeSubprocessBuilder(context);
+    ProcessBuilder builder = makeSubprocessBuilder();
 
     // If we're preprocessing, file output goes through stdout, so we can postprocess it.
     if (operation == Operation.PREPROCESS) {
@@ -402,19 +409,19 @@ public class CxxPreprocessAndCompileStep implements Step {
                new FunctionLineProcessorThread(
                    process.getErrorStream(),
                    error,
-                   createErrorLineProcessor(context.getProjectDirectoryRoot()))) {
+                   createErrorLineProcessor(filesystem.getRootPath()))) {
         errorProcessor.start();
 
         // If we're preprocessing, we pipe the output through a processor to sanitize the line
         // markers.  So fire that up...
         if (operation == Operation.PREPROCESS) {
           try (OutputStream output =
-                   context.getProjectFilesystem().newFileOutputStream(this.output);
+                   filesystem.newFileOutputStream(this.output);
                FunctionLineProcessorThread outputProcessor =
                    new FunctionLineProcessorThread(
                        process.getInputStream(),
                        output,
-                       createPreprocessOutputLineProcessor(context.getProjectDirectoryRoot()))) {
+                       createPreprocessOutputLineProcessor(filesystem.getRootPath()))) {
             outputProcessor.start();
             outputProcessor.waitFor();
           } catch (Throwable thrown) {
@@ -459,12 +466,30 @@ public class CxxPreprocessAndCompileStep implements Step {
       }
 
       // Process the dependency file, fixing up the paths, and write it out to it's final location.
+      // The paths of the headers written out to the depfile are the paths to the symlinks from the
+      // root of the repo if the compilation included them from the header search paths pointing to
+      // the symlink trees, or paths to headers relative to the source file if the compilation
+      // included them using source relative include paths. To handle both cases we check for the
+      // prerequisites both in the values and the keys of the replacement map.
       if (operation.isPreprocess() && exitCode == 0) {
-        try (InputStream input = context.getProjectFilesystem().newFileInputStream(getDepTemp());
+        ImmutableSet<Path> values = ImmutableSet.copyOf(replacementPaths.values());
+        LOG.debug("Processing dependency file %s as Makefile", getDepTemp());
+        ImmutableMap<String, Object> params = ImmutableMap.<String, Object>of(
+            "input", this.input, "output", this.output);
+        try (InputStream input = filesystem.newFileInputStream(getDepTemp());
              BufferedReader reader = new BufferedReader(new InputStreamReader(input));
-             OutputStream output = context.getProjectFilesystem().newFileOutputStream(depFile);
-             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(output))) {
-          for (String prereq : Makefiles.parseMakefile(reader).getRules().get(0).getPrereqs()) {
+             OutputStream output = filesystem.newFileOutputStream(depFile);
+             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(output));
+             SimplePerfEvent.Scope perfEvent = SimplePerfEvent.scope(
+                 context.getBuckEventBus(),
+                 PerfEventId.of("depfile-parse"),
+                 params)) {
+          for (String prereq : Depfiles.parseDepfile(reader).getPrereqs()) {
+            if (values.contains(Paths.get(prereq))) {
+              writer.write(prereq);
+              writer.newLine();
+              continue;
+            }
             Path replacement = replacementPaths.get(Paths.get(prereq));
             if (replacement != null) {
               writer.write(replacement.toString());
@@ -481,8 +506,8 @@ public class CxxPreprocessAndCompileStep implements Step {
       if (exitCode == 0 && operation == Operation.COMPILE_MUNGE_DEBUGINFO) {
         try {
           sanitizer.restoreCompilationDirectory(
-              context.getProjectDirectoryRoot().toAbsolutePath().resolve(output),
-              context.getProjectDirectoryRoot().toAbsolutePath());
+              filesystem.getRootPath().toAbsolutePath().resolve(output),
+              filesystem.getRootPath().toAbsolutePath());
         } catch (IOException e) {
           context.logError(e, "error updating compilation directory");
           return 1;

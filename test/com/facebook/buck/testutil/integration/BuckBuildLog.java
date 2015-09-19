@@ -16,6 +16,8 @@
 
 package com.facebook.buck.testutil.integration;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
@@ -23,7 +25,7 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.BuildRuleStatus;
 import com.facebook.buck.rules.BuildRuleSuccessType;
-import com.facebook.buck.rules.CacheResult;
+import com.facebook.buck.artifact_cache.CacheResult;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -57,10 +59,24 @@ public class BuckBuildLog {
     assertEquals(BuildRuleSuccessType.FETCHED_FROM_CACHE, logEntry.successType.get());
   }
 
+  public void assertTargetHadMatchingInputRuleKey(String buildTargetRaw) {
+    BuildLogEntry logEntry = getLogEntryOrFail(buildTargetRaw);
+    assertThat(
+        logEntry.successType.get(),
+        equalTo(BuildRuleSuccessType.MATCHING_INPUT_BASED_RULE_KEY));
+  }
+
+  public void assertTargetHadMatchingDepfileRuleKey(String buildTargetRaw) {
+    BuildLogEntry logEntry = getLogEntryOrFail(buildTargetRaw);
+    assertThat(
+        logEntry.successType.get(),
+        equalTo(BuildRuleSuccessType.MATCHING_DEP_FILE_RULE_KEY));
+  }
+
   public void assertTargetHadMatchingDepsAbi(String buildTargetRaw) {
     BuildLogEntry logEntry = getLogEntryOrFail(buildTargetRaw);
     assertEquals(
-        BuildRuleSuccessType.MATCHING_DEPS_ABI_AND_RULE_KEY_NO_DEPS,
+        BuildRuleSuccessType.MATCHING_ABI_RULE_KEY,
         logEntry.successType.get());
   }
 

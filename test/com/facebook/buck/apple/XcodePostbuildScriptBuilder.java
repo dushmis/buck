@@ -17,10 +17,9 @@
 package com.facebook.buck.apple;
 
 import com.facebook.buck.model.BuildTarget;
-import com.facebook.buck.rules.AbstractNodeBuilder;
 
 public class XcodePostbuildScriptBuilder
-    extends AbstractNodeBuilder<XcodePostbuildScriptDescription.Arg> {
+    extends AbstractXcodeScriptBuilder<XcodePostbuildScriptBuilder> {
 
   protected XcodePostbuildScriptBuilder(BuildTarget target) {
     super(new XcodePostbuildScriptDescription(), target);
@@ -30,8 +29,8 @@ public class XcodePostbuildScriptBuilder
     return new XcodePostbuildScriptBuilder(target);
   }
 
-  public XcodePostbuildScriptBuilder setCmd(String cmd) {
-    arg.cmd = cmd;
+  @Override
+  protected XcodePostbuildScriptBuilder getThis() {
     return this;
   }
 

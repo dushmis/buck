@@ -16,6 +16,7 @@
 
 package com.facebook.buck.apple;
 
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.io.TeeInputStream;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.step.ExecutionContext;
@@ -47,6 +48,8 @@ import java.util.Map;
  */
 public class XctoolRunTestsStep implements Step {
 
+  private final ProjectFilesystem filesystem;
+
   public interface StdoutReadingCallback {
     void readStdout(InputStream stdout) throws IOException;
   }
@@ -58,6 +61,7 @@ public class XctoolRunTestsStep implements Step {
   private final Optional<? extends StdoutReadingCallback> stdoutReadingCallback;
 
   public XctoolRunTestsStep(
+      ProjectFilesystem filesystem,
       Path xctoolPath,
       String sdkName,
       Optional<String> destinationSpecifier,
@@ -71,6 +75,8 @@ public class XctoolRunTestsStep implements Step {
         "Either logic tests (%s) or app tests (%s) must be present",
         logicTestBundlePaths,
         appTestBundleToHostAppPaths);
+
+    this.filesystem = filesystem;
 
     // Each test bundle must have one of these extensions. (xctool
     // depends on them to choose which test runner to use.)
@@ -104,7 +110,7 @@ public class XctoolRunTestsStep implements Step {
   public int execute(ExecutionContext context) throws InterruptedException {
     ProcessExecutorParams processExecutorParams = ProcessExecutorParams.builder()
         .setCommand(command)
-        .setDirectory(context.getProjectDirectoryRoot().toAbsolutePath().toFile())
+        .setDirectory(filesystem.getRootPath().toAbsolutePath().toFile())
         .setRedirectOutput(ProcessBuilder.Redirect.PIPE)
         .build();
 
@@ -116,7 +122,7 @@ public class XctoolRunTestsStep implements Step {
           context.getProcessExecutor().launchProcess(processExecutorParams);
 
       int exitCode;
-      try (OutputStream outputStream = context.getProjectFilesystem().newFileOutputStream(
+      try (OutputStream outputStream = filesystem.newFileOutputStream(
                outputPath);
            TeeInputStream stdoutWrapperStream = new TeeInputStream(
                launchedProcess.getInputStream(), outputStream)) {

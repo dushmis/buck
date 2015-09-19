@@ -467,7 +467,6 @@ def write_misc_file(java_settings):
         'java_language_level': java_settings.get('languageLevel', 'JDK_1_6'),
         'project_jdk_name': java_settings.get('jdkName', 'Android API 21 Platform'),
         'project_jdk_type': java_settings.get('jdkType', 'Android SDK'),
-        'project_jdk_type': java_settings.get('jdkType', 'Android SDK'),
         'project_output_url': output_url
     }
 
@@ -545,6 +544,9 @@ def write_file_if_changed(path, content):
     else:
         needs_update = True
     if needs_update:
+        dirname = os.path.dirname(path)
+        if dirname:
+            mkdir_p(dirname)
         out = open(path, 'wb')
         out.write(content)
         MODIFIED_FILES.append(path)

@@ -19,6 +19,7 @@ package com.facebook.buck.cli;
 import com.facebook.buck.apple.AppleBinaryDescription;
 import com.facebook.buck.apple.AppleBuildRules;
 import com.facebook.buck.apple.AppleBundleDescription;
+import com.facebook.buck.apple.AppleConfig;
 import com.facebook.buck.apple.AppleLibraryDescription;
 import com.facebook.buck.apple.AppleTestDescription;
 import com.facebook.buck.apple.ProjectGenerator;
@@ -43,6 +44,7 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetException;
 import com.facebook.buck.model.FilesystemBackedBuildFileTree;
 import com.facebook.buck.model.HasBuildTarget;
+import com.facebook.buck.model.Pair;
 import com.facebook.buck.parser.BuildFileSpec;
 import com.facebook.buck.parser.BuildTargetSpec;
 import com.facebook.buck.parser.ParserConfig;
@@ -141,8 +143,6 @@ public class ProjectCommand extends BuildCommand {
 
   }
 
-
-  private static final Ide DEFAULT_IDE_VALUE = Ide.INTELLIJ;
   private static final boolean DEFAULT_READ_ONLY_VALUE = false;
   private static final boolean DEFAULT_DISABLE_R_JAVA_IDEA_GENERATOR = false;
 
@@ -163,6 +163,12 @@ public class ProjectCommand extends BuildCommand {
       name = "--without-tests",
       usage = "When generating a project slice, exclude tests that test the code in that slice")
   private boolean withoutTests = false;
+
+  @Option(
+      name = "--without-dependencies-tests",
+      usage = "When generating a project slice, includes tests that test code in main target, " +
+          "but exclude tests that test dependencies")
+  private boolean withoutDependenciesTests = false;
 
   @Option(
       name = "--combine-test-bundles",
@@ -267,23 +273,22 @@ public class ProjectCommand extends BuildCommand {
     return buckConfig.getBooleanValue("project", "ide_prompt", true);
   }
 
-  public Ide getIde(BuckConfig buckConfig) {
-    if (ide != null) {
-      return ide;
-    } else {
-      Optional<Ide> ide = buckConfig.getValue("project", "ide").transform(
-          new Function<String, Ide>() {
-            @Override
-            public Ide apply(String input) {
-              return Ide.fromString(input);
-            }
-          });
-      return ide.or(DEFAULT_IDE_VALUE);
-    }
+  private Optional<Ide> getIdeFromBuckConfig(BuckConfig buckConfig) {
+    return buckConfig.getValue("project", "ide").transform(
+            new Function<String, Ide>() {
+              @Override
+              public Ide apply(String input) {
+                return Ide.fromString(input);
+              }
+            });
   }
 
   public boolean isWithTests() {
     return !withoutTests;
+  }
+
+  public boolean isWithDependenciesTests() {
+    return !withoutDependenciesTests;
   }
 
   private List<String> getInitialTargets(BuckConfig buckConfig) {
@@ -328,18 +333,27 @@ public class ProjectCommand extends BuildCommand {
     return aggregationMode.or(IjModuleGraph.AggregationMode.NONE);
   }
 
-  public List<String> getArgumentsFormattedAsBuildTargets(BuckConfig buckConfig) {
-    return getCommandLineBuildTargetNormalizer(buckConfig).normalizeAll(getArguments());
-  }
-
   @Override
   public int runWithoutHelp(CommandRunnerParams params) throws IOException, InterruptedException {
-    if (getIde(params.getBuckConfig()) == ProjectCommand.Ide.XCODE) {
-      checkForAndKillXcodeIfRunning(params, getIdePrompt(params.getBuckConfig()));
+    Pair<ImmutableSet<BuildTarget>, TargetGraph> traversalResult = null;
+    try {
+       traversalResult = params.getParser()
+          .buildTargetGraphForTargetNodeSpecs(
+              parseArgumentsAsTargetNodeSpecs(
+                  params.getBuckConfig(),
+                  params.getRepository().getFilesystem().getIgnorePaths(),
+                  getArguments()),
+              new ParserConfig(params.getBuckConfig()),
+              params.getBuckEventBus(),
+              params.getConsole(),
+              params.getEnvironment(),
+              getEnableProfiling());
+    } catch (BuildTargetException | BuildFileParseException | HumanReadableException e) {
+      params.getConsole().printBuildFailureWithoutStacktrace(e);
+      return 1;
     }
 
-    ImmutableSet<BuildTarget> passedInTargetsSet = getBuildTargets(
-        getArgumentsFormattedAsBuildTargets(params.getBuckConfig()));
+    ImmutableSet<BuildTarget> passedInTargetsSet = traversalResult.getFirst();
     ProjectGraphParser projectGraphParser = ProjectGraphParsers.createProjectGraphParser(
         params.getParser(),
         new ParserConfig(params.getBuckConfig()),
@@ -348,22 +362,33 @@ public class ProjectCommand extends BuildCommand {
         params.getEnvironment(),
         getEnableProfiling());
 
+    Ide projectIde = getIdeFromBuckConfig(params.getBuckConfig()).orNull();
+    boolean useExperimentalProjectGeneration = isExperimentalIntelliJProjectGenerationEnabled() ||
+        projectIde == Ide.XCODE;
+
     TargetGraph projectGraph = projectGraphParser.buildTargetGraphForTargetNodeSpecs(
         getTargetNodeSpecsForIde(
-            getIde(params.getBuckConfig()),
             passedInTargetsSet,
             params.getRepository().getFilesystem().getIgnorePaths(),
-            isExperimentalIntelliJProjectGenerationEnabled()));
+            useExperimentalProjectGeneration));
 
-    ProjectPredicates projectPredicates = ProjectPredicates.forIde(getIde(params.getBuckConfig()));
+    projectIde = getIdeBasedOnPassedInTargetsAndProjectGraph(
+        params.getBuckConfig(),
+        passedInTargetsSet,
+        Optional.<TargetGraph>of(projectGraph));
+    if (projectIde == ProjectCommand.Ide.XCODE) {
+      useExperimentalProjectGeneration = true;  // we want to use this feature for Xcode projects
+      checkForAndKillXcodeIfRunning(params, getIdePrompt(params.getBuckConfig()));
+    }
+
+    ProjectPredicates projectPredicates = ProjectPredicates.forIde(projectIde);
 
     ImmutableSet<BuildTarget> graphRoots;
     if (!passedInTargetsSet.isEmpty()) {
       ImmutableSet<BuildTarget> supplementalGraphRoots = ImmutableSet.of();
-      if (getIde(params.getBuckConfig()) == Ide.INTELLIJ &&
-          !isExperimentalIntelliJProjectGenerationEnabled()) {
+      if (projectIde == Ide.INTELLIJ && !useExperimentalProjectGeneration) {
         supplementalGraphRoots = getRootBuildTargetsForIntelliJ(
-            getIde(params.getBuckConfig()),
+            projectIde,
             projectGraph,
             projectPredicates);
       }
@@ -380,9 +405,9 @@ public class ProjectCommand extends BuildCommand {
         projectGraphParser,
         projectPredicates.getAssociatedProjectPredicate(),
         isWithTests(),
-        getIde(params.getBuckConfig()),
+        isWithDependenciesTests(),
         params.getRepository().getFilesystem().getIgnorePaths(),
-        isExperimentalIntelliJProjectGenerationEnabled());
+        useExperimentalProjectGeneration);
 
     if (getDryRun()) {
       for (TargetNode<?> targetNode : targetGraphAndTargets.getTargetGraph().getNodes()) {
@@ -395,7 +420,7 @@ public class ProjectCommand extends BuildCommand {
     params.getBuckEventBus().post(ProjectGenerationEvent.started());
     int result;
     try {
-      switch (getIde(params.getBuckConfig())) {
+      switch (projectIde) {
         case INTELLIJ:
           result = runIntellijProjectGenerator(
               params,
@@ -418,6 +443,45 @@ public class ProjectCommand extends BuildCommand {
     }
 
     return result;
+  }
+
+  private Ide getIdeBasedOnPassedInTargetsAndProjectGraph(
+      BuckConfig buckConfig,
+      ImmutableSet<BuildTarget> passedInTargetsSet,
+      Optional<TargetGraph> projectGraph) {
+    if (ide != null) {
+      return ide;
+    }
+    Ide projectIde = getIdeFromBuckConfig(buckConfig).orNull();
+    if (projectIde == null && !passedInTargetsSet.isEmpty() && projectGraph.isPresent()) {
+      Ide guessedIde = null;
+      for (BuildTarget buildTarget : passedInTargetsSet) {
+        TargetNode<?> node = projectGraph.get().get(buildTarget);
+        if (node == null) {
+          throw new HumanReadableException("Project graph %s doesn't contain build target " +
+              "%s", projectGraph.get(), buildTarget);
+        }
+        BuildRuleType nodeType = node.getType();
+        boolean canGenerateXcodeProject = canGenerateImplicitWorkspaceForType(nodeType);
+        canGenerateXcodeProject |= nodeType.equals(XcodeWorkspaceConfigDescription.TYPE);
+        if (guessedIde == null && canGenerateXcodeProject) {
+          guessedIde = Ide.XCODE;
+        } else if (guessedIde == Ide.XCODE && !canGenerateXcodeProject ||
+            guessedIde == Ide.INTELLIJ && canGenerateXcodeProject) {
+          throw new HumanReadableException("Passed targets (%s) contain both Xcode and Idea " +
+              "projects.\nCan't choose Ide from this mixed set. " +
+              "Please pass only Xcode targets or only Idea targets.", passedInTargetsSet);
+        } else {
+          guessedIde = Ide.INTELLIJ;
+        }
+      }
+      projectIde = guessedIde;
+    }
+    if (projectIde == null) {
+      throw new HumanReadableException("Please specify ide using --ide option or set ide in " +
+          ".buckconfig");
+    }
+    return projectIde;
   }
 
   @Override
@@ -572,6 +636,7 @@ public class ProjectCommand extends BuildCommand {
               params.getBuckConfig(),
               additionalInitialTargets);
 
+          buildCommand.setArtifactCacheDisabled(true);
 
           exitCode = buildCommand.runWithoutHelp(params);
           if (exitCode != 0) {
@@ -632,15 +697,46 @@ public class ProjectCommand extends BuildCommand {
       final TargetGraphAndTargets targetGraphAndTargets,
       ImmutableSet<BuildTarget> passedInTargetsSet)
       throws IOException, InterruptedException {
-    ImmutableSet.Builder<ProjectGenerator.Option> optionsBuilder = ImmutableSet.builder();
-    if (getReadOnly(params.getBuckConfig())) {
-      optionsBuilder.add(ProjectGenerator.Option.GENERATE_READ_ONLY_FILES);
+    int exitCode = 0;
+    ImmutableSet<ProjectGenerator.Option> options = buildWorkspaceGeneratorOptions(
+        getReadOnly(params.getBuckConfig()),
+        isWithTests(),
+        isWithDependenciesTests(),
+        getCombinedProject()
+    );
+    ImmutableSet<BuildTarget> requiredBuildTargets = generateWorkspacesForTargets(
+        params,
+        targetGraphAndTargets,
+        passedInTargetsSet,
+        options,
+        super.getOptions(),
+        new HashMap<Path, ProjectGenerator>(),
+        getCombinedProject(),
+        buildWithBuck,
+        getCombineTestBundles());
+    if (!requiredBuildTargets.isEmpty()) {
+      BuildCommand buildCommand = new BuildCommand();
+      buildCommand.setArguments(
+          FluentIterable.from(requiredBuildTargets)
+              .transform(Functions.toStringFunction())
+              .toList());
+      exitCode = buildCommand.runWithoutHelp(params);
     }
-    if (isWithTests()) {
-      optionsBuilder.add(ProjectGenerator.Option.INCLUDE_TESTS);
-    }
+    return exitCode;
+  }
 
-    boolean combinedProject = getCombinedProject();
+  @VisibleForTesting
+  static ImmutableSet<BuildTarget> generateWorkspacesForTargets(
+      final CommandRunnerParams params,
+      final TargetGraphAndTargets targetGraphAndTargets,
+      ImmutableSet<BuildTarget> passedInTargetsSet,
+      ImmutableSet<ProjectGenerator.Option> options,
+      ImmutableList<String> buildWithBuckFlags,
+      Map<Path, ProjectGenerator> projectGenerators,
+      boolean combinedProject,
+      boolean buildWithBuck,
+      boolean combineTestBundles)
+      throws IOException, InterruptedException {
     ImmutableSet<BuildTarget> targets;
     if (passedInTargetsSet.isEmpty()) {
       targets = FluentIterable
@@ -650,15 +746,10 @@ public class ProjectCommand extends BuildCommand {
     } else {
       targets = passedInTargetsSet;
     }
-    if (combinedProject) {
-      optionsBuilder.addAll(ProjectGenerator.COMBINED_PROJECT_OPTIONS);
-    } else {
-      optionsBuilder.addAll(ProjectGenerator.SEPARATED_PROJECT_OPTIONS);
-    }
+
     LOG.debug("Generating workspace for config targets %s", targets);
-    Map<Path, ProjectGenerator> projectGenerators = new HashMap<>();
     ImmutableSet<TargetNode<?>> testTargetNodes = targetGraphAndTargets.getAssociatedTests();
-    ImmutableSet<TargetNode<AppleTestDescription.Arg>> groupableTests = getCombineTestBundles()
+    ImmutableSet<TargetNode<AppleTestDescription.Arg>> groupableTests = combineTestBundles
         ? AppleBuildRules.filterGroupableTests(testTargetNodes)
         : ImmutableSet.<TargetNode<AppleTestDescription.Arg>>of();
     ImmutableSet.Builder<BuildTarget> requiredBuildTargetsBuilder = ImmutableSet.builder();
@@ -684,10 +775,11 @@ public class ProjectCommand extends BuildCommand {
           targetGraphAndTargets.getTargetGraph(),
           workspaceArgs,
           inputTarget,
-          optionsBuilder.build(),
+          options,
           combinedProject,
           buildWithBuck,
-          super.getOptions(),
+          buildWithBuckFlags,
+          !(new AppleConfig(params.getBuckConfig()).getXcodeDisableParallelizeBuild()),
           new ExecutableFinder(),
           params.getEnvironment(),
           params.getRepository().getKnownBuildRuleTypes().getCxxPlatforms(),
@@ -722,17 +814,30 @@ public class ProjectCommand extends BuildCommand {
       requiredBuildTargetsBuilder.addAll(requiredBuildTargetsForWorkspace);
     }
 
-    int exitCode = 0;
-    ImmutableSet<BuildTarget> requiredBuildTargets = requiredBuildTargetsBuilder.build();
-    if (!requiredBuildTargets.isEmpty()) {
-      BuildCommand buildCommand = new BuildCommand();
-      buildCommand.setArguments(
-          FluentIterable.from(requiredBuildTargets)
-              .transform(Functions.toStringFunction())
-              .toList());
-      exitCode = buildCommand.runWithoutHelp(params);
+    return requiredBuildTargetsBuilder.build();
+  }
+
+  public static ImmutableSet<ProjectGenerator.Option> buildWorkspaceGeneratorOptions(
+      boolean isReadonly,
+      boolean isWithTests,
+      boolean isWithDependenciesTests,
+      boolean isProjectsCombined) {
+    ImmutableSet.Builder<ProjectGenerator.Option> optionsBuilder = ImmutableSet.builder();
+    if (isReadonly) {
+      optionsBuilder.add(ProjectGenerator.Option.GENERATE_READ_ONLY_FILES);
     }
-    return exitCode;
+    if (isWithTests) {
+      optionsBuilder.add(ProjectGenerator.Option.INCLUDE_TESTS);
+    }
+    if (isWithDependenciesTests) {
+      optionsBuilder.add(ProjectGenerator.Option.INCLUDE_DEPENDENCIES_TESTS);
+    }
+    if (isProjectsCombined) {
+      optionsBuilder.addAll(ProjectGenerator.COMBINED_PROJECT_OPTIONS);
+    } else {
+      optionsBuilder.addAll(ProjectGenerator.SEPARATED_PROJECT_OPTIONS);
+    }
+    return optionsBuilder.build();
   }
 
   @SuppressWarnings(value = "unchecked")
@@ -819,13 +924,11 @@ public class ProjectCommand extends BuildCommand {
   }
 
   private static Iterable<? extends TargetNodeSpec> getTargetNodeSpecsForIde(
-      ProjectCommand.Ide ide,
       Collection<BuildTarget> passedInBuildTargets,
       ImmutableSet<Path> ignoreDirs,
       boolean experimentalProjectGenerationEnabled
   ) {
-    if ((ide == ProjectCommand.Ide.XCODE || experimentalProjectGenerationEnabled) &&
-        !passedInBuildTargets.isEmpty()) {
+    if (experimentalProjectGenerationEnabled && !passedInBuildTargets.isEmpty()) {
       return Iterables.transform(
           passedInBuildTargets,
           BuildTargetSpec.TO_BUILD_TARGET_SPEC);
@@ -843,7 +946,7 @@ public class ProjectCommand extends BuildCommand {
       ProjectGraphParser projectGraphParser,
       AssociatedTargetNodePredicate associatedProjectPredicate,
       boolean isWithTests,
-      ProjectCommand.Ide ide,
+      boolean isWithDependenciesTests,
       ImmutableSet<Path> ignoreDirs,
       boolean experimentalProjectGenerationEnabled
   )
@@ -851,15 +954,17 @@ public class ProjectCommand extends BuildCommand {
 
     TargetGraph resultProjectGraph;
     ImmutableSet<BuildTarget> explicitTestTargets;
+    ImmutableSet<BuildTarget> graphRootsOrSourceTargets =
+        replaceWorkspacesWithSourceTargetsIfPossible(graphRoots, projectGraph);
 
     if (isWithTests) {
       explicitTestTargets = TargetGraphAndTargets.getExplicitTestTargets(
-          graphRoots,
-          projectGraph);
+          graphRootsOrSourceTargets,
+          projectGraph,
+          isWithDependenciesTests);
       resultProjectGraph =
           projectGraphParser.buildTargetGraphForTargetNodeSpecs(
               getTargetNodeSpecsForIde(
-                  ide,
                   Sets.union(graphRoots, explicitTestTargets),
                   ignoreDirs,
                   experimentalProjectGenerationEnabled));
@@ -870,13 +975,38 @@ public class ProjectCommand extends BuildCommand {
 
     return TargetGraphAndTargets.create(
         graphRoots,
+        graphRootsOrSourceTargets,
         resultProjectGraph,
         associatedProjectPredicate,
         isWithTests,
+        isWithDependenciesTests,
         explicitTestTargets);
   }
 
-  private boolean canGenerateImplicitWorkspaceForType(BuildRuleType type) {
+  public static ImmutableSet<BuildTarget> replaceWorkspacesWithSourceTargetsIfPossible(
+      ImmutableSet<BuildTarget> buildTargets, TargetGraph projectGraph) {
+    ImmutableSet<TargetNode<?>> targetNodes =
+        TargetGraphAndTargets.checkAndGetTargetNodes(buildTargets, projectGraph);
+    ImmutableSet.Builder<BuildTarget> resultBuilder = ImmutableSet.builder();
+    for (TargetNode<?> node : targetNodes) {
+      BuildRuleType type = node.getType();
+      if (type == XcodeWorkspaceConfigDescription.TYPE) {
+        TargetNode<XcodeWorkspaceConfigDescription.Arg> castedWorkspaceNode =
+            castToXcodeWorkspaceTargetNode(node);
+        Optional<BuildTarget> srcTarget = castedWorkspaceNode.getConstructorArg().srcTarget;
+        if (srcTarget.isPresent()) {
+          resultBuilder.add(srcTarget.get());
+        } else {
+          resultBuilder.add(node.getBuildTarget());
+        }
+      } else {
+        resultBuilder.add(node.getBuildTarget());
+      }
+    }
+    return resultBuilder.build();
+  }
+
+  private static boolean canGenerateImplicitWorkspaceForType(BuildRuleType type) {
     // We weren't given a workspace target, but we may have been given something that could
     // still turn into a workspace (for example, a library or an actual app rule). If that's the
     // case we still want to generate a workspace.
@@ -890,7 +1020,7 @@ public class ProjectCommand extends BuildCommand {
    * @return Workspace Args that describe a generic Xcode workspace containing `src_target` and its
    * tests
    */
-  private XcodeWorkspaceConfigDescription.Arg createImplicitWorkspaceArgs(
+  private static XcodeWorkspaceConfigDescription.Arg createImplicitWorkspaceArgs(
       TargetNode<?> sourceTargetNode) {
     XcodeWorkspaceConfigDescription.Arg workspaceArgs = new XcodeWorkspaceConfigDescription.Arg();
     workspaceArgs.srcTarget = Optional.of(sourceTargetNode.getBuildTarget());

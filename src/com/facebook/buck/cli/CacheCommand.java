@@ -16,8 +16,8 @@
 
 package com.facebook.buck.cli;
 
-import com.facebook.buck.rules.ArtifactCache;
-import com.facebook.buck.rules.CacheResult;
+import com.facebook.buck.artifact_cache.ArtifactCache;
+import com.facebook.buck.artifact_cache.CacheResult;
 import com.facebook.buck.rules.RuleKey;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
@@ -60,7 +60,7 @@ public class CacheCommand extends AbstractCommand {
       return 1;
     }
 
-    ArtifactCache cache = getArtifactCache(params);
+    ArtifactCache cache = params.getArtifactCache();
 
     Path tmpDir = Files.createTempDirectory("buck-cache-command");
     int exitCode = 0;

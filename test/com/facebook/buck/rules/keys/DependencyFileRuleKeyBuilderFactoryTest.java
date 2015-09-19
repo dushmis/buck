@@ -22,12 +22,13 @@ import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
-import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.NoopBuildRule;
 import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyAppendable;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.shell.ExportFileBuilder;
@@ -85,9 +86,7 @@ public class DependencyFileRuleKeyBuilderFactoryTest {
     final FakeProjectFilesystem filesystem = new FakeProjectFilesystem();
     final Path output = Paths.get("output");
 
-    BuildRuleParams params =
-        BuildRuleParamsFactory.createTrivialBuildRuleParams(
-            BuildTargetFactory.newInstance("//:rule"));
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder("//:rule").build();
     BuildRule rule =
         new NoopBuildRule(params, pathResolver) {
           @AddToRuleKey
@@ -125,7 +124,7 @@ public class DependencyFileRuleKeyBuilderFactoryTest {
     }
 
     @Override
-    public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+    public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
       return builder.setReflectively("input", input);
     }
 

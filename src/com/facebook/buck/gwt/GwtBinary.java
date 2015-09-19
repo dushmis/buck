@@ -53,7 +53,7 @@ public class GwtBinary extends AbstractBuildRule {
    * Valid values for the GWT Compiler's {@code -style} flag.
    * Acceptable values are defined in the GWT docs at http://bit.ly/1sclx5O.
    */
-  static enum Style {
+  enum Style {
     /** Named "obf" for "obfuscated". This is the default style. */
     OBF,
     PRETTY,
@@ -135,13 +135,13 @@ public class GwtBinary extends AbstractBuildRule {
 
     // Create a clean directory where the .zip file will be written.
     Path workingDirectory = getPathToOutput().getParent();
-    steps.add(new MakeCleanDirectoryStep(workingDirectory));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), workingDirectory));
 
     // Write the deploy files into a separate directory so that the generated .zip is smaller.
     final Path deployDirectory = workingDirectory.resolve("deploy");
-    steps.add(new MkdirStep(deployDirectory));
+    steps.add(new MkdirStep(getProjectFilesystem(), deployDirectory));
 
-    Step javaStep = new ShellStep() {
+    Step javaStep = new ShellStep(getProjectFilesystem().getRootPath()) {
       @Override
       public String getShortName() {
         return "gwt-compile";

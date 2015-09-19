@@ -30,7 +30,7 @@ import com.facebook.buck.rules.BuildRuleEvent;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleStatus;
 import com.facebook.buck.rules.BuildRuleSuccessType;
-import com.facebook.buck.rules.CacheResult;
+import com.facebook.buck.artifact_cache.CacheResult;
 import com.facebook.buck.rules.FakeBuildRule;
 import com.facebook.buck.rules.IndividualTestEvent;
 import com.facebook.buck.rules.RuleKey;
@@ -190,6 +190,8 @@ public class EventSerializationTest {
         "\"success\":false}]," +
         "\"failureCount\":1,\"contacts\":[],\"labels\":[]," +
         "\"dependenciesPassTheirTests\":true,\"sequenceNumber\":0,\"totalNumberOfTests\":0," +
+        "\"buildTarget\":{\"shortName\":\"baz\",\"baseName\":\"//foo/bar\"," +
+        "\"repository\":{\"present\":false},\"flavor\":\"\"}," +
         "\"success\":false}],\"type\":\"RunComplete\", \"eventKey\":" +
         "{\"value\":-624576559}}",
         message);
@@ -220,6 +222,8 @@ public class EventSerializationTest {
         "\"success\":false}]," +
         "\"failureCount\":1,\"contacts\":[],\"labels\":[]," +
         "\"dependenciesPassTheirTests\":true,\"sequenceNumber\":0,\"totalNumberOfTests\":0," +
+        "\"buildTarget\":{\"shortName\":\"baz\",\"baseName\":\"//foo/bar\"," +
+        "\"repository\":{\"present\":false},\"flavor\":\"\"}," +
         "\"success\":false},\"type\":\"ResultsAvailable\"}", message);
   }
 

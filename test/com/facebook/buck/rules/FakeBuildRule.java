@@ -16,9 +16,12 @@
 
 package com.facebook.buck.rules;
 
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.step.Step;
+import com.facebook.buck.testutil.FakeProjectFilesystem;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 
@@ -54,15 +57,20 @@ public class FakeBuildRule extends AbstractBuildRule implements BuildRule {
     this(new FakeBuildRuleParamsBuilder(buildTarget).build(), resolver);
   }
 
-  public FakeBuildRule(BuildTarget target, SourcePathResolver resolver, BuildRule... deps) {
+  public FakeBuildRule(
+      BuildTarget target,
+      ProjectFilesystem filesystem,
+      SourcePathResolver resolver,
+      BuildRule... deps) {
     this(
         new FakeBuildRuleParamsBuilder(target)
+            .setProjectFilesystem(filesystem)
             .setDeps(ImmutableSortedSet.copyOf(deps))
             .build(), resolver);
   }
 
   public FakeBuildRule(String target, SourcePathResolver resolver, BuildRule... deps) {
-    this(BuildTargetFactory.newInstance(target), resolver, deps);
+    this(BuildTargetFactory.newInstance(target), new FakeProjectFilesystem(), resolver, deps);
   }
 
   @Override
@@ -80,17 +88,17 @@ public class FakeBuildRule extends AbstractBuildRule implements BuildRule {
 
   @Override
   public RuleKey getRuleKey() {
-    if (ruleKey != null) {
-      return ruleKey;
-    } else {
-      throw new IllegalStateException("This method should not be called");
+    if (ruleKey == null) {
+      String hashCode = String.valueOf(Math.abs(this.hashCode()));
+      ruleKey = new RuleKey(Strings.repeat(hashCode, 40 / hashCode.length() + 1).substring(0, 40));
     }
+    return ruleKey;
   }
 
   @Override
   public ImmutableList<Step> getBuildSteps(
       BuildContext context,
       BuildableContext buildableContext) {
-    throw new UnsupportedOperationException();
+    return ImmutableList.of();
   }
 }

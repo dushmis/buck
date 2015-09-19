@@ -4,6 +4,9 @@ EXCEPTION_SRCS = [
 java_library(
   name = 'exceptions',
   srcs = EXCEPTION_SRCS,
+  tests = [
+    '//test/com/facebook/buck/android:android',
+  ],
   deps = [
     '//third-party/java/jsr:jsr305',
     '//src/com/facebook/buck/util:exceptions',
@@ -54,7 +57,6 @@ RULES_SRCS = [
   'AndroidPrebuiltAar.java',
   'AndroidPrebuiltAarCollection.java',
   'AndroidPrebuiltAarDescription.java',
-  'AndroidPrebuiltAarGraphEnhancer.java',
   'AndroidResource.java',
   'AndroidResourceDescription.java',
   'AndroidResourceHelper.java',
@@ -89,6 +91,7 @@ RULES_SRCS = [
   'RobolectricTest.java',
   'RDotJava.java',
   'UnsortedAndroidResourceDeps.java',
+  'UnzipAar.java',
   # This and the InstrumentationStep would make more sense in the steps
   # library, but are added here to avoid circular dependencies.
   'ApkInstallStep.java',
@@ -97,6 +100,9 @@ RULES_SRCS = [
 java_immutables_library(
   name = 'rules',
   srcs = RULES_SRCS,
+  tests = [
+    '//test/com/facebook/buck/android:android',
+  ],
   deps = [
     ':exceptions',
     ':helpers',
@@ -126,6 +132,7 @@ java_immutables_library(
     '//src/com/facebook/buck/parser:rule_pattern',
     '//src/com/facebook/buck/rules:build_rule',
     '//src/com/facebook/buck/rules:rules',
+    '//src/com/facebook/buck/rules/keys:keys',
     '//src/com/facebook/buck/rules/macros:macros',
     '//src/com/facebook/buck/shell:steps',
     '//src/com/facebook/buck/shell:rules',
@@ -165,6 +172,9 @@ SPLIT_DEX_SRCS = [
 java_library(
   name = 'split_dex',
   srcs = SPLIT_DEX_SRCS,
+  tests = [
+    '//test/com/facebook/buck/android:android',
+  ],
   deps = [
     '//third-party/java/guava:guava',
     '//third-party/java/jsr:jsr305',
@@ -237,6 +247,9 @@ java_immutables_library(
   srcs = glob(['*.java'],
               excludes = EXCEPTION_SRCS + PACKAGEABLE_SOURCES + RULES_SRCS + SPLIT_DEX_SRCS +
 	                 UTILS_SRCS + HELPERS_SRCS),
+  tests = [
+    '//test/com/facebook/buck/android:android',
+  ],
   deps = [
     ':exceptions',
     ':split_dex',

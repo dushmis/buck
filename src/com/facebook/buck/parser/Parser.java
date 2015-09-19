@@ -21,6 +21,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import com.facebook.buck.event.AbstractBuckEvent;
 import com.facebook.buck.event.BuckEvent;
 import com.facebook.buck.event.BuckEventBus;
+import com.facebook.buck.event.EventKey;
 import com.facebook.buck.event.PerfEventId;
 import com.facebook.buck.event.SimplePerfEvent;
 import com.facebook.buck.graph.AbstractAcyclicDepthFirstPostOrderTraversal;
@@ -28,11 +29,8 @@ import com.facebook.buck.graph.MutableDirectedGraph;
 import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.json.BuildFileParseException;
-import com.facebook.buck.json.DefaultProjectBuildFileParserFactory;
 import com.facebook.buck.json.JsonObjectHashing;
 import com.facebook.buck.json.ProjectBuildFileParser;
-import com.facebook.buck.json.ProjectBuildFileParserFactory;
-import com.facebook.buck.json.ProjectBuildFileParserOptions;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuckVersion;
 import com.facebook.buck.model.BuildFileTree;
@@ -56,21 +54,26 @@ import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.util.Console;
 import com.facebook.buck.util.HumanReadableException;
+import com.facebook.buck.util.environment.EnvironmentFilter;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.base.Supplier;
+import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.MapDifference;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.eventbus.Subscribe;
@@ -104,11 +107,8 @@ public class Parser {
 
   private final CachedState state;
 
-  private final ImmutableSet<Pattern> tempFilePatterns;
-
   private final Repository repository;
-  private final String buildFileName;
-  private final ProjectBuildFileParserFactory buildFileParserFactory;
+  private final boolean useWatchmanGlob;
 
   /**
    * Key of the meta-rule that lists the build files executed while reading rules.
@@ -116,15 +116,6 @@ public class Parser {
    * build files as the tail, for example: {"__includes":["/jimp/BUCK", "/jimp/buck_includes"]}
    */
   private static final String INCLUDES_META_RULE = "__includes";
-
-  /**
-   * A map from absolute included files ({@code /jimp/BUILD_DEFS}, for example) to the build files
-   * that depend on them (typically {@code /jimp/BUCK} files).
-   */
-  private final ListMultimap<Path, Path> buildFileDependents;
-
-  private final boolean enforceBuckPackageBoundary;
-
 
   /**
    * A BuckEvent used to record the parse start time, which should include the WatchEvent
@@ -192,23 +183,12 @@ public class Parser {
   }
   private final BuildFileTreeCache buildFileTreeCache;
 
-  public static Parser createParser(
+  public static Parser createBuildFileParser(
       final Repository repository,
-      String pythonInterpreter,
-      boolean allowEmptyGlobs,
-      boolean enforceBuckPackageBoundary,
-      ImmutableSet<Pattern> tempFilePatterns,
-      final String buildFileName,
-      Iterable<String> defaultIncludes,
-      boolean useWatchmanGlob,
-      Optional<String> watchmanWatchRoot,
-      Optional<String> watchmanProjectPrefix)
+      boolean useWatchmanGlob)
       throws IOException, InterruptedException {
     return new Parser(
         repository,
-        enforceBuckPackageBoundary,
-        tempFilePatterns,
-        buildFileName,
         /* Calls to get() will reconstruct the build file tree by calling constructBuildFileTree. */
         // TODO(simons): Consider momoizing the suppler.
         new Supplier<BuildFileTree>() {
@@ -216,22 +196,10 @@ public class Parser {
           public BuildFileTree get() {
             return new FilesystemBackedBuildFileTree(
                 repository.getFilesystem(),
-                buildFileName);
+                repository.getBuildFileName());
           }
         },
-        // TODO(jacko): Get rid of this global BuildTargetParser completely.
-        new DefaultProjectBuildFileParserFactory(
-            ProjectBuildFileParserOptions.builder()
-                .setProjectRoot(repository.getFilesystem().getRootPath())
-                .setPythonInterpreter(pythonInterpreter)
-                .setAllowEmptyGlobs(allowEmptyGlobs)
-                .setBuildFileName(buildFileName)
-                .setDefaultIncludes(defaultIncludes)
-                .setDescriptions(repository.getAllDescriptions())
-                .setUseWatchmanGlob(useWatchmanGlob)
-                .setWatchmanWatchRoot(watchmanWatchRoot)
-                .setWatchmanProjectPrefix(watchmanProjectPrefix)
-                .build()));
+        useWatchmanGlob);
   }
 
   /**
@@ -240,24 +208,13 @@ public class Parser {
   @VisibleForTesting
   Parser(
       Repository repository,
-      boolean enforceBuckPackageBoundary,
-      ImmutableSet<Pattern> tempFilePatterns,
-      String buildFileName,
       Supplier<BuildFileTree> buildFileTreeSupplier,
-      ProjectBuildFileParserFactory buildFileParserFactory)
+      boolean useWatchmanGlob)
       throws IOException, InterruptedException {
     this.repository = repository;
-    this.buildFileName = buildFileName;
+    this.useWatchmanGlob = useWatchmanGlob;
     this.buildFileTreeCache = new BuildFileTreeCache(buildFileTreeSupplier);
-    this.buildFileParserFactory = buildFileParserFactory;
-    this.enforceBuckPackageBoundary = enforceBuckPackageBoundary;
-    this.buildFileDependents = ArrayListMultimap.create();
-    this.tempFilePatterns = tempFilePatterns;
-    this.state = new CachedState(buildFileName);
-  }
-
-  public Path getProjectRoot() {
-    return repository.getFilesystem().getRootPath();
+    this.state = new CachedState(repository.getBuildFileName());
   }
 
   /**
@@ -311,7 +268,7 @@ public class Parser {
     // Iterate over the build files the given target node spec returns.
     for (Path buildFile : spec.getBuildFileSpec().findBuildFiles(
         repository.getFilesystem(),
-        buildFileName)) {
+        repository.getBuildFileName())) {
 
       // Format a proper error message for non-existent build files.
       if (!repository.getFilesystem().isFile(buildFile)) {
@@ -349,7 +306,7 @@ public class Parser {
       ImmutableMap<String, String> environment,
       boolean enableProfiling)
       throws InterruptedException, BuildFileParseException, BuildTargetException, IOException {
-    ProjectBuildFileParser buildFileParser = buildFileParserFactory.createParser(
+    ProjectBuildFileParser buildFileParser = createBuildFileParser(
         console,
         environment,
         eventBus);
@@ -397,7 +354,7 @@ public class Parser {
     TargetGraph graph = null;
     // TODO(jacko): Instantiating one ProjectBuildFileParser here isn't enough. We a collection of
     //              repo-specific parsers.
-    try (ProjectBuildFileParser buildFileParser = buildFileParserFactory.createParser(
+    try (ProjectBuildFileParser buildFileParser = createBuildFileParser(
         console,
         environment,
         eventBus)) {
@@ -426,6 +383,15 @@ public class Parser {
     }
   }
 
+  private ProjectBuildFileParser createBuildFileParser(
+      Console console,
+      ImmutableMap<String, String> environment,
+      BuckEventBus eventBus) {
+    return repository
+        .createBuildFileParserFactory(useWatchmanGlob)
+        .createParser(console, environment, eventBus);
+  }
+
   /**
    * @param buildTargets the build targets to generate a target graph for.
    * @param eventBus used to log events while parsing.
@@ -448,6 +414,37 @@ public class Parser {
         console,
         environment,
         enableProfiling).getSecond();
+  }
+
+  /**
+   * Finds the target node associated with the given build target.
+   * Parses the BUCK file associated with the build target if it was not parsed before (thus not
+   * being cached).
+   *
+   * @return the target node associated with the given build target
+   */
+  public TargetNode<?> getOrLoadTargetNode(
+      BuildTarget buildTarget,
+      BuckEventBus eventBus,
+      Console console,
+      ImmutableMap<String, String> environment,
+      boolean enableProfiling)
+      throws InterruptedException, BuildFileParseException, BuildTargetException, IOException {
+    Path buildFilePath;
+    try {
+      buildFilePath = repository.getAbsolutePathToBuildFile(buildTarget);
+    } catch (Repository.MissingBuildFileException e) {
+      throw new HumanReadableException(e);
+    }
+    if (!state.isParsed(buildFilePath)) {
+      ProjectBuildFileParser buildFileParser = createBuildFileParser(
+          console,
+          environment,
+          eventBus);
+      buildFileParser.setEnableProfiling(enableProfiling);
+      parseRawRulesInternal(buildFileParser.getAllRulesAndMetaRules(buildFilePath));
+    }
+    return Preconditions.checkNotNull(getTargetNode(buildTarget));
   }
 
   @Nullable
@@ -621,7 +618,7 @@ public class Parser {
       Console console,
       BuckEventBus buckEventBus)
       throws BuildFileParseException, BuildTargetException, IOException, InterruptedException {
-    try (ProjectBuildFileParser projectBuildFileParser = buildFileParserFactory.createParser(
+    try (ProjectBuildFileParser projectBuildFileParser = createBuildFileParser(
         console,
         environment,
         buckEventBus)) {
@@ -642,10 +639,10 @@ public class Parser {
       throws BuildFileParseException, BuildTargetException, IOException, InterruptedException {
 
     if (!isCached(buildFile, parserConfig.getDefaultIncludes(), environment)) {
-      LOG.debug("Parsing %s file: %s", buildFileName, buildFile);
+      LOG.debug("Parsing %s file: %s", repository.getBuildFileName(), buildFile);
       parseRawRulesInternal(buildFileParser.getAllRulesAndMetaRules(buildFile));
     } else {
-      LOG.debug("Not parsing %s file (already in cache)", buildFileName);
+      LOG.debug("Not parsing %s file (already in cache)", repository.getBuildFileName());
     }
     return state.getRawRules(buildFile);
   }
@@ -699,9 +696,17 @@ public class Parser {
     List<String> fileNames = ((List<String>) map.get(INCLUDES_META_RULE));
     Preconditions.checkNotNull(fileNames);
     Path dependent = normalize(Paths.get(fileNames.get(0)));
-    for (String fileName : fileNames) {
-      buildFileDependents.put(normalize(Paths.get(fileName)), dependent);
-    }
+    state.putDependents(
+        FluentIterable.from(fileNames)
+            .transform(
+                new Function<String, Path>() {
+                  @Override
+                  public Path apply(String path) {
+                    return normalize(Paths.get(path));
+                  }
+                })
+            .toSet(),
+        dependent);
     return true;
   }
 
@@ -797,7 +802,7 @@ public class Parser {
         return pattern.matcher(fileName).matches();
       }
     };
-    return Iterators.any(tempFilePatterns.iterator(), patternMatches);
+    return Iterators.any(repository.getTempFilePatterns().iterator(), patternMatches);
   }
 
   /**
@@ -816,7 +821,7 @@ public class Parser {
 
     // If we're *not* enforcing package boundary checks, it's possible for multiple ancestor
     // packages to reference the same file
-    if (!enforceBuckPackageBoundary) {
+    if (!repository.isEnforcingBuckPackageBoundaries()) {
       while (packageBuildFile.isPresent() && packageBuildFile.get().getParent() != null) {
         packageBuildFile =
             buildFileTreeCache.get()
@@ -855,6 +860,10 @@ public class Parser {
    */
   public void recordParseStartTime(BuckEventBus eventBus) {
     class ParseStartTime extends AbstractBuckEvent {
+
+      public ParseStartTime() {
+        super(EventKey.unique());
+      }
 
       @Override
       protected String getValueString() {
@@ -940,7 +949,7 @@ public class Parser {
      * We parse a build file in search for one particular rule; however, we also keep track of the
      * other rules that were also parsed from it.
      */
-    private final Map<BuildTarget, TargetNode<?>> memoizedTargetNodes;
+    private final Cache<BuildTarget, TargetNode<?>> memoizedTargetNodes;
 
     /**
      * Environment used by build files. If the environment is changed, then build files need to be
@@ -964,10 +973,16 @@ public class Parser {
 
     private final LoadingCache<BuildTarget, HashCode> buildTargetHashCodeCache;
 
+    /**
+     * A map from absolute included files ({@code /jimp/BUILD_DEFS}, for example) to the build files
+     * that depend on them (typically {@code /jimp/BUCK} files).
+     */
+    private final ListMultimap<Path, Path> buildFileDependents;
+
     private final String buildFile;
 
     public CachedState(String buildFileName) {
-      this.memoizedTargetNodes = Maps.newHashMap();
+      this.memoizedTargetNodes = CacheBuilder.newBuilder().<BuildTarget, TargetNode<?>>build();
       this.symlinkExistenceCache = Maps.newHashMap();
       this.buildInputPathsUnderSymlink = Sets.newHashSet();
       this.parsedBuildFiles = ArrayListMultimap.create();
@@ -980,6 +995,7 @@ public class Parser {
               return loadHashCodeForBuildTarget(buildTarget);
             }
           });
+      this.buildFileDependents = ArrayListMultimap.create();
       this.buildFile = buildFileName;
     }
 
@@ -988,10 +1004,11 @@ public class Parser {
       parsedBuildFiles.clear();
       symlinkExistenceCache.clear();
       buildInputPathsUnderSymlink.clear();
-      memoizedTargetNodes.clear();
+      memoizedTargetNodes.invalidateAll();
       targetsToFile.clear();
       pathsToBuildTargets.clear();
       buildTargetHashCodeCache.invalidateAll();
+      buildFileDependents.clear();
     }
 
     @Override
@@ -1010,6 +1027,31 @@ public class Parser {
     }
 
     /**
+     * Checks if the cache should be invalidated to to differences in environment variables.
+     * Variables that are irrelevant for cache retention purposes are ignored.
+     *
+     * @param environment
+     * @return true if the cache should be invalidated, false otherwise.
+     */
+    private boolean shouldInvalidateCacheOnEnvironmentChange(
+        ImmutableMap<String, String> environment) {
+      if (cacheEnvironment == null) {
+        return true;
+      }
+      MapDifference<String, String> difference = Maps.difference(
+          Maps.filterKeys(cacheEnvironment, EnvironmentFilter.NOT_IGNORED_ENV_PREDICATE),
+          Maps.filterKeys(environment, EnvironmentFilter.NOT_IGNORED_ENV_PREDICATE));
+      if (!difference.areEqual()) {
+        LOG.warn(
+            "Environment variables changed (%s). Discarding cache to avoid effects on build. " +
+                "This will make builds very slow.",
+            difference);
+        return true;
+      }
+      return false;
+    }
+
+    /**
      * Invalidates the cached build rules if {@code environment} has changed since the last call.
      * If the cache is invalidated the new {@code environment} used to build the new cache is
      * stored.
@@ -1019,13 +1061,7 @@ public class Parser {
      */
     private synchronized boolean invalidateCacheOnEnvironmentChange(
         ImmutableMap<String, String> environment) {
-      if (!environment.equals(cacheEnvironment)) {
-        if (cacheEnvironment != null) {
-          LOG.warn(
-              "Environment variables changed (%s). Discarding cache to avoid effects on build. " +
-              "This will make builds very slow.",
-              Maps.difference(cacheEnvironment, environment));
-        }
+      if (shouldInvalidateCacheOnEnvironmentChange(environment)) {
         invalidateCache();
         this.cacheEnvironment = environment;
         return true;
@@ -1049,6 +1085,17 @@ public class Parser {
         return true;
       }
       return false;
+    }
+
+    /**
+     * Add a target at {@code paths} to the cache for {@code dependent}.
+     * @param paths The absolute Path that {@code dependent} should be invalidated for.
+     * @param dependent The absolute Path to the build file that depends on {@code path}.
+     */
+    void putDependents(ImmutableSet<Path> paths, Path dependent) {
+      for (Path path : paths) {
+        buildFileDependents.put(path, dependent);
+      }
     }
 
     /**
@@ -1080,7 +1127,7 @@ public class Parser {
       List<BuildTarget> targetsToRemove = pathsToBuildTargets.get(path);
       LOG.debug("Removing targets %s for path %s", targetsToRemove, path);
       for (BuildTarget target : targetsToRemove) {
-        memoizedTargetNodes.remove(target);
+        memoizedTargetNodes.invalidate(target);
       }
       buildTargetHashCodeCache.invalidateAll(targetsToRemove);
       pathsToBuildTargets.removeAll(path);
@@ -1130,7 +1177,7 @@ public class Parser {
         BuildTarget buildTarget,
         Optional<BuckEventBus> eventBus) throws IOException, InterruptedException {
       // Fast path.
-      TargetNode<?> toReturn = memoizedTargetNodes.get(buildTarget);
+      TargetNode<?> toReturn = memoizedTargetNodes.getIfPresent(buildTarget);
       if (toReturn != null) {
         return toReturn;
       }
@@ -1203,7 +1250,7 @@ public class Parser {
             // flavour.
             buildTarget,
             buildFileTreeCache.get(),
-            enforceBuckPackageBoundary);
+            targetRepo.isEnforcingBuckPackageBoundaries());
         Object constructorArg = description.createUnpopulatedConstructorArg();
         TargetNode<?> targetNode;
         try {
@@ -1228,7 +1275,8 @@ public class Parser {
                 constructorArg,
                 factoryParams,
                 declaredDeps.build(),
-                visibilityPatterns.build());
+                visibilityPatterns.build(),
+                targetRepo.getRepositoryAliases());
           }
         } catch (NoSuchBuildTargetException | TargetNode.InvalidSourcePathInputException e) {
           throw new HumanReadableException(e);
@@ -1250,15 +1298,17 @@ public class Parser {
               newSymlinksEncountered);
           buildInputPathsUnderSymlink.add(buildFilePath);
         }
-        TargetNode<?> existingTargetNode = memoizedTargetNodes.put(buildTarget, targetNode);
-        if (existingTargetNode != null) {
-          throw new HumanReadableException("Duplicate definition for " + unflavored);
+        synchronized (memoizedTargetNodes) {
+          if (memoizedTargetNodes.getIfPresent(buildTarget) != null) {
+            throw new HumanReadableException("Duplicate definition for " + unflavored);
+          }
+          memoizedTargetNodes.put(buildTarget, targetNode);
         }
 
         // PMD considers it bad form to return while in a loop.
       }
 
-      return memoizedTargetNodes.get(buildTarget);
+      return memoizedTargetNodes.getIfPresent(buildTarget);
     }
 
     public synchronized void cleanCache() {

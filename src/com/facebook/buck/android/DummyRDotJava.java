@@ -23,7 +23,7 @@ import com.facebook.buck.java.JavacStep;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.model.HasBuildTarget;
-import com.facebook.buck.rules.AbiRule;
+import com.facebook.buck.rules.keys.AbiRule;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
@@ -33,6 +33,7 @@ import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.InitializableFromDisk;
 import com.facebook.buck.rules.OnDiskBuildInfo;
 import com.facebook.buck.rules.Sha1HashCode;
+import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
@@ -46,8 +47,6 @@ import com.google.common.collect.ImmutableSet;
 import java.nio.file.Path;
 import java.util.Set;
 
-import javax.annotation.Nullable;
-
 /**
  * Buildable that takes in a list of {@link HasAndroidResourceDeps} and for each of these rules,
  * first creates an {@code R.java} file using {@link MergeAndroidResourcesStep} and compiles it to
@@ -58,6 +57,7 @@ public class DummyRDotJava extends AbstractBuildRule
     implements AbiRule, HasJavaAbi, InitializableFromDisk<DummyRDotJava.BuildOutput> {
 
   private final ImmutableList<HasAndroidResourceDeps> androidResourceDeps;
+  private final SourcePath abiJar;
   @AddToRuleKey
   private final JavacOptions javacOptions;
   private final BuildOutputInitializer<BuildOutput> buildOutputInitializer;
@@ -66,11 +66,13 @@ public class DummyRDotJava extends AbstractBuildRule
       BuildRuleParams params,
       SourcePathResolver resolver,
       Set<HasAndroidResourceDeps> androidResourceDeps,
+      SourcePath abiJar,
       JavacOptions javacOptions) {
     super(params, resolver);
     // Sort the input so that we get a stable ABI for the same set of resources.
     this.androidResourceDeps = FluentIterable.from(androidResourceDeps)
         .toSortedList(HasBuildTarget.BUILD_TARGET_COMPARATOR);
+    this.abiJar = abiJar;
     this.javacOptions = javacOptions;
     this.buildOutputInitializer = new BuildOutputInitializer<>(params.getBuildTarget(), this);
   }
@@ -81,7 +83,7 @@ public class DummyRDotJava extends AbstractBuildRule
       final BuildableContext buildableContext) {
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
     final Path rDotJavaSrcFolder = getRDotJavaSrcFolder(getBuildTarget());
-    steps.add(new MakeCleanDirectoryStep(rDotJavaSrcFolder));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), rDotJavaSrcFolder));
 
     // Generate the .java files and record where they will be written in javaSourceFilePaths.
     Set<Path> javaSourceFilePaths;
@@ -93,9 +95,10 @@ public class DummyRDotJava extends AbstractBuildRule
       // TODO(mbolin): Stop hardcoding com.facebook. This should match the package in the
       // associated TestAndroidManifest.xml file.
       Path emptyRDotJava = rDotJavaSrcFolder.resolve("com/facebook/R.java");
-      steps.add(new MakeCleanDirectoryStep(emptyRDotJava.getParent()));
+      steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), emptyRDotJava.getParent()));
       steps.add(
           new WriteFileStep(
+              getProjectFilesystem(),
               "package com.facebook;\n public class R {}\n",
               emptyRDotJava,
               /* executable */ false));
@@ -112,10 +115,10 @@ public class DummyRDotJava extends AbstractBuildRule
 
     // Clear out the directory where the .class files will be generated.
     final Path rDotJavaClassesFolder = getRDotJavaBinFolder();
-    steps.add(new MakeCleanDirectoryStep(rDotJavaClassesFolder));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), rDotJavaClassesFolder));
 
     Path pathToAbiOutputDir = getPathToAbiOutputDir(getBuildTarget());
-    steps.add(new MakeCleanDirectoryStep(pathToAbiOutputDir));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), pathToAbiOutputDir));
     Path pathToAbiOutputFile = pathToAbiOutputDir.resolve("abi.jar");
 
     // Compile the .java files.
@@ -125,11 +128,17 @@ public class DummyRDotJava extends AbstractBuildRule
             rDotJavaClassesFolder,
             javacOptions,
             getBuildTarget(),
-            getResolver());
+            getResolver(),
+            getProjectFilesystem());
     steps.add(javacStep);
     buildableContext.recordArtifact(rDotJavaClassesFolder);
 
-    steps.add(new CalculateAbiStep(buildableContext, rDotJavaClassesFolder, pathToAbiOutputFile));
+    steps.add(
+        new CalculateAbiStep(
+            buildableContext,
+            getProjectFilesystem(),
+            rDotJavaClassesFolder,
+            pathToAbiOutputFile));
 
     return steps.build();
   }
@@ -151,10 +160,9 @@ public class DummyRDotJava extends AbstractBuildRule
     return BuildTargets.getGenPath(buildTarget, "__%s_dummyrdotjava_abi__");
   }
 
-  @Nullable
   @Override
   public Path getPathToOutput() {
-    return null;
+    return getRDotJavaBinFolder();
   }
 
   public Path getRDotJavaBinFolder() {
@@ -189,6 +197,11 @@ public class DummyRDotJava extends AbstractBuildRule
   @Override
   public Sha1HashCode getAbiKey() {
     return buildOutputInitializer.getBuildOutput().rDotTxtSha1;
+  }
+
+  @Override
+  public Optional<SourcePath> getAbiJar() {
+    return Optional.of(abiJar);
   }
 
   public static class BuildOutput {

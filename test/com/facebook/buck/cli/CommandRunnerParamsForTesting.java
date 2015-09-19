@@ -22,20 +22,18 @@ import com.facebook.buck.android.FakeAndroidDirectoryResolver;
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckEventBusFactory;
 import com.facebook.buck.httpserver.WebServer;
-import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.java.FakeJavaPackageFinder;
 import com.facebook.buck.java.JavaPackageFinder;
 import com.facebook.buck.parser.Parser;
-import com.facebook.buck.parser.ParserConfig;
-import com.facebook.buck.python.PythonBuckConfig;
-import com.facebook.buck.rules.NoopArtifactCache;
+import com.facebook.buck.artifact_cache.ArtifactCache;
+import com.facebook.buck.artifact_cache.NoopArtifactCache;
 import com.facebook.buck.rules.Repository;
 import com.facebook.buck.rules.TestRepositoryBuilder;
 import com.facebook.buck.testutil.TestConsole;
 import com.facebook.buck.timing.DefaultClock;
 import com.facebook.buck.util.Console;
-import com.facebook.buck.util.cache.NullFileHashCache;
 import com.facebook.buck.util.ProcessManager;
+import com.facebook.buck.util.cache.NullFileHashCache;
 import com.facebook.buck.util.environment.Platform;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Optional;
@@ -52,7 +50,7 @@ public class CommandRunnerParamsForTesting {
       Console console,
       Repository repository,
       AndroidDirectoryResolver androidDirectoryResolver,
-      ArtifactCacheFactory artifactCacheFactory,
+      ArtifactCache artifactCache,
       BuckEventBus eventBus,
       BuckConfig config,
       Platform platform,
@@ -61,10 +59,6 @@ public class CommandRunnerParamsForTesting {
       ObjectMapper objectMapper,
       Optional<WebServer> webServer)
       throws IOException, InterruptedException {
-    ParserConfig parserConfig = new ParserConfig(config);
-    PythonBuckConfig pythonBuckConfig = new PythonBuckConfig(
-        config,
-        new ExecutableFinder());
     return new CommandRunnerParams(
         console,
         repository,
@@ -72,19 +66,11 @@ public class CommandRunnerParamsForTesting {
             androidDirectoryResolver,
             new AndroidBuckConfig(new FakeBuckConfig(), platform),
             eventBus),
-        artifactCacheFactory,
+        artifactCache,
         eventBus,
-        Parser.createParser(
+        Parser.createBuildFileParser(
             repository,
-            pythonBuckConfig.getPythonInterpreter(),
-            parserConfig.getAllowEmptyGlobs(),
-            parserConfig.getEnforceBuckPackageBoundary(),
-            parserConfig.getTempFilePatterns(),
-            parserConfig.getBuildFileName(),
-            parserConfig.getDefaultIncludes(),
-            /* useWatchmanGlob */ false,
-            /* watchamWatchRoot */ Optional.<String>absent(),
-            /* watchmanProjectPrefix */ Optional.<String>absent()),
+            /* useWatchmanGlob */ false),
         platform,
         environment,
         javaPackageFinder,
@@ -103,8 +89,7 @@ public class CommandRunnerParamsForTesting {
   public static class Builder {
 
     private AndroidDirectoryResolver androidDirectoryResolver = new FakeAndroidDirectoryResolver();
-    private ArtifactCacheFactory artifactCacheFactory = new InstanceArtifactCacheFactory(
-        new NoopArtifactCache());
+    private ArtifactCache artifactCache = new NoopArtifactCache();
     private Console console = new TestConsole();
     private BuckConfig config = new FakeBuckConfig();
     private BuckEventBus eventBus = BuckEventBusFactory.newInstance();
@@ -120,7 +105,7 @@ public class CommandRunnerParamsForTesting {
           console,
           new TestRepositoryBuilder().build(),
           androidDirectoryResolver,
-          artifactCacheFactory,
+          artifactCache,
           eventBus,
           config,
           platform,
@@ -140,8 +125,8 @@ public class CommandRunnerParamsForTesting {
       return this;
     }
 
-    public Builder setArtifactCacheFactory(ArtifactCacheFactory factory) {
-      this.artifactCacheFactory = factory;
+    public Builder setArtifactCache(ArtifactCache cache) {
+      this.artifactCache = cache;
       return this;
     }
 

@@ -23,15 +23,20 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.SourcePaths;
+import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Joiner;
+import com.google.common.base.Predicate;
+import com.google.common.base.Predicates;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.Ordering;
 
 import java.io.File;
 import java.nio.file.Path;
+
+import javax.annotation.Nullable;
 
 /**
  * Used to expand the macro {@literal $(classpath //some:target)} to the transitive classpath of
@@ -41,18 +46,15 @@ public class ClasspathMacroExpander
     extends BuildTargetMacroExpander
     implements MacroExpanderWithCustomFileOutput {
 
-  private ImmutableSetMultimap<JavaLibrary, Path> getTransitiveClasspathEntries(BuildRule rule)
+  private HasClasspathEntries getHasClasspathEntries(BuildRule rule)
       throws MacroException {
-
     if (!(rule instanceof HasClasspathEntries)) {
       throw new MacroException(
           String.format(
               "%s used in classpath macro does not correspond to a rule with a java classpath",
               rule.getBuildTarget()));
     }
-
-    HasClasspathEntries hasEntries = (HasClasspathEntries) rule;
-    return hasEntries.getTransitiveClasspathEntries();
+    return (HasClasspathEntries) rule;
   }
 
   @Override
@@ -62,7 +64,7 @@ public class ClasspathMacroExpander
       String input)
       throws MacroException {
     return ImmutableList.<BuildRule>copyOf(
-        getTransitiveClasspathEntries(resolve(target, resolver, input)).keySet());
+        getHasClasspathEntries(resolve(target, resolver, input)).getTransitiveClasspathDeps());
   }
 
   @Override
@@ -83,10 +85,39 @@ public class ClasspathMacroExpander
   protected String expand(SourcePathResolver resolver, ProjectFilesystem filesystem, BuildRule rule)
       throws MacroException {
     return Joiner.on(File.pathSeparator).join(
-        FluentIterable.from(getTransitiveClasspathEntries(rule).values())
+        FluentIterable.from(getHasClasspathEntries(rule).getTransitiveClasspathDeps())
+            .transform(
+                new Function<JavaLibrary, Path>() {
+                  @Nullable
+                  @Override
+                  public Path apply(JavaLibrary input) {
+                    return input.getPathToOutput();
+                  }
+                })
+            .filter(Predicates.notNull())
             .transform(filesystem.getAbsolutifier())
             .transform(Functions.toStringFunction())
             .toSortedSet(Ordering.natural()));
+  }
+
+  @Override
+  public Object extractRuleKeyAppendables(
+      BuildTarget target,
+      BuildRuleResolver resolver,
+      String input)
+      throws MacroException {
+    return FluentIterable.from(
+            getHasClasspathEntries(resolve(target, resolver, input))
+                .getTransitiveClasspathDeps())
+        .filter(
+            new Predicate<JavaLibrary>() {
+              @Override
+              public boolean apply(JavaLibrary input) {
+                return input.getPathToOutput() != null;
+              }
+            })
+        .transform(SourcePaths.getToBuildTargetSourcePath())
+        .toSortedSet(Ordering.natural());
   }
 
 }

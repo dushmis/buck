@@ -21,12 +21,13 @@ import static org.junit.Assert.assertEquals;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
-import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.FakeBuildableContext;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TestSourcePath;
 import com.facebook.buck.step.Step;
+import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.util.BuckConstant;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableSet;
@@ -63,6 +64,7 @@ public class AndroidManifestTest {
     Step generateManifestStep = steps.get(2);
     assertEquals(
         new GenerateManifestStep(
+            new FakeProjectFilesystem(),
             Paths.get("java/com/example/AndroidManifestSkeleton.xml"),
             /* libraryManifestPaths */ ImmutableSet.<Path>of(),
             BuckConstant.GEN_PATH.resolve("java/com/example/AndroidManifest__manifest__.xml")),
@@ -78,8 +80,8 @@ public class AndroidManifestTest {
 
   private AndroidManifest createSimpleAndroidManifestRule() {
     // First, create the AndroidManifest object.
-    BuildRuleParams buildRuleParams = BuildRuleParamsFactory.createTrivialBuildRuleParams(
-        BuildTarget.builder("//java/com/example", "manifest").build());
+    BuildRuleParams buildRuleParams =
+        new FakeBuildRuleParamsBuilder("//java/com/example:manifest").build();
     AndroidManifestDescription description = new AndroidManifestDescription();
     AndroidManifestDescription.Arg arg = description.createUnpopulatedConstructorArg();
     arg.skeleton = new TestSourcePath("java/com/example/AndroidManifestSkeleton.xml");

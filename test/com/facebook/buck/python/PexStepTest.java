@@ -25,6 +25,7 @@ import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.startsWith;
 
 import com.facebook.buck.step.TestExecutionContext;
+import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
@@ -42,8 +43,7 @@ import java.util.Map;
 public class PexStepTest {
 
   private static final Path PYTHON_PATH = Paths.get("/usr/local/bin/python");
-  private static final Path PEXPY_PATH = Paths.get("pex.py");
-  private static final ImmutableList<String> ARGS = ImmutableList.of();
+  private static final ImmutableList<String> PEX_COMMAND = ImmutableList.of();
   private static final Path TEMP_PATH = Paths.get("/tmp/");
   private static final Path DEST_PATH = Paths.get("/dest");
   private static final String ENTRY_POINT = "entry_point.main";
@@ -57,12 +57,13 @@ public class PexStepTest {
   private static final ImmutableSet<Path> PREBUILT_LIBRARIES = ImmutableSet.of(
       Paths.get("/src/p.egg"));
 
+
   @Test
   public void testCommandLine() {
     PexStep step =
         new PexStep(
-            PEXPY_PATH,
-            ARGS,
+            new FakeProjectFilesystem(),
+            PEX_COMMAND,
             PYTHON_PATH,
             TEMP_PATH,
             DEST_PATH,
@@ -75,7 +76,7 @@ public class PexStepTest {
     String command = Joiner.on(" ").join(
         step.getShellCommandInternal(TestExecutionContext.newInstance()));
 
-    assertThat(command, startsWith(PYTHON_PATH + " " + PEXPY_PATH));
+    assertThat(command, startsWith(Joiner.on(" ").join(PEX_COMMAND)));
     assertThat(command, containsString("--python " + PYTHON_PATH));
     assertThat(command, containsString("--entry-point " + ENTRY_POINT));
     assertThat(command, endsWith(" " + DEST_PATH));
@@ -85,8 +86,8 @@ public class PexStepTest {
   public void testCommandLineNoZipSafe() {
     PexStep step =
         new PexStep(
-            PEXPY_PATH,
-            ARGS,
+            new FakeProjectFilesystem(),
+            PEX_COMMAND,
             PYTHON_PATH,
             TEMP_PATH,
             DEST_PATH,
@@ -107,8 +108,8 @@ public class PexStepTest {
   public void testCommandStdin() throws IOException {
     PexStep step =
         new PexStep(
-            PEXPY_PATH,
-            ARGS,
+            new FakeProjectFilesystem(),
+            PEX_COMMAND,
             PYTHON_PATH,
             TEMP_PATH,
             DEST_PATH,
@@ -140,8 +141,11 @@ public class PexStepTest {
   public void testArgs() {
     PexStep step =
         new PexStep(
-            PEXPY_PATH,
-            ImmutableList.of("--some", "--args"),
+            new FakeProjectFilesystem(),
+            ImmutableList.<String>builder()
+                .add("build")
+                .add("--some", "--args")
+                .build(),
             PYTHON_PATH,
             TEMP_PATH,
             DEST_PATH,

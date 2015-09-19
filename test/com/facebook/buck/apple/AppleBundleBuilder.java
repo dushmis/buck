@@ -17,11 +17,10 @@
 package com.facebook.buck.apple;
 
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.model.Either;
 import com.facebook.buck.rules.AbstractNodeBuilder;
 import com.facebook.buck.rules.SourcePath;
-import com.facebook.buck.rules.coercer.Either;
 import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 
 public class AppleBundleBuilder
@@ -54,11 +53,6 @@ public class AppleBundleBuilder
 
   public AppleBundleBuilder setInfoPlist(SourcePath infoPlist) {
     arg.infoPlist = infoPlist;
-    return this;
-  }
-
-  public AppleBundleBuilder setHeaders(Optional<ImmutableMap<String, SourcePath>> headers) {
-    arg.headers = headers;
     return this;
   }
 

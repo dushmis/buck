@@ -20,7 +20,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
 
 import com.facebook.buck.io.ProjectFilesystem;
-import com.facebook.buck.rules.AbiRule;
+import com.facebook.buck.rules.keys.AbiRule;
 import com.facebook.buck.rules.FakeBuildableContext;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.TestExecutionContext;
@@ -54,12 +54,10 @@ public class CalculateAbiStepTest {
 
     Path abiJar = outDir.resolve("abi.jar");
 
-    ExecutionContext executionContext = TestExecutionContext.newBuilder()
-        .setProjectFilesystem(filesystem)
-        .build();
+    ExecutionContext executionContext = TestExecutionContext.newInstance();
 
     FakeBuildableContext context = new FakeBuildableContext();
-    new CalculateAbiStep(context, binJar, abiJar).execute(executionContext);
+    new CalculateAbiStep(context, filesystem, binJar, abiJar).execute(executionContext);
 
     String expectedHash = filesystem.computeSha1(Paths.get("abi.jar"));
     ImmutableMap<String, Object> metadata = context.getRecordedMetadata();
@@ -82,11 +80,10 @@ public class CalculateAbiStepTest {
     Path abiJar = outDir.resolve("abi.jar");
 
     ExecutionContext executionContext = TestExecutionContext.newBuilder()
-        .setProjectFilesystem(filesystem)
         .build();
 
     FakeBuildableContext context = new FakeBuildableContext();
-    new CalculateAbiStep(context, binJar, abiJar).execute(executionContext);
+    new CalculateAbiStep(context, filesystem, binJar, abiJar).execute(executionContext);
 
     ImmutableMap<String, Object> metadata = context.getRecordedMetadata();
     Object seenHash = metadata.get(AbiRule.ABI_KEY_ON_DISK_METADATA);

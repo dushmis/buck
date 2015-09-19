@@ -18,11 +18,12 @@ package com.facebook.buck.js;
 
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
-import com.facebook.buck.rules.AbiRule;
+import com.facebook.buck.rules.keys.AbiRule;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePath;
@@ -89,13 +90,13 @@ public class ReactNativeBundle extends AbstractBuildRule implements AbiRule {
       BuildableContext buildableContext) {
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
     final Path jsOutput = jsOutputDir.resolve(bundleName);
-    steps.add(new MakeCleanDirectoryStep(jsOutput.getParent()));
-    steps.add(new MakeCleanDirectoryStep(resource));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), jsOutput.getParent()));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), resource));
     final Path sourceMapOutput = getPathToSourceMap(getBuildTarget());
-    steps.add(new MakeCleanDirectoryStep(sourceMapOutput.getParent()));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), sourceMapOutput.getParent()));
 
     steps.add(
-        new ShellStep() {
+        new ShellStep(getProjectFilesystem().getRootPath()) {
           @Override
           public String getShortName() {
             return "bundle_react_native";
@@ -115,12 +116,12 @@ public class ReactNativeBundle extends AbstractBuildRule implements AbiRule {
         });
     buildableContext.recordArtifact(jsOutputDir);
     buildableContext.recordArtifact(resource);
-    buildableContext.recordArtifact(sourceMapOutput);
+    buildableContext.recordArtifact(sourceMapOutput.getParent());
     return steps.build();
   }
 
-  public Path getJSBundleDir() {
-    return jsOutputDir;
+  public SourcePath getJSBundleDir() {
+    return new BuildTargetSourcePath(getBuildTarget(), jsOutputDir);
   }
 
   public Path getResources() {

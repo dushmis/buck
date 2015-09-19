@@ -16,8 +16,8 @@
 
 package com.facebook.buck.ocaml;
 
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyAppendable;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.shell.ShellStep;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.util.MoreIterables;
@@ -63,7 +63,7 @@ public class OCamlLinkStep extends ShellStep {
     }
 
     @Override
-    public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+    public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
       return builder
           .setReflectively("cxxCompiler", cxxCompiler.toString())
           .setReflectively("ocamlCompiler", ocamlCompiler.toString())
@@ -97,7 +97,8 @@ public class OCamlLinkStep extends ShellStep {
   private final ImmutableList<String> ocamlInput;
   private final ImmutableList<String> systemSoLibs;
 
-  public OCamlLinkStep(Args args) {
+  public OCamlLinkStep(Path workingDirectory, Args args) {
+    super(workingDirectory);
     this.args = args;
 
     ImmutableList.Builder<String> aAndOInputBuilder = ImmutableList.builder();

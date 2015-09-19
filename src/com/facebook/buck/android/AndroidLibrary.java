@@ -21,6 +21,7 @@ import static com.facebook.buck.rules.BuildableProperties.Kind.LIBRARY;
 
 import com.facebook.buck.java.DefaultJavaLibrary;
 import com.facebook.buck.java.JavacOptions;
+import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
@@ -59,12 +60,14 @@ public class AndroidLibrary extends DefaultJavaLibrary implements AndroidPackage
       ImmutableList<String> postprocessClassesCommands,
       ImmutableSortedSet<BuildRule> exportedDeps,
       ImmutableSortedSet<BuildRule> providedDeps,
+      SourcePath abiJar,
       ImmutableSet<Path> additionalClasspathEntries,
       JavacOptions javacOptions,
       Optional<Path> resourcesRoot,
       Optional<String> mavenCoords,
       Optional<SourcePath> manifestFile,
-      boolean isPrebuiltAar) {
+      boolean isPrebuiltAar,
+      ImmutableSortedSet<BuildTarget> tests) {
     super(
         params,
         resolver,
@@ -74,10 +77,12 @@ public class AndroidLibrary extends DefaultJavaLibrary implements AndroidPackage
         postprocessClassesCommands,
         exportedDeps,
         providedDeps,
+        abiJar,
         additionalClasspathEntries,
         javacOptions,
         resourcesRoot,
-        mavenCoords);
+        mavenCoords,
+        tests);
     this.manifestFile = manifestFile;
     this.isPrebuiltAar = isPrebuiltAar;
   }

@@ -39,9 +39,7 @@ public class ThriftCompilerStepTest {
   @Test
   public void thriftCompilerStepUsesCorrectCommand() {
     ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
-    ExecutionContext context = TestExecutionContext.newBuilder()
-        .setProjectFilesystem(projectFilesystem)
-        .build();
+    ExecutionContext context = TestExecutionContext.newInstance();
 
     // Setup some dummy values for inputs to the ThriftCompilerStep
     ImmutableList<String> compilerPrefix = ImmutableList.of("compiler", "--allow-64-bit");
@@ -53,6 +51,7 @@ public class ThriftCompilerStepTest {
 
     // Create our ThriftCompilerStep to test.
     ThriftCompilerStep thriftCompilerStep = new ThriftCompilerStep(
+        projectFilesystem.getRootPath(),
         compilerPrefix,
         outputDir,
         input,

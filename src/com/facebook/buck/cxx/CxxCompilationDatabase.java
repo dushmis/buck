@@ -75,7 +75,7 @@ public class CxxCompilationDatabase extends AbstractBuildRule implements HasPost
     return new CxxCompilationDatabase(
         params.copyWithDeps(
             Suppliers.ofInstance(deps.build()),
-            Suppliers.ofInstance(params.getExtraDeps())),
+            params.getExtraDeps()),
         pathResolver,
         compileRules.build(),
         preprocessMode);
@@ -92,8 +92,8 @@ public class CxxCompilationDatabase extends AbstractBuildRule implements HasPost
 
     return params.copyWithChanges(
         target,
-        Suppliers.ofInstance(params.getDeclaredDeps()),
-        Suppliers.ofInstance(params.getExtraDeps()));
+        params.getDeclaredDeps(),
+        params.getExtraDeps());
   }
 
   CxxCompilationDatabase(
@@ -122,7 +122,7 @@ public class CxxCompilationDatabase extends AbstractBuildRule implements HasPost
     // Since the step to generate the commands json output is super fast, it's ok if we always build
     // this rule locally.
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
-    steps.add(new MkdirStep(outputJsonFile.getParent()));
+    steps.add(new MkdirStep(getProjectFilesystem(), outputJsonFile.getParent()));
     steps.add(new GenerateCompilationCommandsJson());
     return steps.build();
   }

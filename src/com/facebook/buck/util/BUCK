@@ -4,6 +4,9 @@ CONSTANT_SRCS = [
 java_library(
   name = 'constants',
   srcs = CONSTANT_SRCS,
+  tests = [
+    '//test/com/facebook/buck/util:util',
+  ],
   visibility = [ 'PUBLIC' ],
   deps = [
     '//third-party/java/guava:guava',
@@ -20,6 +23,9 @@ EXCEPTION_SRCS = [
 java_library(
   name = 'exceptions',
   srcs = EXCEPTION_SRCS,
+  tests = [
+    '//test/com/facebook/buck/util:util',
+  ],
   deps = [
     '//third-party/java/guava:guava',
     '//third-party/java/jsr:jsr305',
@@ -29,6 +35,7 @@ java_library(
 
 
 IO_SRCS = [
+  'AbstractCharsetProcessListener.java',
   'AbstractProcessExecutorParams.java',
   'Ansi.java',
   'AnsiEnvironmentChecking.java',
@@ -38,6 +45,10 @@ IO_SRCS = [
   'DirtyPrintStreamDecorator.java',
   'InputStreamConsumer.java',
   'LineFetcher.java',
+  'LineIterating.java',
+  'ListeningCharsetEncoder.java',
+  'ListeningCharsetDecoder.java',
+  'ListeningProcessExecutor.java',
   'PkillProcessManager.java',
   'ProcessManager.java',
   'ProcessExecutor.java',
@@ -49,12 +60,16 @@ IO_SRCS = [
 java_immutables_library(
   name = 'io',
   srcs = IO_SRCS,
+  tests = [
+    '//test/com/facebook/buck/util:util',
+  ],
   deps = [
     ':constants',
     ':escaper',
     ':exceptions',
     '//third-party/java/guava:guava',
     '//third-party/java/jsr:jsr305',
+    '//third-party/java/nuprocess:nuprocess',
     '//src/com/facebook/buck/io:io',
     '//src/com/facebook/buck/log:api',
     '//src/com/facebook/buck/util/environment:platform',
@@ -92,6 +107,7 @@ java_library(
     ':util',
     '//src/com/facebook/buck/event:event',
     '//src/com/facebook/buck/io:io',
+    '//src/com/facebook/buck/io:watchman',
     '//src/com/facebook/buck/log:api',
     '//src/com/facebook/buck/timing:timing',
     '//third-party/java/guava:guava',
@@ -111,6 +127,9 @@ java_immutables_library(
     includes = ['*.java'],
     excludes = CONSTANT_SRCS + ESCAPER_SRCS + EXCEPTION_SRCS + IO_SRCS +
                WATCHMAN_WATCHER_SRCS),
+  tests = [
+    '//test/com/facebook/buck/util:util',
+  ],
   deps = [
     ':constants',
     ':exceptions',
@@ -119,6 +138,7 @@ java_immutables_library(
     '//src/com/facebook/buck/io:io',  # While we move classes
     '//src/com/facebook/buck/log:api',
     '//src/com/facebook/buck/zip:stream',
+    '//src/com/facebook/buck/zip:unzip',
     '//third-party/java/aosp:aosp',
     '//third-party/java/jsr:jsr305',
   ],
@@ -128,6 +148,6 @@ java_immutables_library(
 )
 
 sh_test(
-  name = 'one_project_filesystem_test',
-  test = 'one_project_filesystem_test.sh',
+  name = 'limit_new_project_filesystem_test',
+  test = 'limit_new_project_filesystem_test.sh',
 )

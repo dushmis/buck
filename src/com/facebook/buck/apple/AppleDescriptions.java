@@ -65,29 +65,32 @@ public class AppleDescriptions {
   /** Utility class: do not instantiate. */
   private AppleDescriptions() {}
 
-  public static Optional<Path> getPathToHeaderSymlinkTree(
-      TargetNode<? extends AppleNativeTargetDescriptionArg> targetNode,
+  public static Path getPathToHeaderSymlinkTree(
+      TargetNode<? extends CxxLibraryDescription.Arg> targetNode,
       HeaderVisibility headerVisibility) {
-    if (!targetNode.getConstructorArg().getUseBuckHeaderMaps()) {
-      return Optional.absent();
-    }
-
-    return Optional.of(
-        BuildTargets.getGenPath(
-            targetNode.getBuildTarget().getUnflavoredBuildTarget(),
-            "%s" + AppleHeaderVisibilities.getHeaderSymlinkTreeSuffix(headerVisibility)));
+    return BuildTargets.getGenPath(
+        targetNode.getBuildTarget().getUnflavoredBuildTarget(),
+        "%s" + AppleHeaderVisibilities.getHeaderSymlinkTreeSuffix(headerVisibility));
   }
 
   public static Path getHeaderPathPrefix(
-      AppleNativeTargetDescriptionArg arg,
+      CxxLibraryDescription.Arg arg,
       BuildTarget buildTarget) {
-    return Paths.get(arg.headerPathPrefix.or(buildTarget.getShortName()));
+
+    Optional<String> prefix;
+    if (arg instanceof AppleNativeTargetDescriptionArg) {
+      prefix = ((AppleNativeTargetDescriptionArg) arg).headerPathPrefix;
+    } else {
+      prefix = arg.headerNamespace;
+    }
+
+    return Paths.get(prefix.or(buildTarget.getShortName()));
   }
 
   public static ImmutableSortedMap<String, SourcePath> convertAppleHeadersToPublicCxxHeaders(
       Function<SourcePath, Path> pathResolver,
       Path headerPathPrefix,
-      AppleNativeTargetDescriptionArg arg) {
+      CxxLibraryDescription.Arg arg) {
     // The exported headers in the populated cxx constructor arg will contain exported headers from
     // the apple constructor arg with the public include style.
     return AppleDescriptions.parseAppleHeadersForUseFromOtherTargets(
@@ -99,7 +102,7 @@ public class AppleDescriptions {
   public static ImmutableSortedMap<String, SourcePath> convertAppleHeadersToPrivateCxxHeaders(
       Function<SourcePath, Path> pathResolver,
       Path headerPathPrefix,
-      AppleNativeTargetDescriptionArg arg) {
+      CxxLibraryDescription.Arg arg) {
     // The private headers will contain exported headers with the private include style and private
     // headers with both styles.
     return ImmutableSortedMap.<String, SourcePath>naturalOrder()

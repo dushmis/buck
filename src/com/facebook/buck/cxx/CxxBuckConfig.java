@@ -38,6 +38,8 @@ public class CxxBuckConfig {
   private static final String FLAVORED_CXX_SECTION_PREFIX = "cxx#";
   private static final String UNFLAVORED_CXX_SECTION_PREFIX = "cxx";
 
+  private static final long DEFAULT_MAX_TEST_OUTPUT_SIZE = 8096;
+
   private final BuckConfig delegate;
   private final String cxxSection;
 
@@ -90,6 +92,15 @@ public class CxxBuckConfig {
    */
   public BuildTarget getGtestDep() {
     return delegate.getRequiredBuildTarget(cxxSection, "gtest_dep");
+  }
+
+  /**
+   * @return the {@link BuildTarget} which represents the main function that
+   * gtest tests should use by default (if no other main is given).
+   */
+  public BuildTarget getGtestDefaultTestMainDep() {
+    return delegate.getBuildTarget(cxxSection, "gtest_default_test_main_dep")
+        .or(getGtestDep());
   }
 
   /**
@@ -201,4 +212,12 @@ public class CxxBuckConfig {
     }
     return Optional.of(result);
   }
+
+  /**
+   * @return the maximum size in bytes of test output to report in test results.
+   */
+  public long getMaximumTestOutputSize() {
+    return delegate.getLong(cxxSection, "max_test_output_size").or(DEFAULT_MAX_TEST_OUTPUT_SIZE);
+  }
+
 }

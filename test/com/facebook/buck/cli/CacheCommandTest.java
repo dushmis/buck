@@ -23,8 +23,8 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.assertEquals;
 
-import com.facebook.buck.rules.ArtifactCache;
-import com.facebook.buck.rules.CacheResult;
+import com.facebook.buck.artifact_cache.ArtifactCache;
+import com.facebook.buck.artifact_cache.CacheResult;
 import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.testutil.TestConsole;
 import com.google.common.collect.ImmutableList;
@@ -61,13 +61,12 @@ public class CacheCommandTest extends EasyMockSupport {
             eq(new RuleKey(ruleKeyHash)),
             isA(Path.class)))
         .andReturn(CacheResult.hit("http"));
-    ArtifactCacheFactory artifactCacheFactory = new InstanceArtifactCacheFactory(cache);
 
     TestConsole console = new TestConsole();
 
     CommandRunnerParams commandRunnerParams = CommandRunnerParamsForTesting.builder()
         .setConsole(console)
-        .setArtifactCacheFactory(artifactCacheFactory)
+        .setArtifactCache(cache)
         .build();
 
     replayAll();
@@ -92,14 +91,13 @@ public class CacheCommandTest extends EasyMockSupport {
             eq(new RuleKey(ruleKeyHash)),
             isA(Path.class)))
         .andReturn(CacheResult.miss());
-    ArtifactCacheFactory artifactCacheFactory = new InstanceArtifactCacheFactory(cache);
 
     TestConsole console = new TestConsole();
     console.printErrorText("Failed to retrieve an artifact with id " + ruleKeyHash + ".");
 
     CommandRunnerParams commandRunnerParams = CommandRunnerParamsForTesting.builder()
         .setConsole(console)
-        .setArtifactCacheFactory(artifactCacheFactory)
+        .setArtifactCache(cache)
         .build();
 
     replayAll();

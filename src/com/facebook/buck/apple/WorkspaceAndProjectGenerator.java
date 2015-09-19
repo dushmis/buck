@@ -70,6 +70,7 @@ public class WorkspaceAndProjectGenerator {
   private final boolean combinedProject;
   private final boolean buildWithBuck;
   private final ImmutableList<String> buildWithBuckFlags;
+  private final boolean parallelizeBuild;
   private final ExecutableFinder executableFinder;
   private final ImmutableMap<String, String> environment;
   private final FlavorDomain<CxxPlatform> cxxPlatforms;
@@ -95,6 +96,7 @@ public class WorkspaceAndProjectGenerator {
       boolean combinedProject,
       boolean buildWithBuck,
       ImmutableList<String> buildWithBuckFlags,
+      boolean parallelizeBuild,
       ExecutableFinder executableFinder,
       ImmutableMap<String, String> environment,
       FlavorDomain<CxxPlatform> cxxPlatforms,
@@ -110,6 +112,7 @@ public class WorkspaceAndProjectGenerator {
     this.combinedProject = combinedProject;
     this.buildWithBuck = buildWithBuck;
     this.buildWithBuckFlags = buildWithBuckFlags;
+    this.parallelizeBuild = parallelizeBuild;
     this.executableFinder = executableFinder;
     this.environment = environment;
     this.cxxPlatforms = cxxPlatforms;
@@ -167,14 +170,16 @@ public class WorkspaceAndProjectGenerator {
     if (combinedProject) {
       workspaceName += "-Combined";
       outputDirectory =
-          BuildTargets.getGenPath(workspaceBuildTarget, "%s").getParent();
+          BuildTargets.getGenPath(workspaceBuildTarget, "%s")
+              .getParent()
+              .resolve(workspaceName + ".xcodeproj");
     } else {
       outputDirectory = workspaceBuildTarget.getBasePath();
     }
 
     WorkspaceGenerator workspaceGenerator = new WorkspaceGenerator(
         projectFilesystem,
-        workspaceName,
+        combinedProject ? "project" : workspaceName,
         outputDirectory);
 
     ImmutableMap.Builder<String, XcodeWorkspaceConfigDescription.Arg> schemeConfigsBuilder =
@@ -189,8 +194,10 @@ public class WorkspaceAndProjectGenerator {
         ungroupedTestsBuilder = ImmutableSetMultimap.builder();
 
     buildWorkspaceSchemes(
+        getTargetToBuildWithBuck(),
         projectGraph,
         projectGeneratorOptions.contains(ProjectGenerator.Option.INCLUDE_TESTS),
+        projectGeneratorOptions.contains(ProjectGenerator.Option.INCLUDE_DEPENDENCIES_TESTS),
         groupableTests,
         workspaceName,
         workspaceArguments,
@@ -230,7 +237,7 @@ public class WorkspaceAndProjectGenerator {
           targetsInRequiredProjects,
           projectFilesystem,
           reactNativeBuckConfig.getServer(),
-          outputDirectory,
+          outputDirectory.getParent(),
           workspaceName,
           buildFileName,
           projectGeneratorOptions,
@@ -425,8 +432,10 @@ public class WorkspaceAndProjectGenerator {
   }
 
   private static void buildWorkspaceSchemes(
+      Optional<BuildTarget> mainTarget,
       TargetGraph projectGraph,
       boolean includeProjectTests,
+      boolean includeDependenciesTests,
       ImmutableSet<TargetNode<AppleTestDescription.Arg>> groupableTests,
       String workspaceName,
       XcodeWorkspaceConfigDescription.Arg workspaceArguments,
@@ -462,8 +471,10 @@ public class WorkspaceAndProjectGenerator {
     ImmutableSetMultimap.Builder<String, TargetNode<AppleTestDescription.Arg>>
         selectedTestsBuilder = ImmutableSetMultimap.builder();
     buildWorkspaceSchemeTests(
+        mainTarget,
         projectGraph,
         includeProjectTests,
+        includeDependenciesTests,
         schemeNameToSrcTargetNode,
         extraTestNodes,
         selectedTestsBuilder,
@@ -599,36 +610,44 @@ public class WorkspaceAndProjectGenerator {
    * @return test targets that should be run.
    */
   private static ImmutableSet<TargetNode<AppleTestDescription.Arg>> getOrderedTestNodes(
+      Optional<BuildTarget> mainTarget,
       TargetGraph targetGraph,
       boolean includeProjectTests,
+      boolean includeDependenciesTests,
       ImmutableSet<TargetNode<?>> orderedTargetNodes,
       ImmutableSet<TargetNode<AppleTestDescription.Arg>> extraTestBundleTargets) {
     LOG.debug("Getting ordered test target nodes for %s", orderedTargetNodes);
     ImmutableSet.Builder<TargetNode<AppleTestDescription.Arg>> testsBuilder =
         ImmutableSet.builder();
     if (includeProjectTests) {
+      TargetNode<?> mainTargetNode = null;
+      if (mainTarget.isPresent()) {
+        mainTargetNode = targetGraph.get(mainTarget.get());
+      }
       for (TargetNode<?> node : orderedTargetNodes) {
-        if (!(node.getConstructorArg() instanceof HasTests)) {
-          continue;
-        }
-        for (BuildTarget explicitTestTarget : ((HasTests) node.getConstructorArg()).getTests()) {
-          TargetNode<?> explicitTestNode = targetGraph.get(explicitTestTarget);
-          if (explicitTestNode != null) {
-            Optional<TargetNode<AppleTestDescription.Arg>> castedNode =
-                explicitTestNode.castArg(AppleTestDescription.Arg.class);
-            if (castedNode.isPresent()) {
-              testsBuilder.add(castedNode.get());
+        if (includeDependenciesTests || (mainTargetNode != null && node.equals(mainTargetNode))) {
+          if (!(node.getConstructorArg() instanceof HasTests)) {
+            continue;
+          }
+          for (BuildTarget explicitTestTarget : ((HasTests) node.getConstructorArg()).getTests()) {
+            TargetNode<?> explicitTestNode = targetGraph.get(explicitTestTarget);
+            if (explicitTestNode != null) {
+              Optional<TargetNode<AppleTestDescription.Arg>> castedNode =
+                  explicitTestNode.castArg(AppleTestDescription.Arg.class);
+              if (castedNode.isPresent()) {
+                testsBuilder.add(castedNode.get());
+              } else {
+                throw new HumanReadableException(
+                    "Test target specified in '%s' is not a test: '%s'",
+                    node.getBuildTarget(),
+                    explicitTestTarget);
+              }
             } else {
               throw new HumanReadableException(
-                  "Test target specified in '%s' is not a test: '%s'",
+                  "Test target specified in '%s' is not in the target graph: '%s'",
                   node.getBuildTarget(),
                   explicitTestTarget);
             }
-          } else {
-            throw new HumanReadableException(
-                "Test target specified in '%s' is not in the target graph: '%s'",
-                node.getBuildTarget(),
-                explicitTestTarget);
           }
         }
       }
@@ -694,8 +713,10 @@ public class WorkspaceAndProjectGenerator {
   }
 
   private static void buildWorkspaceSchemeTests(
+      Optional<BuildTarget> mainTarget,
       TargetGraph projectGraph,
       boolean includeProjectTests,
+      boolean includeDependenciesTests,
       ImmutableSetMultimap<String, Optional<TargetNode<?>>> schemeNameToSrcTargetNode,
       ImmutableSetMultimap<String, TargetNode<AppleTestDescription.Arg>> extraTestNodes,
       ImmutableSetMultimap.Builder<String, TargetNode<AppleTestDescription.Arg>>
@@ -707,8 +728,10 @@ public class WorkspaceAndProjectGenerator {
           ImmutableSet.copyOf(Optional.presentInstances(schemeNameToSrcTargetNode.get(schemeName)));
       ImmutableSet<TargetNode<AppleTestDescription.Arg>> testNodes =
           getOrderedTestNodes(
+              mainTarget,
               projectGraph,
               includeProjectTests,
+              includeDependenciesTests,
               targetNodes,
               extraTestNodes.get(schemeName));
       selectedTestsBuilder.putAll(schemeName, testNodes);
@@ -803,8 +826,11 @@ public class WorkspaceAndProjectGenerator {
           orderedBuildTestTargets,
           orderedRunTestTargets,
           schemeName,
-          outputDirectory.resolve(workspaceName + ".xcworkspace"),
+          combinedProject ?
+              outputDirectory :
+              outputDirectory.resolve(workspaceName + ".xcworkspace"),
           buildWithBuck,
+          parallelizeBuild,
           runnablePath,
           remoteRunnablePath,
           XcodeWorkspaceConfigDescription.getActionConfigNamesFromArg(workspaceArguments),

@@ -43,8 +43,8 @@ import com.facebook.buck.apple.AppleBundleDescription;
 import com.facebook.buck.apple.AppleConfig;
 import com.facebook.buck.apple.AppleCxxPlatform;
 import com.facebook.buck.apple.AppleCxxPlatforms;
-import com.facebook.buck.apple.ApplePackageDescription;
 import com.facebook.buck.apple.AppleLibraryDescription;
+import com.facebook.buck.apple.ApplePackageDescription;
 import com.facebook.buck.apple.AppleResourceDescription;
 import com.facebook.buck.apple.AppleSdk;
 import com.facebook.buck.apple.AppleSdkDiscovery;
@@ -58,6 +58,7 @@ import com.facebook.buck.apple.XcodePostbuildScriptDescription;
 import com.facebook.buck.apple.XcodePrebuildScriptDescription;
 import com.facebook.buck.apple.XcodeWorkspaceConfigDescription;
 import com.facebook.buck.cli.BuckConfig;
+import com.facebook.buck.cli.DownloadConfig;
 import com.facebook.buck.cxx.CxxBinaryDescription;
 import com.facebook.buck.cxx.CxxBuckConfig;
 import com.facebook.buck.cxx.CxxLibraryDescription;
@@ -72,6 +73,8 @@ import com.facebook.buck.d.DBinaryDescription;
 import com.facebook.buck.d.DBuckConfig;
 import com.facebook.buck.d.DLibraryDescription;
 import com.facebook.buck.d.DTestDescription;
+import com.facebook.buck.dotnet.CSharpLibraryDescription;
+import com.facebook.buck.dotnet.PrebuiltDotNetLibraryDescription;
 import com.facebook.buck.file.Downloader;
 import com.facebook.buck.file.ExplodingDownloader;
 import com.facebook.buck.file.HttpDownloader;
@@ -118,6 +121,7 @@ import com.facebook.buck.thrift.ThriftPythonEnhancer;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.ProcessExecutor;
 import com.facebook.buck.util.environment.Platform;
+import com.facebook.buck.zip.ZipDescription;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -197,12 +201,14 @@ public class KnownBuildRuleTypes {
       BuckConfig config,
       ProcessExecutor processExecutor,
       AndroidDirectoryResolver androidDirectoryResolver,
-      PythonEnvironment pythonEnv) throws InterruptedException, IOException {
+      PythonEnvironment pythonEnv,
+      Optional<Path> testTempDirOverride) throws InterruptedException, IOException {
     return createBuilder(
         config,
         processExecutor,
         androidDirectoryResolver,
-        pythonEnv).build();
+        pythonEnv,
+        testTempDirOverride).build();
   }
 
   private static void buildAppleCxxPlatforms(
@@ -257,7 +263,8 @@ public class KnownBuildRuleTypes {
       BuckConfig config,
       ProcessExecutor processExecutor,
       AndroidDirectoryResolver androidDirectoryResolver,
-      PythonEnvironment pythonEnv) throws InterruptedException, IOException {
+      PythonEnvironment pythonEnv,
+      Optional<Path> testTempDirOverride) throws InterruptedException, IOException {
 
     Platform platform = Platform.detect();
 
@@ -377,11 +384,13 @@ public class KnownBuildRuleTypes {
     Optional<Long> testRuleTimeoutMs = config.getLong("test", "rule_timeout");
 
     // Default maven repo, if set
-    Optional<String> defaultMavenRepo = config.getValue("download", "maven_repo");
-    boolean downloadAtRuntimeOk = config.getBooleanValue("download", "in_build", false);
+    DownloadConfig downloadConfig = new DownloadConfig(config);
+    Optional<String> defaultMavenRepo = downloadConfig.getMavenRepo();
+    Optional<Proxy> proxy = downloadConfig.getProxy();
+    boolean downloadAtRuntimeOk = downloadConfig.isDownloadAtRuntimeOk();
     Downloader downloader;
     if (downloadAtRuntimeOk) {
-      downloader = new HttpDownloader(Optional.<Proxy>absent(), defaultMavenRepo);
+      downloader = new HttpDownloader(proxy, defaultMavenRepo);
     } else {
       downloader = new ExplodingDownloader();
     }
@@ -471,6 +480,7 @@ public class KnownBuildRuleTypes {
             defaultCxxPlatform,
             codeSignIdentitiesSupplier.get()));
     builder.register(new CoreDataModelDescription());
+    builder.register(new CSharpLibraryDescription());
     builder.register(cxxBinaryDescription);
     builder.register(cxxLibraryDescription);
     builder.register(new CxxPythonExtensionDescription(cxxBuckConfig, cxxPlatforms));
@@ -489,13 +499,15 @@ public class KnownBuildRuleTypes {
         new JavaTestDescription(
             defaultJavacOptions,
             testRuleTimeoutMs,
-            defaultCxxPlatform));
+            defaultCxxPlatform,
+            testTempDirOverride));
     builder.register(new KeystoreDescription());
     builder.register(new NdkLibraryDescription(ndkVersion, ndkCxxPlatforms));
     OCamlBuckConfig ocamlBuckConfig = new OCamlBuckConfig(platform, config);
     builder.register(new OCamlBinaryDescription(ocamlBuckConfig));
     builder.register(new OCamlLibraryDescription(ocamlBuckConfig));
     builder.register(new PrebuiltCxxLibraryDescription(cxxPlatforms));
+    builder.register(new PrebuiltDotNetLibraryDescription());
     builder.register(new PrebuiltJarDescription());
     builder.register(new PrebuiltNativeLibraryDescription());
     builder.register(new PrebuiltOCamlLibraryDescription());
@@ -513,7 +525,8 @@ public class KnownBuildRuleTypes {
     builder.register(new RobolectricTestDescription(
             androidBinaryOptions,
             testRuleTimeoutMs,
-            defaultCxxPlatform));
+            defaultCxxPlatform,
+            testTempDirOverride));
     builder.register(new RustBinaryDescription(rustBuckConfig));
     builder.register(new RustLibraryDescription(rustBuckConfig));
     builder.register(new ShBinaryDescription());
@@ -537,6 +550,7 @@ public class KnownBuildRuleTypes {
     builder.register(new XcodePostbuildScriptDescription());
     builder.register(new XcodePrebuildScriptDescription());
     builder.register(new XcodeWorkspaceConfigDescription());
+    builder.register(new ZipDescription());
 
     builder.setCxxPlatforms(cxxPlatforms);
     builder.setDefaultCxxPlatform(defaultCxxPlatform);

@@ -20,8 +20,10 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.maven.AetherUtil;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
+import com.facebook.buck.model.Either;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.Flavored;
+import com.facebook.buck.model.HasTests;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
@@ -36,12 +38,12 @@ import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.SourcePaths;
 import com.facebook.buck.rules.TargetGraph;
-import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -54,6 +56,9 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
     FlavorableDescription<JavaLibraryDescription.Arg>, Flavored {
 
   public static final BuildRuleType TYPE = BuildRuleType.of("java_library");
+  public static final ImmutableSet<Flavor> SUPPORTED_FLAVORS = ImmutableSet.of(
+      JavaLibrary.SRC_JAR,
+      JavaLibrary.MAVEN_JAR);
 
   @VisibleForTesting
   final JavacOptions defaultOptions;
@@ -69,7 +74,7 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
 
   @Override
   public boolean hasFlavors(ImmutableSet<Flavor> flavors) {
-    return flavors.equals(ImmutableSet.of(JavaLibrary.SRC_JAR)) || flavors.isEmpty();
+    return SUPPORTED_FLAVORS.containsAll(flavors);
   }
 
   @Override
@@ -89,18 +94,39 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
     // We know that the flavour we're being asked to create is valid, since the check is done when
     // creating the action graph from the target graph.
 
-    if (target.getFlavors().contains(JavaLibrary.SRC_JAR)) {
-      return new JavaSourceJar(
-          params,
-          pathResolver,
-          args.srcs.get(),
-          args.mavenCoords.transform(
-            new Function<String, String>() {
-              @Override
-              public String apply(String input) {
-                return AetherUtil.addClassifier(input, AetherUtil.CLASSIFIER_SOURCES);
-              }
-            }));
+    ImmutableSortedSet<Flavor> flavors = target.getFlavors();
+    BuildRuleParams paramsWithMavenFlavor = null;
+    if (flavors.contains(JavaLibrary.MAVEN_JAR)) {
+      paramsWithMavenFlavor = params;
+
+      // Maven rules will depend upon their vanilla versions, so the latter have to be constructed
+      // without the maven flavor to prevent output-path conflict
+      params = params.copyWithBuildTarget(
+          params.getBuildTarget().withoutFlavors(ImmutableSet.of(JavaLibrary.MAVEN_JAR)));
+    }
+
+    if (flavors.contains(JavaLibrary.SRC_JAR)) {
+      args.mavenCoords = args.mavenCoords.transform(
+          new Function<String, String>() {
+            @Override
+            public String apply(String input) {
+              return AetherUtil.addClassifier(input, AetherUtil.CLASSIFIER_SOURCES);
+            }
+          });
+
+      if (!flavors.contains(JavaLibrary.MAVEN_JAR)) {
+        return new JavaSourceJar(
+            params,
+            pathResolver,
+            args.srcs.get(),
+            args.mavenCoords);
+      } else {
+        return MavenUberJar.SourceJar.create(
+            Preconditions.checkNotNull(paramsWithMavenFlavor),
+            pathResolver,
+            args.srcs.get(),
+            args.mavenCoords);
+      }
     }
 
     JavacOptions.Builder javacOptionsBuilder =
@@ -113,28 +139,55 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
     javacOptionsBuilder.setAnnotationProcessingParams(annotationParams);
     JavacOptions javacOptions = javacOptionsBuilder.build();
 
+    BuildTarget abiJarTarget =
+        BuildTarget.builder(params.getBuildTarget())
+            .addFlavors(CalculateAbi.FLAVOR)
+            .build();
+
     ImmutableSortedSet<BuildRule> exportedDeps = resolver.getAllRules(args.exportedDeps.get());
-    return new DefaultJavaLibrary(
-        params.appendExtraDeps(
-            Iterables.concat(
-                BuildRules.getExportedRules(
+    DefaultJavaLibrary defaultJavaLibrary =
+        resolver.addToIndex(
+            new DefaultJavaLibrary(
+                params.appendExtraDeps(
                     Iterables.concat(
-                        params.getDeclaredDeps(),
-                        exportedDeps,
-                        resolver.getAllRules(args.providedDeps.get()))),
-                pathResolver.filterBuildRuleInputs(
-                    javacOptions.getInputs(pathResolver)))),
-        pathResolver,
-        args.srcs.get(),
-        validateResources(pathResolver, args, params.getProjectFilesystem()),
-        args.proguardConfig.transform(SourcePaths.toSourcePath(params.getProjectFilesystem())),
-        args.postprocessClassesCommands.get(),
-        exportedDeps,
-        resolver.getAllRules(args.providedDeps.get()),
-        /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
-        javacOptions,
-        args.resourcesRoot,
-        args.mavenCoords);
+                        BuildRules.getExportedRules(
+                            Iterables.concat(
+                                params.getDeclaredDeps().get(),
+                                exportedDeps,
+                                resolver.getAllRules(args.providedDeps.get()))),
+                        pathResolver.filterBuildRuleInputs(
+                            javacOptions.getInputs(pathResolver)))),
+                pathResolver,
+                args.srcs.get(),
+                validateResources(pathResolver, args, params.getProjectFilesystem()),
+                args.proguardConfig.transform(
+                    SourcePaths.toSourcePath(params.getProjectFilesystem())),
+                args.postprocessClassesCommands.get(),
+                exportedDeps,
+                resolver.getAllRules(args.providedDeps.get()),
+                new BuildTargetSourcePath(abiJarTarget),
+                /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
+                javacOptions,
+                args.resourcesRoot,
+                args.mavenCoords,
+                args.tests.get()));
+
+    resolver.addToIndex(
+        CalculateAbi.of(
+            abiJarTarget,
+            pathResolver,
+            params,
+            new BuildTargetSourcePath(defaultJavaLibrary.getBuildTarget())));
+
+    if (!flavors.contains(JavaLibrary.MAVEN_JAR)) {
+      return defaultJavaLibrary;
+    } else {
+      return MavenUberJar.create(
+          defaultJavaLibrary,
+          Preconditions.checkNotNull(paramsWithMavenFlavor),
+          pathResolver,
+          args.mavenCoords);
+    }
   }
 
   // TODO(natthu): Consider adding a validateArg() method on Description which gets called before
@@ -286,7 +339,7 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
   }
 
   @SuppressFieldNotInitialized
-  public static class Arg {
+  public static class Arg implements HasTests {
     public Optional<ImmutableSortedSet<SourcePath>> srcs;
     public Optional<ImmutableSortedSet<SourcePath>> resources;
     public Optional<String> source;
@@ -310,6 +363,8 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
     public Optional<ImmutableSortedSet<BuildTarget>> providedDeps;
     public Optional<ImmutableSortedSet<BuildTarget>> exportedDeps;
     public Optional<ImmutableSortedSet<BuildTarget>> deps;
+
+    @Hint(isDep = false) public Optional<ImmutableSortedSet<BuildTarget>> tests;
 
     public AnnotationProcessingParams buildAnnotationProcessingParams(
         BuildTarget owner,
@@ -337,6 +392,11 @@ public class JavaLibraryDescription implements Description<JavaLibraryDescriptio
       builder.setProcessOnly(annotationProcessorOnly.or(Boolean.FALSE));
 
       return builder.build();
+    }
+
+    @Override
+    public ImmutableSortedSet<BuildTarget> getTests() {
+      return tests.get();
     }
   }
 }

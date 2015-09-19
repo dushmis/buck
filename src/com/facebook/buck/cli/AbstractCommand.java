@@ -22,7 +22,6 @@ import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.parser.BuildTargetPatternParser;
 import com.facebook.buck.parser.BuildTargetPatternTargetNodeParser;
 import com.facebook.buck.parser.TargetNodeSpec;
-import com.facebook.buck.rules.ArtifactCache;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.util.HumanReadableException;
 import com.google.common.base.Optional;
@@ -48,6 +47,7 @@ public abstract class AbstractCommand implements Command {
   private static final String NO_CACHE_LONG_ARG = "--no-cache";
   private static final String OUTPUT_TEST_EVENTS_TO_FILE_LONG_ARG = "--output-test-events-to-file";
   private static final String PROFILE_LONG_ARG = "--profile";
+  private static final String NUM_THREADS_LONG_ARG = "--num-threads";
 
   /**
    * This value should never be read. {@link VerbosityParser} should be used instead.
@@ -60,6 +60,10 @@ public abstract class AbstractCommand implements Command {
       usage = "Specify a number between 1 and 10.")
   @SuppressWarnings("PMD.UnusedPrivateField")
   private int verbosityLevel = -1;
+
+  @Option(name = NUM_THREADS_LONG_ARG, aliases = "-j", usage = "Default is 1.25 * num processors.")
+  @Nullable
+  private Integer numThreads = null;
 
   @Option(
       name = "--config",
@@ -81,6 +85,12 @@ public abstract class AbstractCommand implements Command {
             entry.getValue());
       }
       builder.put(key.get(0), key.get(1), entry.getValue());
+    }
+    if (numThreads != null) {
+      builder.put("build", "threads", String.valueOf(numThreads));
+    }
+    if (noCache) {
+      builder.put("cache", "mode", "");
     }
 
     return builder.build();
@@ -186,14 +196,8 @@ public abstract class AbstractCommand implements Command {
     return buildTargets.build();
   }
 
-  public ArtifactCache getArtifactCache(CommandRunnerParams params)
-      throws InterruptedException {
-    return params.getArtifactCacheFactory().newInstance(params.getBuckConfig(), isNoCache());
-  }
-
   protected ExecutionContext createExecutionContext(CommandRunnerParams params) {
     return ExecutionContext.builder()
-        .setProjectFilesystem(params.getRepository().getFilesystem())
         .setConsole(params.getConsole())
         .setAndroidPlatformTargetSupplier(params.getAndroidPlatformTargetSupplier())
         .setEventBus(params.getBuckEventBus())
@@ -209,6 +213,10 @@ public abstract class AbstractCommand implements Command {
     if (verbosityLevel != -1) {
       builder.add(VerbosityParser.VERBOSE_LONG_ARG);
       builder.add(String.valueOf(verbosityLevel));
+    }
+    if (numThreads != null) {
+      builder.add(NUM_THREADS_LONG_ARG);
+      builder.add(numThreads.toString());
     }
     if (noCache) {
       builder.add(NO_CACHE_LONG_ARG);

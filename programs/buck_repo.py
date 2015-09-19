@@ -50,11 +50,12 @@ JAVA_CLASSPATHS = [
     "third-party/java/jackson/jackson-databind-2.0.5.jar",
     "third-party/java/jackson/jackson-datatype-jdk7-2.5.0.jar",
     "third-party/java/jetty/jetty-all-9.2.10.v20150310.jar",
-    "third-party/java/jparsec/jparsec-2.2.1.jar",
+    "third-party/java/jna/jna-4.1.0.jar",
     "third-party/java/jsr/javax.inject-1.jar",
     "third-party/java/jsr/jsr305.jar",
     "third-party/java/kxml2/kxml2-2.3.0.jar",
     "third-party/java/nailgun/nailgun-server-0.9.2-SNAPSHOT.jar",
+    "third-party/java/nuprocess/nuprocess-1.0.4-SNAPSHOT.jar",
     "third-party/java/okhttp/okhttp-2.2.0.jar",
     "third-party/java/okio/okio-1.2.0.jar",
     "third-party/java/servlet-api/javax.servlet-api-3.1.0.jar",
@@ -87,17 +88,12 @@ RESOURCES = {
     "native_exopackage_fake_path": "assets/android/native-exopackage-fakes.apk",
     "path_to_asm_jar": "third-party/java/asm/asm-debug-all-5.0.3.jar",
     "path_to_buck_py": "src/com/facebook/buck/parser/buck.py",
-    "path_to_compile_asset_catalogs_build_phase_sh": (
-        "src/com/facebook/buck/apple/compile_asset_catalogs_build_phase.sh"),
-    "path_to_compile_asset_catalogs_py": (
-        "src/com/facebook/buck/apple/compile_asset_catalogs.py"),
     "path_to_intellij_py": "src/com/facebook/buck/command/intellij.py",
     "path_to_pathlib_py": "third-party/py/pathlib/pathlib.py",
     "path_to_pex": "src/com/facebook/buck/python/pex.py",
     "path_to_python_test_main": "src/com/facebook/buck/python/__test_main__.py",
     "path_to_sh_binary_template": "src/com/facebook/buck/shell/sh_binary_template",
     "path_to_static_content": "webserver/static",
-    "quickstart_origin_dir": "src/com/facebook/buck/cli/quickstart/android",
     "report_generator_jar": "build/report-generator.jar",
     "testrunner_classes": "build/testrunner/classes",
 }
@@ -186,18 +182,6 @@ class BuckRepo(BuckTool):
 
     def _join_buck_dir(self, relative_path):
         return os.path.join(self._buck_dir, *(relative_path.split('/')))
-
-    def _is_dirty(self):
-        if self._is_buck_repo_dirty_override:
-            return self._is_buck_repo_dirty_override == "1"
-
-        if not self._is_git:
-            return False
-
-        output = check_output(
-            ['git', 'status', '--porcelain'],
-            cwd=self._buck_dir)
-        return bool(output.strip())
 
     def _has_local_changes(self):
         if not self._is_git:
@@ -333,7 +317,9 @@ class BuckRepo(BuckTool):
             "-Dbuck.git_commit={0}".format(self._get_git_revision()),
             "-Dbuck.git_commit_timestamp={0}".format(
                 self._get_git_commit_timestamp()),
-            "-Dbuck.git_dirty={0}".format(int(self._is_dirty())),
+            "-Dbuck.git_dirty={0}".format(
+                int(self._is_buck_repo_dirty_override == "1" or
+                    buck_version.is_dirty(self._buck_dir))),
         ]
 
     def _get_bootstrap_classpath(self):

@@ -148,6 +148,7 @@ public class ResourcesFilter extends AbstractBuildRule
     // The list of strings.xml files is only needed to build string assets
     if (resourceCompressionMode.isStoreStringsAsAssets()) {
       GetStringsFilesStep getStringsFilesStep = new GetStringsFilesStep(
+          getProjectFilesystem(),
           resPaths,
           stringFilesBuilder,
           whitelistedStringPaths);
@@ -206,6 +207,7 @@ public class ResourcesFilter extends AbstractBuildRule
 
     ImmutableBiMap<Path, Path> resSourceToDestDirMap = filteredResourcesDirMapBuilder.build();
     FilterResourcesStep.Builder filterResourcesStepBuilder = FilterResourcesStep.builder()
+        .setProjectFilesystem(getProjectFilesystem())
         .setInResToOutResDirMap(resSourceToDestDirMap)
         .setResourceFilter(resourceFilter);
 

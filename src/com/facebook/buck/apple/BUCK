@@ -3,6 +3,10 @@ java_immutables_library(
   srcs = glob([
     '*.java',
   ]),
+  tests = [
+    '//test/com/facebook/buck/apple:apple',
+    '//test/com/facebook/buck/apple:apple_test_integration',
+  ],
   resources = [
     'build-with-buck.st',
     'rn-package.st',
@@ -20,8 +24,9 @@ java_immutables_library(
     '//src/com/facebook/buck/model:model',
     '//src/com/facebook/buck/parser:rule_pattern',
     '//src/com/facebook/buck/rules:build_rule',
-    '//src/com/facebook/buck/rules/macros:macros',
     '//src/com/facebook/buck/rules:rules',
+    '//src/com/facebook/buck/rules/keys:keys',
+    '//src/com/facebook/buck/rules/macros:macros',
     '//src/com/facebook/buck/shell:steps',
     '//src/com/facebook/buck/shell:rules',
     '//src/com/facebook/buck/step:step',
@@ -47,35 +52,5 @@ java_immutables_library(
   visibility = [
     'PUBLIC'
   ]
-)
-
-python_library(
-  name = 'asset_catalogs_compiler',
-  srcs = [
-    'compile_asset_catalogs.py',
-  ],
-)
-
-python_test(
-  name = 'asset_catalogs_test',
-  srcs = [
-    'compile_asset_catalogs_test.py',
-  ],
-  deps = [
-    ':asset_catalogs_compiler',
-  ],
-)
-
-export_file(
-  name = 'compile_asset_catalogs.py',
-  visibility = [
-    'PUBLIC'
-  ]
-)
-
-export_file(
-  name = 'compile_asset_catalogs_build_phase.sh',
-  visibility = [
-    'PUBLIC'
-  ]
+,
 )

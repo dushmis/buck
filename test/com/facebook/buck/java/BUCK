@@ -13,8 +13,6 @@ java_library(
     ':javac-env',
   ],
   deps = [
-    '//third-party/java/guava:guava',
-    '//third-party/java/jsr:jsr305',
     '//src/com/facebook/buck/android:packageable',
     '//src/com/facebook/buck/cli:config',
     '//src/com/facebook/buck/cxx:platform',
@@ -33,6 +31,8 @@ java_library(
     '//test/com/facebook/buck/cli:FakeBuckConfig',
     '//test/com/facebook/buck/rules:testutil',
     '//test/com/facebook/buck/testutil:testutil',
+    '//third-party/java/guava:guava',
+    '//third-party/java/jsr:jsr305',
   ],
   visibility = [
     '//test/...',
@@ -76,11 +76,6 @@ java_test(
   name = 'integration-slow',
   srcs = SLOW_INTEGRATION_TESTS,
   resources = glob(['testdata/**'], include_dotfiles=True),
-  source_under_test = [
-    '//src/com/facebook/buck/java:rules',
-    '//src/com/facebook/buck/java:steps',
-    '//src/com/facebook/buck/java:support',
-  ],
   run_test_separately = True,
   deps = [
     ':testutil',
@@ -95,17 +90,12 @@ java_test(
   name = 'java',
   srcs = glob(['*Test.java'], excludes = SLOW_INTEGRATION_TESTS),
   resources = glob(['testdata/**'], include_dotfiles=True),
-  source_under_test = [
-    '//src/com/facebook/buck/java:rules',
-    '//src/com/facebook/buck/java:steps',
-    '//src/com/facebook/buck/java:support',
-  ],
   deps = [
     ':testutil',
     '//src/com/facebook/buck/android:packageable',
-    '//third-party/java/nailgun:nailgun',
     '//src/com/facebook/buck/android:rules',
     '//src/com/facebook/buck/android:utils',
+    '//src/com/facebook/buck/artifact_cache:artifact_cache',
     '//src/com/facebook/buck/cli:cli',
     '//src/com/facebook/buck/cli:config',
     '//src/com/facebook/buck/cxx:rules',
@@ -151,7 +141,6 @@ java_test(
     '//test/com/facebook/buck/event:testutil',
     '//test/com/facebook/buck/io:testutil',
     '//test/com/facebook/buck/model:BuildTargetFactory',
-    '//test/com/facebook/buck/rules/keys:testutil',
     '//test/com/facebook/buck/rules:testutil',
     '//test/com/facebook/buck/shell:testutil',
     '//test/com/facebook/buck/step:testutil',
@@ -164,5 +153,6 @@ java_test(
     '//third-party/java/hamcrest:hamcrest',
     '//third-party/java/jsr:jsr305',
     '//third-party/java/junit:junit',
+    '//third-party/java/nailgun:nailgun',
   ],
 )

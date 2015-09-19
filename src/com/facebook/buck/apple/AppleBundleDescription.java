@@ -20,6 +20,7 @@ import com.facebook.buck.cxx.CxxDescriptionEnhancer;
 import com.facebook.buck.cxx.CxxPlatform;
 import com.facebook.buck.js.ReactNativeFlavors;
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.model.Either;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.FlavorDomain;
 import com.facebook.buck.model.FlavorDomainException;
@@ -38,7 +39,6 @@ import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.SourcePaths;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNode;
-import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.base.Joiner;
@@ -212,7 +212,8 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
         args.getTests(),
         appleCxxPlatform.getAppleSdk(),
         allValidCodeSignIdentities,
-        args.provisioningProfileSearchPath);
+        args.provisioningProfileSearchPath,
+        AppleBundle.DebugInfoFormat.DSYM);
   }
 
   private <A extends Arg> BuildRule getFlavoredBinaryRule(
@@ -276,13 +277,13 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
     return params.copyWithDeps(
         Suppliers.ofInstance(
             FluentIterable
-                .from(params.getDeclaredDeps())
+                .from(params.getDeclaredDeps().get())
                 .filter(notOriginalBinaryRule)
                 .append(newDeps)
                 .toSortedSet(Ordering.natural())),
         Suppliers.ofInstance(
             FluentIterable
-                .from(params.getExtraDeps())
+                .from(params.getExtraDeps().get())
                 .filter(notOriginalBinaryRule)
                 .toSortedSet(Ordering.natural())));
   }
@@ -317,7 +318,6 @@ public class AppleBundleDescription implements Description<AppleBundleDescriptio
     public BuildTarget binary;
     public SourcePath infoPlist;
     public Optional<ImmutableMap<String, String>> infoPlistSubstitutions;
-    public Optional<ImmutableMap<String, SourcePath>> headers;
     public Optional<ImmutableSortedSet<BuildTarget>> deps;
     public Optional<SourcePath> provisioningProfileSearchPath;
     @Hint(isDep = false) public Optional<ImmutableSortedSet<BuildTarget>> tests;

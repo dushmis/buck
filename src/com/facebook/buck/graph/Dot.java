@@ -17,10 +17,12 @@
 package com.facebook.buck.graph;
 
 import com.google.common.base.Function;
+import com.google.common.base.Predicates;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Sets;
 
 import java.io.IOException;
-
-import javax.annotation.Nullable;
 
 public class Dot<T> {
 
@@ -57,14 +59,40 @@ public class Dot<T> {
           }
         }
       }
+    }.traverse();
+
+    output.append("}\n");
+  }
+
+  public static <T> void writeSubgraphOutput(
+      final DirectedAcyclicGraph<T> graph,
+      final String graphName,
+      final ImmutableSet<T> nodesToFilter,
+      final Function<T, String> nodeToName,
+      final Appendable output)
+      throws IOException {
+    // Sorting the edges to have deterministic output and be able to test this.
+    final ImmutableSortedSet.Builder<String> builder = ImmutableSortedSet.naturalOrder();
+    output.append("digraph " + graphName + " {\n");
+
+    new AbstractBottomUpTraversal<T, Object>(graph) {
 
       @Override
-      @Nullable
-      public Object getResult() {
-        return null;
+      public void visit(T node) {
+        if (!nodesToFilter.contains(node)) {
+          return;
+        }
+        String source = nodeToName.apply(node);
+        for (T sink : Sets.filter(graph.getOutgoingNodesFor(node), Predicates.in(nodesToFilter))) {
+          String sinkName = nodeToName.apply(sink);
+          builder.add(String.format("  %s -> %s;\n", source, sinkName));
+        }
       }
     }.traverse();
 
+    for (String line : builder.build()) {
+      output.append(line);
+    }
     output.append("}\n");
   }
 }

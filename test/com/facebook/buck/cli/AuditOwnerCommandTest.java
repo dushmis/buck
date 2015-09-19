@@ -16,6 +16,7 @@
 
 package com.facebook.buck.cli;
 
+import static com.facebook.buck.rules.TestRepositoryBuilder.UNALIASED;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -30,7 +31,7 @@ import com.facebook.buck.java.FakeJavaPackageFinder;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetPattern;
 import com.facebook.buck.parser.NoSuchBuildTargetException;
-import com.facebook.buck.rules.ArtifactCache;
+import com.facebook.buck.artifact_cache.ArtifactCache;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleFactoryParams;
 import com.facebook.buck.rules.BuildRuleParams;
@@ -39,7 +40,7 @@ import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.FakeBuildRule;
 import com.facebook.buck.rules.NonCheckingBuildRuleFactoryParams;
-import com.facebook.buck.rules.NoopArtifactCache;
+import com.facebook.buck.artifact_cache.NoopArtifactCache;
 import com.facebook.buck.rules.Repository;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TargetGraph;
@@ -111,7 +112,8 @@ public class AuditOwnerCommandTest {
           arg,
           params,
           ImmutableSet.<BuildTarget>of(),
-          ImmutableSet.<BuildTargetPattern>of());
+          ImmutableSet.<BuildTargetPattern>of(),
+          UNALIASED);
     } catch (NoSuchBuildTargetException | TargetNode.InvalidSourcePathInputException e) {
       throw new RuntimeException(e);
     }
@@ -201,7 +203,7 @@ public class AuditOwnerCommandTest {
         console,
         repository,
         androidDirectoryResolver,
-        new InstanceArtifactCacheFactory(artifactCache),
+        artifactCache,
         eventBus,
         buckConfig,
         Platform.detect(),
@@ -230,9 +232,8 @@ public class AuditOwnerCommandTest {
     BuildTarget target = BuildTarget.builder("//base", "name").build();
     TargetNode<?> targetNode = createTargetNode(target, ImmutableSet.<Path>of());
 
-    AuditOwnerCommand command = new AuditOwnerCommand();
     CommandRunnerParams params = createAuditOwnerCommandRunnerParams(filesystem);
-    AuditOwnerCommand.OwnersReport report = command.generateOwnersReport(
+    AuditOwnerCommand.OwnersReport report = AuditOwnerCommand.generateOwnersReport(
         params,
         targetNode,
         inputs,
@@ -263,9 +264,8 @@ public class AuditOwnerCommandTest {
     BuildTarget target = BuildTarget.builder("//base", "name").build();
     TargetNode<?> targetNode = createTargetNode(target, ImmutableSet.<Path>of());
 
-    AuditOwnerCommand command = new AuditOwnerCommand();
     CommandRunnerParams params = createAuditOwnerCommandRunnerParams(filesystem);
-    AuditOwnerCommand.OwnersReport report = command.generateOwnersReport(
+    AuditOwnerCommand.OwnersReport report = AuditOwnerCommand.generateOwnersReport(
         params,
         targetNode,
         inputs,
@@ -296,9 +296,8 @@ public class AuditOwnerCommandTest {
     BuildTarget target = BuildTarget.builder("//base", "name").build();
     TargetNode<?> targetNode = createTargetNode(target, ImmutableSet.<Path>of());
 
-    AuditOwnerCommand command = new AuditOwnerCommand();
     CommandRunnerParams params = createAuditOwnerCommandRunnerParams(filesystem);
-    AuditOwnerCommand.OwnersReport report = command.generateOwnersReport(
+    AuditOwnerCommand.OwnersReport report = AuditOwnerCommand.generateOwnersReport(
         params,
         targetNode,
         inputs,
@@ -330,9 +329,8 @@ public class AuditOwnerCommandTest {
         target,
         ImmutableSet.of(Paths.get("java/somefolder")));
 
-    AuditOwnerCommand command = new AuditOwnerCommand();
     CommandRunnerParams params = createAuditOwnerCommandRunnerParams(filesystem);
-    AuditOwnerCommand.OwnersReport report = command.generateOwnersReport(
+    AuditOwnerCommand.OwnersReport report = AuditOwnerCommand.generateOwnersReport(
         params,
         targetNode,
         inputs,
@@ -367,9 +365,8 @@ public class AuditOwnerCommandTest {
     BuildTarget target = BuildTarget.builder("//base", "name").build();
     TargetNode<?> targetNode = createTargetNode(target, inputPaths);
 
-    AuditOwnerCommand command = new AuditOwnerCommand();
     CommandRunnerParams params = createAuditOwnerCommandRunnerParams(filesystem);
-    AuditOwnerCommand.OwnersReport report = command.generateOwnersReport(
+    AuditOwnerCommand.OwnersReport report = AuditOwnerCommand.generateOwnersReport(
         params,
         targetNode,
         inputs,
@@ -408,7 +405,7 @@ public class AuditOwnerCommandTest {
 
     AuditOwnerCommand command = new AuditOwnerCommand();
     CommandRunnerParams params = createAuditOwnerCommandRunnerParams(filesystem);
-    AuditOwnerCommand.OwnersReport report = command.generateOwnersReport(
+    AuditOwnerCommand.OwnersReport report = AuditOwnerCommand.generateOwnersReport(
         params,
         targetNode,
         inputs,
@@ -452,11 +449,12 @@ public class AuditOwnerCommandTest {
     TargetNode<?> targetNode1 = createTargetNode(target1, inputPaths);
     TargetNode<?> targetNode2 = createTargetNode(target2, inputPaths);
 
-    AuditOwnerCommand command = new AuditOwnerCommand();
     CommandRunnerParams params = createAuditOwnerCommandRunnerParams(filesystem);
     AuditOwnerCommand.OwnersReport report = AuditOwnerCommand.OwnersReport.emptyReport();
-    report = report.updatedWith(command.generateOwnersReport(params, targetNode1, inputs, false));
-    report = report.updatedWith(command.generateOwnersReport(params, targetNode2, inputs, false));
+    report = report.updatedWith(
+        AuditOwnerCommand.generateOwnersReport(params, targetNode1, inputs, false));
+    report = report.updatedWith(
+        AuditOwnerCommand.generateOwnersReport(params, targetNode2, inputs, false));
 
     assertTrue(report.nonFileInputs.isEmpty());
     assertTrue(report.nonExistentInputs.isEmpty());

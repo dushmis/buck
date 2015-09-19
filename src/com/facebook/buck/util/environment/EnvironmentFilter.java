@@ -16,6 +16,8 @@
 
 package com.facebook.buck.util.environment;
 
+import com.google.common.base.Predicate;
+import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
@@ -29,12 +31,44 @@ public class EnvironmentFilter {
 
   // Always exclude environment variables with these names.
   private static final ImmutableSet<String> ENV_TO_REMOVE = ImmutableSet.of(
-      "BUCK_BUILD_ID",  // Build ID passed in from Python.
-      "BUCK_CLASSPATH", // Main classpath; set in Python
-      "CLASSPATH",      // Bootstrap classpath; set in Python.
-      "TERM_SESSION_ID", // UUID added to environment by OS X.
-      "CMD_DURATION"    // Added to environment by 'fish' shell.
+      "Apple_PubSub_Socket_Render", // OS X pubsub control variable.
+      "ANDROID_SERIAL",   // Serial of the target Android device/emulator.
+      "BUCK_BUILD_ID",    // Build ID passed in from Python.
+      "BUCK_CLASSPATH",   // Main classpath; set in Python
+      "CLASSPATH",        // Bootstrap classpath; set in Python.
+      "CMD_DURATION",      // Added to environment by 'fish' shell.
+      "COMP_WORDBREAKS",  // Set by the programmable completion part of bash.
+      "ITERM_SESSION_ID", // Added by iTerm on OS X.
+      "ITERM_PROFILE",    // Added by iTerm on OS X.
+      "KRB5CCNAME",       // Kerberos authentication adds this.
+      "OLDPWD",           // Previous working directory; set by bash's cd builtin.
+      "PROMPT_COMMAND",   // Prompt control variable, just in case someone exports it.
+      "PS1",              // Same.
+      "PS2",              // Same.
+      "PS3",              // Same.
+      "PS4",              // Same.
+      "PWD",              // Current working directory; set by bash.
+      "SHLVL",            // Shell nestedness level; set by bash.
+      "SSH_AGENT_PID",    // SSH session management variable.
+      "SSH_AUTH_SOCK",    // Same.
+      "SSH_CLIENT",       // Same.
+      "SSH_CONNECTION",   // Same.
+      "SSH_TTY",          // Same.
+      "TERM_SESSION_ID",  // UUID added to environment by OS X.
+      "TMUX",             // tmux session management variable.
+      "TMUX_PANE",        // Current tmux pane.
+      "XPC_FLAGS",        // More OS X cruft.
+      "XPC_SERVICE_NAME"  // Same.
   );
+
+  // Ignore the environment variables with these names when comparing environments.
+  private static final ImmutableSet<String> ENV_TO_IGNORE = ImmutableSet.of(
+      "NAILGUN_TTY_1",  // Nailgun stdout supports ANSI escape sequences.
+      "NAILGUN_TTY_2"   // Nailgun stderr supports ANSI escape sequences.
+  );
+
+  public static final Predicate<String> NOT_IGNORED_ENV_PREDICATE =
+      Predicates.not(Predicates.in(ENV_TO_IGNORE));
 
   // Utility class, do not instantiate.
   private EnvironmentFilter() { }

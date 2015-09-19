@@ -55,8 +55,8 @@ public class OCamlLink extends AbstractBuildRule {
       buildableContext.recordArtifact(artifact);
     }
     return ImmutableList.of(
-      new MkdirStep(args.output.getParent()),
-      new OCamlLinkStep(args));
+      new MkdirStep(getProjectFilesystem(), args.output.getParent()),
+      new OCamlLinkStep(getProjectFilesystem().getRootPath(), args));
   }
 
   @Override

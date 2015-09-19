@@ -28,6 +28,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.EnumSet;
@@ -43,7 +44,7 @@ public class DxStep extends ShellStep {
       "";
 
   /** Options to pass to {@code dx}. */
-  public static enum Option {
+  public enum Option {
     /** Specify the {@code --no-optimize} flag when running {@code dx}. */
     NO_OPTIMIZE,
 
@@ -72,6 +73,7 @@ public class DxStep extends ShellStep {
     }
   };
 
+  private final ProjectFilesystem filesystem;
   private final Path outputDexFile;
   private final Set<Path> filesToDex;
   private final Set<Option> options;
@@ -82,8 +84,8 @@ public class DxStep extends ShellStep {
    * @param filesToDex each element in this set is a path to a .class file, a zip file of .class
    *     files, or a directory of .class files.
    */
-  public DxStep(Path outputDexFile, Iterable<Path> filesToDex) {
-    this(outputDexFile, filesToDex, EnumSet.noneOf(DxStep.Option.class));
+  public DxStep(ProjectFilesystem filesystem, Path outputDexFile, Iterable<Path> filesToDex) {
+    this(filesystem, outputDexFile, filesToDex, EnumSet.noneOf(DxStep.Option.class));
   }
 
   /**
@@ -92,13 +94,23 @@ public class DxStep extends ShellStep {
    *     files, or a directory of .class files.
    * @param options to pass to {@code dx}.
    */
-  public DxStep(Path outputDexFile, Iterable<Path> filesToDex, EnumSet<Option> options) {
-    this(outputDexFile, filesToDex, options, DEFAULT_GET_CUSTOM_DX);
+  public DxStep(
+      ProjectFilesystem filesystem,
+      Path outputDexFile,
+      Iterable<Path> filesToDex,
+      EnumSet<Option> options) {
+    this(filesystem, outputDexFile, filesToDex, options, DEFAULT_GET_CUSTOM_DX);
   }
 
   @VisibleForTesting
-  DxStep(Path outputDexFile, Iterable<Path> filesToDex, EnumSet<Option> options,
+  DxStep(
+      ProjectFilesystem filesystem,
+      Path outputDexFile,
+      Iterable<Path> filesToDex,
+      EnumSet<Option> options,
       Supplier<String> getPathToCustomDx) {
+    super(filesystem.getRootPath());
+    this.filesystem = filesystem;
     this.outputDexFile = outputDexFile;
     this.filesToDex = ImmutableSet.copyOf(filesToDex);
     this.options = Sets.immutableEnumSet(options);
@@ -150,10 +162,9 @@ public class DxStep extends ShellStep {
       builder.add("--verbose");
     }
 
-    ProjectFilesystem projectFilesystem = context.getProjectFilesystem();
-    builder.add("--output", projectFilesystem.resolve(outputDexFile).toString());
+    builder.add("--output", filesystem.resolve(outputDexFile).toString());
     for (Path fileToDex : filesToDex) {
-      builder.add(projectFilesystem.resolve(fileToDex).toString());
+      builder.add(filesystem.resolve(fileToDex).toString());
     }
 
     return builder.build();
@@ -173,7 +184,8 @@ public class DxStep extends ShellStep {
 
     // The first arguments should be ".../dx --dex" ("...\dx.bat --dex on Windows).  Strip them off
     // because we bypass the dispatcher and go straight to the dexer.
-    Preconditions.checkState(argv.get(0).endsWith("/dx") || argv.get(0).endsWith("\\dx.bat"));
+    Preconditions.checkState(
+        argv.get(0).endsWith(File.separator + "dx") || argv.get(0).endsWith("\\dx.bat"));
     Preconditions.checkState(argv.get(1).equals("--dex"));
     ImmutableList<String> args = argv.subList(2, argv.size());
 

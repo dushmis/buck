@@ -23,9 +23,9 @@ import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
-import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.FakeBuildContext;
+import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.FakeTestRule;
 import com.facebook.buck.rules.Label;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -34,10 +34,14 @@ import com.facebook.buck.step.Step;
 import com.facebook.buck.step.TestExecutionContext;
 import com.facebook.buck.test.TestResultSummary;
 import com.facebook.buck.test.TestResults;
+import com.facebook.buck.test.TestRunningOptions;
 import com.facebook.buck.test.selectors.TestSelectorList;
+import com.facebook.buck.testutil.FakeProjectFilesystem;
+import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 
 import org.junit.Test;
@@ -52,14 +56,16 @@ public class CxxTestTest {
 
     private static BuildRuleParams createBuildParams() {
       BuildTarget target = BuildTargetFactory.newInstance("//:target");
-      return BuildRuleParamsFactory.createTrivialBuildRuleParams(target);
+      return new FakeBuildRuleParamsBuilder(target).build();
     }
 
     public FakeCxxTest() {
       super(
           createBuildParams(),
           new SourcePathResolver(new BuildRuleResolver()),
-          ImmutableMap.<String, String>of(),
+          Suppliers.ofInstance(ImmutableMap.<String, String>of()),
+          Suppliers.ofInstance(ImmutableList.<String>of()),
+          Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
           ImmutableSet.<Label>of(),
           ImmutableSet.<String>of(),
           ImmutableSet.<BuildRule>of(),
@@ -101,16 +107,20 @@ public class CxxTestTest {
 
     BuildContext buildContext = FakeBuildContext.NOOP_CONTEXT;
     ExecutionContext executionContext = TestExecutionContext.newInstance();
+    TestRunningOptions options =
+        TestRunningOptions.builder()
+            .setDryRun(false)
+            .setTestSelectorList(TestSelectorList.empty())
+            .build();
     ImmutableList<Step> actualSteps = cxxTest.runTests(
         buildContext,
         executionContext,
-        /* isDryRun */ false,
-        /* isShufflingTests */ false,
-        TestSelectorList.empty(),
+        options,
         FakeTestRule.NOOP_REPORTING_CALLBACK);
 
     CxxTestStep cxxTestStep =
         new CxxTestStep(
+            new FakeProjectFilesystem(),
             command,
             ImmutableMap.<String, String>of(),
             cxxTest.getPathToTestExitCode(),

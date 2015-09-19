@@ -1,9 +1,13 @@
 java_library(
   name='macros',
   srcs=glob(['*.java']),
+  tests=[
+    '//test/com/facebook/buck/rules/macros:macros',
+  ],
   deps=[
     '//src/com/facebook/buck/util/environment:platform',
     '//src/com/facebook/buck/io:io',
+    '//src/com/facebook/buck/java:classhash',
     '//src/com/facebook/buck/java:support',
     '//src/com/facebook/buck/model:model',
     '//src/com/facebook/buck/parser:rule_pattern',
@@ -12,6 +16,7 @@ java_library(
     '//src/com/facebook/buck/util:escaper',
     '//src/com/facebook/buck/util:exceptions',
     '//third-party/java/guava:guava',
+    '//third-party/java/jsr:jsr305',
   ],
   visibility=[
     'PUBLIC',

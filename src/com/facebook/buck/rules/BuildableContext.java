@@ -16,6 +16,9 @@
 
 package com.facebook.buck.rules;
 
+import com.facebook.buck.artifact_cache.ArtifactCache;
+import com.google.common.collect.Multimap;
+
 import java.nio.file.Path;
 
 
@@ -42,6 +45,11 @@ public interface BuildableContext {
    * @see BuildInfoRecorder#addMetadata(String, Iterable)
    */
   public void addMetadata(String key, Iterable<String> values);
+
+  /**
+   * @see BuildInfoRecorder#addMetadata(String, Multimap)
+   */
+  public void addMetadata(String key, Multimap<String, String> values);
 
   /**
    * @see BuildInfoRecorder#recordArtifact(Path)

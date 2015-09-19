@@ -86,7 +86,7 @@ public class SymlinkTree
   // Put the link map into the rule key, as if it changes at all, we need to
   // re-run it.
   @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+  public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
     for (Map.Entry<Path, SourcePath> entry : links.entrySet()) {
       builder.setReflectively(
           "link(" + entry.getKey().toString() + ")",
@@ -111,8 +111,8 @@ public class SymlinkTree
       BuildContext context,
       BuildableContext buildableContext) {
     return ImmutableList.of(
-        new MakeCleanDirectoryStep(root),
-        new SymlinkTreeStep(root, resolveLinks()));
+        new MakeCleanDirectoryStep(getProjectFilesystem(), root),
+        new SymlinkTreeStep(getProjectFilesystem(), root, resolveLinks()));
   }
 
   public Path getRoot() {

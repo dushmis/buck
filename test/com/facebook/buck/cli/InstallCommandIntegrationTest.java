@@ -17,9 +17,12 @@
 package com.facebook.buck.cli;
 
 import static org.junit.Assume.assumeThat;
+import static org.junit.Assume.assumeTrue;
+import static org.junit.Assume.assumeFalse;
 
 import static org.hamcrest.Matchers.is;
 
+import com.facebook.buck.testutil.integration.FakeAppleDeveloperEnvironment;
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.facebook.buck.testutil.integration.ProjectWorkspace;
 import com.facebook.buck.testutil.integration.ProjectWorkspace.ProcessResult;
@@ -46,6 +49,8 @@ public class InstallCommandIntegrationTest {
     ProcessResult result = workspace.runBuckCommand(
         "install",
         "//:DemoApp");
+
+    assumeFalse(result.getStderr().contains("no appropriate simulator found"));
     result.assertSuccess();
 
     // TODO(user): If we make the install command output the UDID of the
@@ -65,6 +70,50 @@ public class InstallCommandIntegrationTest {
         "install",
         "-r",
         "//:DemoApp");
+
+    assumeFalse(result.getStderr().contains("no appropriate simulator found"));
+    result.assertSuccess();
+  }
+
+  @Test
+  public void appleBundleInstallsInDeviceWithHelperAsPath() throws IOException,
+      InterruptedException {
+    assumeThat(Platform.detect(), is(Platform.MACOS));
+    assumeTrue(FakeAppleDeveloperEnvironment.supportsBuildAndInstallToDevice());
+
+    ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
+        this, "apple_app_bundle", tmp);
+    workspace.setUp();
+
+    assumeTrue(FakeAppleDeveloperEnvironment.hasDeviceCurrentlyConnected(workspace.getPath(
+                "iOSConsole/iOSConsole"
+            )));
+
+
+    ProcessResult result = workspace.runBuckCommand(
+        "install",
+        "//:DemoApp#iphoneos-arm64");
+    result.assertSuccess();
+  }
+
+  @Test
+  public void appleBundleInstallsInDeviceWithHelperAsTarget() throws IOException,
+      InterruptedException {
+    assumeThat(Platform.detect(), is(Platform.MACOS));
+    assumeTrue(FakeAppleDeveloperEnvironment.supportsBuildAndInstallToDevice());
+
+    ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
+        this, "apple_app_bundle_with_device_helper_as_target", tmp);
+    workspace.setUp();
+
+    assumeTrue(FakeAppleDeveloperEnvironment.hasDeviceCurrentlyConnected(workspace.getPath(
+                "iOSConsole/iOSConsole"
+            )));
+
+
+    ProcessResult result = workspace.runBuckCommand(
+        "install",
+        "//:DemoApp#iphoneos-arm64");
     result.assertSuccess();
   }
 }

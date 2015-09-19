@@ -23,6 +23,7 @@ import com.facebook.buck.cxx.Linker;
 import com.facebook.buck.cxx.NativeLinkables;
 import com.facebook.buck.graph.MutableDirectedGraph;
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.model.Either;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.FlavorDomain;
 import com.facebook.buck.model.FlavorDomainException;
@@ -43,7 +44,6 @@ import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.SourcePaths;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNode;
-import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.google.common.base.Optional;
@@ -229,8 +229,8 @@ public class AppleTestDescription implements
             BuildTarget.builder(params.getBuildTarget())
                 .addAllFlavors(extraFlavorsBuilder.build())
                 .build(),
-            Suppliers.ofInstance(params.getDeclaredDeps()),
-            Suppliers.ofInstance(params.getExtraDeps())),
+            params.getDeclaredDeps(),
+            params.getExtraDeps()),
         resolver,
         args,
         // For now, instead of building all deps as dylibs and fixing up their install_names,
@@ -293,7 +293,7 @@ public class AppleTestDescription implements
                 ImmutableSortedSet.<BuildRule>naturalOrder()
                     .add(library)
                     .addAll(assetCatalog.asSet())
-                    .addAll(params.getDeclaredDeps())
+                    .addAll(params.getDeclaredDeps().get())
                     .addAll(
                         BuildRules.toBuildRulesFor(
                             params.getBuildTarget(),
@@ -305,7 +305,7 @@ public class AppleTestDescription implements
                                     dirsContainingResourceDirs,
                                     resourceVariantFiles))))
                     .build()),
-            Suppliers.ofInstance(params.getExtraDeps())),
+            params.getExtraDeps()),
         sourcePathResolver,
         args.extension,
         args.infoPlist,
@@ -324,7 +324,8 @@ public class AppleTestDescription implements
         ImmutableSortedSet.<BuildTarget>of(),
         appleCxxPlatform.getAppleSdk(),
         allValidCodeSignIdentities,
-        args.provisioningProfileSearchPath);
+        args.provisioningProfileSearchPath,
+        AppleBundle.DebugInfoFormat.NONE);
 
 
     Optional<BuildRule> xctoolZipBuildRule;
@@ -352,7 +353,8 @@ public class AppleTestDescription implements
         testHostApp,
         extension,
         args.contacts.get(),
-        args.labels.get());
+        args.labels.get(),
+        args.getRunTestSeparately());
   }
 
   @Override
@@ -375,6 +377,7 @@ public class AppleTestDescription implements
     public Optional<ImmutableSortedSet<String>> contacts;
     public Optional<ImmutableSortedSet<Label>> labels;
     public Optional<Boolean> canGroup;
+    public Optional<Boolean> runTestSeparately;
     public Optional<BuildTarget> testHostApp;
 
     // Bundle related fields.
@@ -382,7 +385,6 @@ public class AppleTestDescription implements
     public SourcePath infoPlist;
     public Optional<ImmutableMap<String, String>> infoPlistSubstitutions;
     public Optional<String> xcodeProductType;
-    public Optional<String> resourcePrefixDir;
     public Optional<SourcePath> provisioningProfileSearchPath;
 
     public Optional<ImmutableMap<String, String>> destinationSpecifier;
@@ -404,6 +406,10 @@ public class AppleTestDescription implements
 
     public boolean canGroup() {
       return canGroup.or(false);
+    }
+
+    public boolean getRunTestSeparately() {
+      return runTestSeparately.or(false);
     }
   }
 }

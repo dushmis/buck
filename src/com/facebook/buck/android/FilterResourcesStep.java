@@ -16,22 +16,21 @@
 
 package com.facebook.buck.android;
 
+import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.io.MorePaths;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.log.Logger;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyAppendable;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.shell.BashStep;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
-import com.facebook.buck.util.Console;
 import com.facebook.buck.util.DefaultFilteredDirectoryCopier;
 import com.facebook.buck.util.Escaper;
 import com.facebook.buck.util.FilteredDirectoryCopier;
 import com.facebook.buck.util.Filters;
 import com.facebook.buck.util.Filters.Density;
 import com.facebook.buck.util.HumanReadableException;
-import com.facebook.buck.util.Verbosity;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
@@ -74,6 +73,7 @@ public class FilterResourcesStep implements Step {
   static final Pattern NON_ENGLISH_STRINGS_FILE_PATH = Pattern.compile(
       "\\b|.*/res/values-([a-z]{2})(?:-r([A-Z]{2}))*/strings.xml");
 
+  private final ProjectFilesystem filesystem;
   private final ImmutableBiMap<Path, Path> inResDirToOutResDirMap;
   private final boolean filterDrawables;
   private final boolean enableStringWhitelisting;
@@ -107,6 +107,7 @@ public class FilterResourcesStep implements Step {
    */
   @VisibleForTesting
   FilterResourcesStep(
+      ProjectFilesystem filesystem,
       ImmutableBiMap<Path, Path> inResDirToOutResDirMap,
       boolean filterDrawables,
       boolean enableStringWhitelisting,
@@ -120,6 +121,8 @@ public class FilterResourcesStep implements Step {
     Preconditions.checkArgument(filterDrawables || enableStringWhitelisting || !locales.isEmpty());
     Preconditions.checkArgument(!filterDrawables ||
         (targetDensities != null && drawableFinder != null));
+
+    this.filesystem = filesystem;
     this.inResDirToOutResDirMap = inResDirToOutResDirMap;
     this.filterDrawables = filterDrawables;
     this.enableStringWhitelisting = enableStringWhitelisting;
@@ -154,7 +157,7 @@ public class FilterResourcesStep implements Step {
       Preconditions.checkNotNull(drawableFinder);
       Set<Path> drawables = drawableFinder.findDrawables(
           inResDirToOutResDirMap.keySet(),
-          context.getProjectFilesystem());
+          filesystem);
       pathPredicates.add(
           Filters.createImageDensityFilter(
               drawables,
@@ -191,7 +194,7 @@ public class FilterResourcesStep implements Step {
 
     // Create filtered copies of all resource directories. These will be passed to aapt instead.
     filteredDirectoryCopier.copyDirs(
-        context.getProjectFilesystem(),
+        filesystem,
         inResDirToOutResDirMap,
         Predicates.and(pathPredicates));
 
@@ -232,14 +235,13 @@ public class FilterResourcesStep implements Step {
    */
   private void scaleUnmatchedDrawables(ExecutionContext context)
       throws IOException, InterruptedException {
-    ProjectFilesystem filesystem = context.getProjectFilesystem();
     Filters.Density targetDensity = Filters.Density.ORDERING.max(targetDensities);
 
     // Go over all the images that remain after filtering.
     Preconditions.checkNotNull(drawableFinder);
     Collection<Path> drawables = drawableFinder.findDrawables(
         inResDirToOutResDirMap.values(),
-        context.getProjectFilesystem());
+        filesystem);
     for (Path drawable : drawables) {
       if (drawable.toString().endsWith(".9.png")) {
         // Skip nine-patch for now.
@@ -320,8 +322,8 @@ public class FilterResourcesStep implements Step {
   }
 
   public interface ImageScaler {
-    public boolean isAvailable(ExecutionContext context) throws IOException, InterruptedException;
-    public void scale(double factor, Path source, Path destination, ExecutionContext context)
+    boolean isAvailable(ExecutionContext context) throws IOException, InterruptedException;
+    void scale(double factor, Path source, Path destination, ExecutionContext context)
         throws IOException, InterruptedException;
   }
 
@@ -330,39 +332,26 @@ public class FilterResourcesStep implements Step {
    *
    * @see <a href="http://www.imagemagick.org/script/index.php">ImageMagick</a>
    */
-  public static class ImageMagickScaler implements ImageScaler {
+  static class ImageMagickScaler implements ImageScaler {
 
-    private static final ImageMagickScaler instance = new ImageMagickScaler();
+    private final Path workingDirectory;
 
-    public static ImageMagickScaler getInstance() {
-      return instance;
-    }
-
-    private ExecutionContext getContextWithSilentConsole(ExecutionContext context) {
-      // Using the normal console results in the super console freezing.
-      Console console = context.getConsole();
-      return ExecutionContext.builder()
-          .setExecutionContext(context)
-          .setConsole(new Console(
-              Verbosity.SILENT,
-              console.getStdOut(),
-              console.getStdErr(),
-              console.getAnsi()
-          ))
-          .build();
+    public ImageMagickScaler(Path workingDirectory) {
+      this.workingDirectory = workingDirectory;
     }
 
     @Override
     public boolean isAvailable(ExecutionContext context) throws IOException, InterruptedException {
-      try (ExecutionContext silentContext = getContextWithSilentConsole(context)) {
-        return 0 == new BashStep("which convert").execute(silentContext);
-      }
+      return new ExecutableFinder().getOptionalExecutable(
+          Paths.get("convert"),
+          context.getEnvironment()).isPresent();
     }
 
     @Override
     public void scale(double factor, Path source, Path destination, ExecutionContext context)
         throws IOException, InterruptedException {
       Step convertStep = new BashStep(
+          workingDirectory,
           "convert",
           "-adaptive-resize", (int) (factor * 100) + "%",
           Escaper.escapeAsBashString(source),
@@ -419,7 +408,7 @@ public class FilterResourcesStep implements Step {
     }
 
     @Override
-    public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+    public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
       return builder.setReflectively("filter", getDescription());
     }
 
@@ -435,6 +424,7 @@ public class FilterResourcesStep implements Step {
 
   public static class Builder {
 
+    private ProjectFilesystem filesystem;
     @Nullable
     private ImmutableBiMap<Path, Path> inResDirToOutResDirMap;
     @Nullable
@@ -444,6 +434,11 @@ public class FilterResourcesStep implements Step {
     private boolean enableStringWhitelisting = false;
 
     private Builder() {
+    }
+
+    public Builder setProjectFilesystem(ProjectFilesystem filesystem) {
+      this.filesystem = filesystem;
+      return this;
     }
 
     public Builder setInResToOutResDirMap(ImmutableBiMap<Path, Path> inResDirToOutResDirMap) {
@@ -472,10 +467,12 @@ public class FilterResourcesStep implements Step {
     }
 
     public FilterResourcesStep build() {
+      Preconditions.checkNotNull(filesystem);
       Preconditions.checkNotNull(resourceFilter);
       LOG.info("FilterResourcesStep.Builder: resource filter: %s", resourceFilter);
       Preconditions.checkNotNull(inResDirToOutResDirMap);
       return new FilterResourcesStep(
+          filesystem,
           inResDirToOutResDirMap,
           resourceFilter.isEnabled(),
           enableStringWhitelisting,
@@ -484,7 +481,9 @@ public class FilterResourcesStep implements Step {
           DefaultFilteredDirectoryCopier.getInstance(),
           resourceFilter.getDensities(),
           DefaultDrawableFinder.getInstance(),
-          resourceFilter.shouldDownscale() ? ImageMagickScaler.getInstance() : null);
+          resourceFilter.shouldDownscale() ?
+              new ImageMagickScaler(filesystem.getRootPath()) :
+              null);
     }
   }
 }

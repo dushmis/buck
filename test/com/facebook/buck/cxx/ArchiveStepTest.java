@@ -39,9 +39,7 @@ public class ArchiveStepTest {
   @Test
   public void testArchiveStepUsesCorrectCommand() {
     ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
-    ExecutionContext context = TestExecutionContext.newBuilder()
-        .setProjectFilesystem(projectFilesystem)
-        .build();
+    ExecutionContext context = TestExecutionContext.newInstance();
 
     // Setup dummy values for the archiver, output, and inputs.
     ImmutableList<String> archiver = ImmutableList.of("ar");
@@ -53,6 +51,7 @@ public class ArchiveStepTest {
 
     // Create and archive step.
     ArchiveStep archiveStep = new ArchiveStep(
+        projectFilesystem.getRootPath(),
         archiver,
         output,
         inputs);

@@ -12,6 +12,9 @@ java_library(
     'ZipOutputStreams.java',
     'ZipWriteTest.java',
   ],
+  tests = [
+    '//test/com/facebook/buck/zip:zip',
+  ],
   deps = [
     '//third-party/java/guava:guava',
     '//third-party/java/jsr:jsr305',
@@ -24,6 +27,9 @@ java_library(
 java_library(
   name = 'unzip',
   srcs = [ 'Unzip.java' ],
+  tests = [
+    '//test/com/facebook/buck/zip:zip',
+  ],
   deps = [
     ':stream',
     '//src/com/facebook/buck/io:io',
@@ -37,6 +43,9 @@ java_library(
 java_library(
   name = 'steps',
   srcs = glob(['*Step.java']),
+  tests = [
+    '//test/com/facebook/buck/zip:zip',
+  ],
   deps = [
     ':stream',
     ':unzip',
@@ -57,6 +66,30 @@ java_library(
     '//src/com/facebook/buck/java:rules',
     '//src/com/facebook/buck/rules:rules',
     '//src/com/facebook/buck/thrift:rules',
+    '//test/com/facebook/buck/zip:zip',
+  ],
+)
+
+java_library(
+  name = 'rules',
+  srcs = [
+    'SrcZipAwareFileBundler.java',
+    'Zip.java',
+    'ZipDescription.java',
+  ],
+  deps = [
+    ':steps',
+    '//src/com/facebook/buck/io:io',
+    '//src/com/facebook/buck/java:support',
+    '//src/com/facebook/buck/model:model',
+    '//src/com/facebook/buck/rules:build_rule',
+    '//src/com/facebook/buck/step/fs:fs',
+    '//src/com/facebook/buck/step:step',
+    '//src/com/facebook/buck/util:exceptions',
+    '//third-party/java/guava:guava',
+  ],
+  visibility = [
+    '//src/com/facebook/buck/rules:types',
     '//test/com/facebook/buck/zip:zip',
   ],
 )

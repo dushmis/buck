@@ -17,6 +17,7 @@
 package com.facebook.buck.ocaml;
 
 import com.facebook.buck.cxx.CxxPreprocessorInput;
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
@@ -33,6 +34,7 @@ import java.nio.file.Paths;
  */
 public class OCamlBuildStep implements Step {
 
+  private ProjectFilesystem filesystem;
   private final OCamlBuildContext ocamlContext;
   private final ImmutableList<String> cCompiler;
   private final ImmutableList<String> cxxCompiler;
@@ -41,9 +43,11 @@ public class OCamlBuildStep implements Step {
   private final OCamlDepToolStep depToolStep;
 
   public OCamlBuildStep(
+      ProjectFilesystem filesystem,
       OCamlBuildContext ocamlContext,
       ImmutableList<String> cCompiler,
       ImmutableList<String> cxxCompiler) {
+    this.filesystem = filesystem;
     this.ocamlContext = ocamlContext;
     this.cCompiler = cCompiler;
     this.cxxCompiler = cxxCompiler;
@@ -52,6 +56,7 @@ public class OCamlBuildStep implements Step {
         ocamlContext.getYaccInput().size() > 0;
 
     this.depToolStep = new OCamlDepToolStep(
+        filesystem.getRootPath(),
         this.ocamlContext.getOcamlDepTool().get(),
         ocamlContext.getMLInput(),
         this.ocamlContext.getIncludeFlags(/* isBytecode */ false, /* excludeDeps */ true)
@@ -69,9 +74,10 @@ public class OCamlBuildStep implements Step {
   }
 
   @Override
-  public int execute(ExecutionContext context) throws IOException, InterruptedException {
+  public int execute(ExecutionContext context)
+      throws IOException, InterruptedException {
     if (hasGeneratedSources) {
-      int genExitCode = generateSources(context);
+      int genExitCode = generateSources(context, filesystem.getRootPath());
       if (genExitCode != 0) {
         return genExitCode;
       }
@@ -91,7 +97,11 @@ public class OCamlBuildStep implements Step {
     // module A depends on modules B, C, D.
     ImmutableList<String> sortedInput = sortDependency(depToolStep.getStdout());
     ImmutableList.Builder<String> linkerInputs = ImmutableList.builder();
-    int mlCompileExitCode = executeMLCompilation(context, sortedInput, linkerInputs);
+    int mlCompileExitCode = executeMLCompilation(
+        context,
+        filesystem.getRootPath(),
+        sortedInput,
+        linkerInputs);
     if (mlCompileExitCode != 0) {
       return mlCompileExitCode;
     }
@@ -99,6 +109,7 @@ public class OCamlBuildStep implements Step {
     ImmutableList.Builder<String> bytecodeLinkerInputs = ImmutableList.builder();
     int mlCompileBytecodeExitCode = executeMLCompileBytecode(
         context,
+        filesystem.getRootPath(),
         sortedInput,
         bytecodeLinkerInputs);
     if (mlCompileBytecodeExitCode != 0) {
@@ -127,6 +138,7 @@ public class OCamlBuildStep implements Step {
 
     if (!ocamlContext.isLibrary()) {
       Step debugLauncher = new OCamlDebugLauncherStep(
+          filesystem,
           new OCamlDebugLauncherStep.Args(
               ocamlContext.getOcamlDebug().get(),
               ocamlContext.getBytecodeOutput(),
@@ -154,6 +166,7 @@ public class OCamlBuildStep implements Step {
       Path outputPath = ocamlContext.getCOutput(cSrc);
       linkerInputs.add(outputPath.toString());
       Step compileStep = new OCamlCCompileStep(
+          filesystem.getRootPath(),
           new OCamlCCompileStep.Args(
             cCompiler,
             ocamlContext.getOcamlCompiler().get(),
@@ -178,6 +191,7 @@ public class OCamlBuildStep implements Step {
     flags.addAll(ocamlContext.getCommonCLinkerFlags());
 
     OCamlLinkStep linkStep = new OCamlLinkStep(
+        filesystem.getRootPath(),
         new OCamlLinkStep.Args(
           cxxCompiler,
           ocamlContext.getOcamlCompiler().get(),
@@ -199,6 +213,7 @@ public class OCamlBuildStep implements Step {
     flags.addAll(ocamlContext.getCommonCLinkerFlags());
 
     OCamlLinkStep linkStep = new OCamlLinkStep(
+        filesystem.getRootPath(),
         new OCamlLinkStep.Args(
           cxxCompiler,
           ocamlContext.getOcamlBytecodeCompiler().get(),
@@ -225,10 +240,13 @@ public class OCamlBuildStep implements Step {
 
   private int executeMLCompilation(
       ExecutionContext context,
+      Path workingDirectory,
       ImmutableList<String> sortedInput,
       ImmutableList.Builder<String> linkerInputs
   ) throws IOException, InterruptedException {
-    MakeCleanDirectoryStep mkDir = new MakeCleanDirectoryStep(ocamlContext.getCompileOutputDir());
+    MakeCleanDirectoryStep mkDir = new MakeCleanDirectoryStep(
+        filesystem,
+        ocamlContext.getCompileOutputDir());
     int mkDirExitCode = mkDir.execute(context);
     if (mkDirExitCode != 0) {
       return mkDirExitCode;
@@ -246,6 +264,7 @@ public class OCamlBuildStep implements Step {
           /* isBytecode */ false,
           /* excludeDeps */ false);
       Step compileStep = new OCamlMLCompileStep(
+          workingDirectory,
           new OCamlMLCompileStep.Args(
             cCompiler,
             ocamlContext.getOcamlCompiler().get(),
@@ -262,9 +281,11 @@ public class OCamlBuildStep implements Step {
 
   private int executeMLCompileBytecode(
       ExecutionContext context,
+      Path workingDirectory,
       ImmutableList<String> sortedInput,
       ImmutableList.Builder<String> linkerInputs) throws IOException, InterruptedException {
     MakeCleanDirectoryStep mkDir = new MakeCleanDirectoryStep(
+        filesystem,
         ocamlContext.getCompileBytecodeOutputDir());
     int mkDirExitCode = mkDir.execute(context);
     if (mkDirExitCode != 0) {
@@ -283,6 +304,7 @@ public class OCamlBuildStep implements Step {
           /* isBytecode */ true,
           /* excludeDeps */ false);
       Step compileBytecodeStep = new OCamlMLCompileStep(
+          workingDirectory,
           new OCamlMLCompileStep.Args(
             cCompiler,
             ocamlContext.getOcamlBytecodeCompiler().get(),
@@ -297,8 +319,11 @@ public class OCamlBuildStep implements Step {
     return 0;
   }
 
-private int generateSources(ExecutionContext context) throws IOException, InterruptedException {
-    MakeCleanDirectoryStep mkDir = new MakeCleanDirectoryStep(ocamlContext.getGeneratedSourceDir());
+  private int generateSources(ExecutionContext context, Path workingDirectory)
+      throws IOException, InterruptedException {
+    MakeCleanDirectoryStep mkDir = new MakeCleanDirectoryStep(
+        filesystem,
+        ocamlContext.getGeneratedSourceDir());
     int mkDirExitCode = mkDir.execute(context);
     if (mkDirExitCode != 0) {
       return mkDirExitCode;
@@ -306,6 +331,7 @@ private int generateSources(ExecutionContext context) throws IOException, Interr
     for (Path yaccSource : ocamlContext.getYaccInput()) {
       Path output = ocamlContext.getYaccOutput(ImmutableSet.of(yaccSource)).get(0);
       OCamlYaccStep yaccStep = new OCamlYaccStep(
+          workingDirectory,
           new OCamlYaccStep.Args(
             ocamlContext.getYaccCompiler().get(),
             output,
@@ -318,6 +344,7 @@ private int generateSources(ExecutionContext context) throws IOException, Interr
     for (Path lexSource : ocamlContext.getLexInput()) {
       Path output = ocamlContext.getLexOutput(ImmutableSet.of(lexSource)).get(0);
       OCamlLexStep lexStep = new OCamlLexStep(
+          workingDirectory,
           new OCamlLexStep.Args(
             ocamlContext.getLexCompiler().get(),
             output,

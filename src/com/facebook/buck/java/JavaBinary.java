@@ -29,8 +29,8 @@ import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.BuildableProperties;
 import com.facebook.buck.rules.CommandTool;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyAppendable;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.Tool;
@@ -99,7 +99,7 @@ public class JavaBinary extends AbstractBuildRule
   }
 
   @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+  public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
     // Build a sorted set so that metaInfDirectory contents are listed in a canonical order.
     ImmutableSortedSet.Builder<Path> paths = ImmutableSortedSet.naturalOrder();
     BuildRules.addInputsToSortedSet(metaInfDirectory, paths, directoryTraverser);
@@ -115,7 +115,7 @@ public class JavaBinary extends AbstractBuildRule
     ImmutableList.Builder<Step> commands = ImmutableList.builder();
 
     Path outputDirectory = getOutputDirectory();
-    Step mkdir = new MkdirStep(outputDirectory);
+    Step mkdir = new MkdirStep(getProjectFilesystem(), outputDirectory);
     commands.add(mkdir);
 
     ImmutableSet<Path> includePaths;
@@ -123,11 +123,15 @@ public class JavaBinary extends AbstractBuildRule
       Path stagingRoot = outputDirectory.resolve("meta_inf_staging");
       Path stagingTarget = stagingRoot.resolve("META-INF");
 
-      MakeCleanDirectoryStep createStagingRoot = new MakeCleanDirectoryStep(stagingRoot);
+      MakeCleanDirectoryStep createStagingRoot = new MakeCleanDirectoryStep(
+          getProjectFilesystem(),
+          stagingRoot);
       commands.add(createStagingRoot);
 
       MkdirAndSymlinkFileStep link = new MkdirAndSymlinkFileStep(
-          metaInfDirectory, stagingTarget);
+          getProjectFilesystem(),
+          metaInfDirectory,
+          stagingTarget);
       commands.add(link);
 
       includePaths = ImmutableSet.<Path>builder()
@@ -141,6 +145,7 @@ public class JavaBinary extends AbstractBuildRule
     Path outputFile = getPathToOutput();
     Path manifestPath = manifestFile == null ? null : getResolver().getPath(manifestFile);
     Step jar = new JarDirectoryStep(
+        getProjectFilesystem(),
         outputFile,
         includePaths,
         mainClass,
@@ -156,6 +161,11 @@ public class JavaBinary extends AbstractBuildRule
   @Override
   public ImmutableSetMultimap<JavaLibrary, Path> getTransitiveClasspathEntries() {
     return transitiveClasspathEntries;
+  }
+
+  @Override
+  public ImmutableSet<JavaLibrary> getTransitiveClasspathDeps() {
+    return transitiveClasspathEntries.keySet();
   }
 
   private Path getOutputDirectory() {

@@ -22,8 +22,8 @@ import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyAppendable;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.keys.SupportsDependencyFileRuleKey;
@@ -41,8 +41,10 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
 
 import java.io.IOException;
@@ -252,7 +254,7 @@ public class CxxPreprocessAndCompile
   }
 
   @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+  public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
     // Sanitize any relevant paths in the flags we pass to the preprocessor, to prevent them
     // from contributing to the rule key.
     builder.setReflectively(
@@ -329,6 +331,7 @@ public class CxxPreprocessAndCompile
     }
 
     return new CxxPreprocessAndCompileStep(
+        getProjectFilesystem(),
         operation,
         output,
         getDepFilePath(),
@@ -354,7 +357,7 @@ public class CxxPreprocessAndCompile
       BuildableContext buildableContext) {
     buildableContext.recordArtifact(output);
     return ImmutableList.of(
-        new MkdirStep(output.getParent()),
+        new MkdirStep(getProjectFilesystem(), output.getParent()),
         makeMainStep());
   }
 
@@ -521,6 +524,31 @@ public class CxxPreprocessAndCompile
             MorePaths.TO_PATH));
 
     return inputs.build();
+  }
+
+
+
+  @Override
+  public Optional<ImmutableMultimap<String, String>> getSymlinkTreeInputMap() throws IOException {
+    ImmutableMultimap.Builder<String, String> fullHeaderMapBuilder = ImmutableMultimap.builder();
+    for (HeaderSymlinkTree headerSymlinkTree :
+        Iterables.filter(getDeps(), HeaderSymlinkTree.class)) {
+      for (Map.Entry<Path, Path> entry : Maps
+          .transformValues(headerSymlinkTree.getFullLinks(), getResolver().getPathFunction())
+          .entrySet()) {
+        fullHeaderMapBuilder.put(entry.getValue().toString(), entry.getKey().toString());
+      }
+    }
+    ImmutableMultimap<String, String> fullHeaderMap = fullHeaderMapBuilder.build();
+
+    ImmutableMultimap.Builder<String, String> headerMap = ImmutableMultimap.builder();
+    for (String input : getProjectFilesystem().readLines(getDepFilePath())) {
+      if (!fullHeaderMap.containsKey(input)) {
+        return Optional.absent();
+      }
+      headerMap.putAll(input, fullHeaderMap.get(input));
+    }
+    return Optional.of(headerMap.build());
   }
 
 }

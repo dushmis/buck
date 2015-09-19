@@ -19,7 +19,7 @@ package com.facebook.buck.java;
 import com.facebook.buck.event.ConsoleEvent;
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.abi.StubJar;
-import com.facebook.buck.rules.AbiRule;
+import com.facebook.buck.rules.keys.AbiRule;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.step.ExecutionContext;
@@ -31,14 +31,17 @@ import java.nio.file.Path;
 public class CalculateAbiStep implements Step {
 
   private final BuildableContext buildableContext;
+  private final ProjectFilesystem filesystem;
   private final Path binaryJar;
   private final Path abiJar;
 
   public CalculateAbiStep(
       BuildableContext buildableContext,
+      ProjectFilesystem filesystem,
       Path binaryJar,
       Path abiJar) {
     this.buildableContext = buildableContext;
+    this.filesystem = filesystem;
     this.binaryJar = binaryJar;
     this.abiJar = abiJar;
   }
@@ -49,7 +52,7 @@ public class CalculateAbiStep implements Step {
     try {
       Path out = getPathToHash(context, buildableContext);
 
-      fileSha1 = context.getProjectFilesystem().computeSha1(out);
+      fileSha1 = filesystem.computeSha1(out);
     } catch (IOException e) {
       context.logError(e, "Failed to calculate ABI for %s.", binaryJar);
       return 1;
@@ -64,7 +67,6 @@ public class CalculateAbiStep implements Step {
   private Path getPathToHash(
       ExecutionContext context,
       BuildableContext buildableContext) throws IOException {
-    ProjectFilesystem filesystem = context.getProjectFilesystem();
     Path binJar = filesystem.resolve(binaryJar);
 
     try {

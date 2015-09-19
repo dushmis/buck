@@ -33,6 +33,7 @@ import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.FakeBuildableContext;
 import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.RuleKeyBuilderFactory;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -127,15 +128,18 @@ public class HeaderSymlinkTreeWithHeaderMapTest {
   @Test
   public void testSymlinkTreePostBuildSteps() throws IOException {
     BuildContext buildContext = FakeBuildContext.NOOP_CONTEXT;
+    ProjectFilesystem filesystem = new FakeProjectFilesystem();
     FakeBuildableContext buildableContext = new FakeBuildableContext();
 
     ImmutableList<Step> expectedBuildSteps =
         ImmutableList.of(
-            new MakeCleanDirectoryStep(symlinkTreeRoot),
+            new MakeCleanDirectoryStep(filesystem, symlinkTreeRoot),
             new SymlinkTreeStep(
+                filesystem,
                 symlinkTreeRoot,
                 new SourcePathResolver(new BuildRuleResolver()).getMappedPaths(links)),
             new HeaderMapStep(
+                filesystem,
                 headerMapPath,
                 ImmutableMap.of(
                     Paths.get("file"),
@@ -178,9 +182,9 @@ public class HeaderSymlinkTreeWithHeaderMapTest {
         new DefaultRuleKeyBuilderFactory(
             FakeFileHashCache.createFromStrings(ImmutableMap.<String, String>of()),
             resolver);
-    RuleKey.Builder builder1 = ruleKeyBuilderFactory.newInstance(
+    RuleKeyBuilder builder1 = ruleKeyBuilderFactory.newInstance(
         symlinkTreeBuildRule);
-    RuleKey.Builder builder2 = ruleKeyBuilderFactory.newInstance(
+    RuleKeyBuilder builder2 = ruleKeyBuilderFactory.newInstance(
         modifiedSymlinkTreeBuildRule);
     RuleKey pair1 = builder1.build();
     RuleKey pair2 = builder2.build();
@@ -198,7 +202,7 @@ public class HeaderSymlinkTreeWithHeaderMapTest {
             resolver);
 
     // Calculate the rule key
-    RuleKey.Builder builder1 = ruleKeyBuilderFactory.newInstance(symlinkTreeBuildRule);
+    RuleKeyBuilder builder1 = ruleKeyBuilderFactory.newInstance(symlinkTreeBuildRule);
     RuleKey pair1 = builder1.build();
 
     // Change the contents of the target of the link.
@@ -209,7 +213,7 @@ public class HeaderSymlinkTreeWithHeaderMapTest {
     Files.write(existingFile, "something new".getBytes(Charsets.UTF_8));
 
     // Re-calculate the rule key
-    RuleKey.Builder builder2 = ruleKeyBuilderFactory.newInstance(symlinkTreeBuildRule);
+    RuleKeyBuilder builder2 = ruleKeyBuilderFactory.newInstance(symlinkTreeBuildRule);
     RuleKey pair2 = builder2.build();
 
     // Verify that the rules keys are the same.

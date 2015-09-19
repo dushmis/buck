@@ -107,9 +107,10 @@ public class CxxInferAnalyze extends AbstractBuildRule {
     buildableContext.recordArtifact(specsDir);
     buildableContext.recordArtifact(this.getPathToOutput());
     return ImmutableList.<Step>builder()
-        .add(new MkdirStep(specsDir))
+        .add(new MkdirStep(getProjectFilesystem(), specsDir))
         .add(
             new SymCopyStep(
+                getProjectFilesystem(),
                 FluentIterable.from(captureAndAnalyzeRules.captureRules)
                     .transform(
                         new Function<CxxInferCapture, Path>() {
@@ -119,7 +120,10 @@ public class CxxInferAnalyze extends AbstractBuildRule {
                           }
                         }).toList(),
                 resultsDir))
-        .add(new DefaultShellStep(getAnalyzeCommand(getSpecsOfAllDeps())))
+        .add(
+            new DefaultShellStep(
+                getProjectFilesystem().getRootPath(),
+                getAnalyzeCommand(getSpecsOfAllDeps())))
         .build();
   }
 

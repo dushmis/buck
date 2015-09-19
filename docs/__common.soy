@@ -48,6 +48,16 @@
     window.location.replace(loc.replace('facebook.github.io/buck', 'buckbuild.com'));
   {rb}
 </script>
+<!-- Facebook Pixel Code -->
+<script>
+!function(f,b,e,v,n,t,s){lb}if(f.fbq)return;n=f.fbq=function(){lb}n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments){rb};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s){rb}(window,document,'script','//connect.facebook.net/en_US/fbevents.js');
+fbq('init', '1637165926500152');
+fbq('track', 'PageView');
+</script>
+<noscript><img height="1" width="1" style="display:none"
+src="https://www.facebook.com/tr?id=1637165926500152&ev=PageView&noscript=1"
+/></noscript>
+<!-- End Facebook Pixel Code -->
   <title>{$fullTitle}</title>
   <link type="image/png" rel="shortcut icon" href="{ROOT}static/favicon.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no" />
@@ -160,6 +170,7 @@
             'gen_aidl',
             'keystore',
             'ndk_library',
+            'prebuilt_cxx_library',
             'prebuilt_jar',
             'prebuilt_native_library',
             'project_config',
@@ -167,17 +178,32 @@
         'core': [
             'genrule',
             'remote_file',
+            'zip_file',
         ],
         'cxx': [
             'cxx_binary',
             'cxx_library',
             'cxx_test',
-            'prebuilt_native_library',
+            'prebuilt_cxx_library',
         ],
         'd': [
             'd_binary',
             'd_library',
             'd_test',
+        ],
+        'dotnet': [
+            'csharp_library',
+            'prebuilt_dotnet_library',
+        ],
+        'ios': [
+            'apple_asset_catalog',
+            'apple_binary',
+            'apple_bundle',
+            'apple_library',
+            'apple_package',
+            'apple_resource',
+            'apple_test',
+            'prebuilt_cxx_library',
         ],
         'java': [
             'cxx_library',
@@ -200,10 +226,11 @@
     ] /}
   <h3>Getting Started</h3>
   <ul>
-    <li><a href="{ROOT}">Overview</a>
-    <li><a href="{ROOT}setup/quick_start.html">Quick Start</a>
+    <li><a href="{ROOT}about/overview.html">Overview</a>
     <li><a href="{ROOT}setup/install.html">Downloading and Installing Buck</a>
+    <li><a href="{ROOT}setup/quick_start.html">Quick Start</a>
     <li><a href="{ROOT}article/exopackage.html">Exopackage</a>
+    <li><a href="{ROOT}article/query_cheat_sheet.html">Buck Query Cheat Sheet</a>
   </ul>
   <h3>About</h3>
   <ul>
@@ -247,6 +274,10 @@
         {param rules: $platformRulesMap['d'] /}
     {/call}
     {call .platformBuildRuleLink}
+        {param platform: 'iOS' /}
+        {param rules: $platformRulesMap['ios'] /}
+    {/call}
+    {call .platformBuildRuleLink}
         {param platform: 'Java' /}
         {param rules: $platformRulesMap['java'] /}
     {/call}
@@ -258,12 +289,17 @@
         {param platform: 'Rust' /}
         {param rules: $platformRulesMap['rust'] /}
     {/call}
+    {call .platformBuildRuleLink}
+        {param platform: '.Net' /}
+        {param rules: $platformRulesMap['dotnet'] /}
+    {/call}
   </ul>
   <h3>Functions</h3>
   <ul>
     {foreach $function in [
         'glob',
         'include_defs',
+        'subdir_glob',
         ]}
       <li><a href="{ROOT}function/{$function}.html">{$function}()</a>
     {/foreach}
@@ -448,7 +484,7 @@
 
 /**
  * @param overview HTML description of the command.
- * @param params HTML documentation for each param of the command.
+ * @param? params HTML documentation for each param of the command.
  *     Should be created using multiple applications of the {buck.param}
  *     template.
  * @param? examples HTML documentation that shows examples of the build
@@ -457,10 +493,12 @@
 {template .command}
 {$overview|noAutoescape}
 
-<h2>Parameters</h2>
-<ul class="{css arglist}">
-  {$params|noAutoescape}
-</ul>
+{if $params}
+  <h2>Parameters</h2>
+  <ul class="{css arglist}">
+    {$params|noAutoescape}
+  </ul>
+{/if}
 
 {if $examples}
   <h2>Examples</h2>
@@ -532,6 +570,21 @@
 /***/
 {template .apk_genrule}
 {call .ruleLink}{param name : 'apk_genrule' /}{/call}
+{/template}
+
+/***/
+{template .apple_binary}
+{call .ruleLink}{param name: 'apple_binary' /}{/call}
+{/template}
+
+/***/
+{template .apple_bundle}
+{call .ruleLink}{param name: 'apple_bundle' /}{/call}
+{/template}
+
+/***/
+{template .apple_library}
+{call .ruleLink}{param name: 'apple_library' /}{/call}
 {/template}
 
 /***/
@@ -613,8 +666,21 @@
 {/template}
 
 /***/
+{template .build_file}
+{call .concept_link}{param page: 'build_file' /}{param name: 'build file' /}{/call}
+{/template}
+
+/***/
 {template .build_target}
 {call .concept_link}{param page: 'build_target' /}{param name: 'build target' /}{/call}
+{/template}
+
+/***/
+{template .build_target_pattern}
+  {call .concept_link}
+    {param page: 'build_target_pattern' /}
+    {param name: 'build target pattern' /}
+  {/call}
 {/template}
 
 /**
@@ -683,7 +749,7 @@
   {param name : 'tests' /}
   {param default : '[]' /}
   {param desc}
-  List of <a href="{ROOT}concept/build_target.html">build target</a> that
+  List of <a href="{ROOT}concept/build_target.html">build targets</a> that
   identify the test rules that exercise this target.
   {/param}
 {/call}
@@ -720,16 +786,6 @@
   {/param}
 {/call}
 {/template}
-
-/**
- *
- */
-{template .platformWarning}
-<p><strong>
-Note: Buck works only on Mac OS X and Linux. Windows is not supported.
-</strong></p>
-{/template}
-
 
 /**
  * @param? withAlias

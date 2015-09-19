@@ -28,7 +28,7 @@ import com.facebook.buck.model.BuildId;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.ActionGraph;
-import com.facebook.buck.rules.ArtifactCache;
+import com.facebook.buck.artifact_cache.ArtifactCache;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleResolver;
@@ -63,7 +63,6 @@ import org.easymock.EasyMock;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -79,13 +78,12 @@ public class ExportFileTest {
   @Before
   public void createFixtures() {
     target = BuildTarget.builder("//", "example.html").build();
-    File root = new File(".");
-    context = getBuildContext(root);
+    context = getBuildContext();
   }
 
   @Test
   public void shouldSetSrcAndOutToNameParameterIfNeitherAreSet() throws IOException {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
+    ProjectFilesystem projectFilesystem = FakeProjectFilesystem.createJavaOnlyFilesystem();
     ExportFile exportFile = (ExportFile) ExportFileBuilder.newExportFileBuilder(target)
         .build(new BuildRuleResolver(), projectFilesystem);
 
@@ -94,7 +92,7 @@ public class ExportFileTest {
     MoreAsserts.assertSteps(
         "The output directory should be created and then the file should be copied there.",
         ImmutableList.of(
-            "mkdir -p buck-out/gen",
+            "mkdir -p /opt/src/buck/buck-out/gen",
             "cp " + projectFilesystem.resolve("example.html") + " buck-out/gen/example.html"),
         steps,
         TestExecutionContext.newInstance());
@@ -103,7 +101,7 @@ public class ExportFileTest {
 
   @Test
   public void shouldSetOutToNameParamValueIfSrcIsSet() throws IOException {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
+    ProjectFilesystem projectFilesystem = FakeProjectFilesystem.createJavaOnlyFilesystem();
     ExportFile exportFile = (ExportFile) ExportFileBuilder.newExportFileBuilder(target)
         .setOut("fish")
         .build(new BuildRuleResolver(), projectFilesystem);
@@ -113,7 +111,7 @@ public class ExportFileTest {
     MoreAsserts.assertSteps(
         "The output directory should be created and then the file should be copied there.",
         ImmutableList.of(
-            "mkdir -p buck-out/gen",
+            "mkdir -p /opt/src/buck/buck-out/gen",
             "cp " + projectFilesystem.resolve("example.html") + " buck-out/gen/fish"),
         steps,
         TestExecutionContext.newInstance());
@@ -122,7 +120,7 @@ public class ExportFileTest {
 
   @Test
   public void shouldSetOutAndSrcAndNameParametersSeparately() throws IOException {
-    ProjectFilesystem projectFilesystem = new FakeProjectFilesystem();
+    ProjectFilesystem projectFilesystem = FakeProjectFilesystem.createJavaOnlyFilesystem();
     ExportFile exportFile = (ExportFile) ExportFileBuilder.newExportFileBuilder(target)
         .setSrc(new TestSourcePath("chips"))
         .setOut("fish")
@@ -133,7 +131,7 @@ public class ExportFileTest {
     MoreAsserts.assertSteps(
         "The output directory should be created and then the file should be copied there.",
         ImmutableList.of(
-            "mkdir -p buck-out/gen",
+            "mkdir -p /opt/src/buck/buck-out/gen",
             "cp " + projectFilesystem.resolve("chips") + " buck-out/gen/fish"),
         steps,
         TestExecutionContext.newInstance());
@@ -215,9 +213,8 @@ public class ExportFileTest {
     assertNotEquals(original, refreshed);
   }
 
-  private BuildContext getBuildContext(File root) {
+  private BuildContext getBuildContext() {
     return ImmutableBuildContext.builder()
-        .setProjectFilesystem(new ProjectFilesystem(root.toPath()))
         .setArtifactCache(EasyMock.createMock(ArtifactCache.class))
         .setEventBus(BuckEventBusFactory.newInstance())
         .setClock(new DefaultClock())

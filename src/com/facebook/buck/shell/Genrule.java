@@ -29,6 +29,7 @@ import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.keys.SupportsInputBasedRuleKey;
 import com.facebook.buck.shell.AbstractGenruleStep.CommandString;
 import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
@@ -42,13 +43,14 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
 
-import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -102,7 +104,7 @@ import java.util.Set;
  * <p>
  * Note that the <code>SRCDIR</code> is populated by symlinking the sources.
  */
-public class Genrule extends AbstractBuildRule implements HasOutputName {
+public class Genrule extends AbstractBuildRule implements HasOutputName, SupportsInputBasedRuleKey {
 
   /**
    * The order in which elements are specified in the {@code srcs} attribute of a genrule matters.
@@ -130,6 +132,10 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
   private final Path absolutePathToSrcDirectory;
   protected final Function<Path, Path> relativeToAbsolutePathFunction;
 
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  @AddToRuleKey
+  private final Supplier<ImmutableList<Object>> macroRuleKeyAppendables;
+
   protected Genrule(
       BuildRuleParams params,
       SourcePathResolver resolver,
@@ -139,7 +145,8 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
       Optional<String> bash,
       Optional<String> cmdExe,
       String out,
-      final Function<Path, Path> relativeToAbsolutePathFunction) {
+      final Function<Path, Path> relativeToAbsolutePathFunction,
+      Supplier<ImmutableList<Object>> macroRuleKeyAppendables) {
     super(params, resolver);
     this.srcs = ImmutableList.copyOf(srcs);
     this.macroExpander = macroExpander;
@@ -158,9 +165,9 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
 
     this.out = out;
     BuildTarget target = params.getBuildTarget();
-    this.pathToOutDirectory = Paths.get(
-        BuckConstant.GEN_DIR,
-        target.getBasePathWithSlash());
+    this.pathToOutDirectory = BuckConstant.GEN_PATH
+        .resolve(target.getBasePath())
+        .resolve(target.getShortName());
     this.pathToOutFile = this.pathToOutDirectory.resolve(out);
     if (!pathToOutFile.startsWith(pathToOutDirectory) || pathToOutFile.equals(pathToOutDirectory)) {
       throw new HumanReadableException(
@@ -184,6 +191,7 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
     this.absolutePathToSrcDirectory = relativeToAbsolutePathFunction.apply(pathToSrcDirectory);
 
     this.relativeToAbsolutePathFunction = relativeToAbsolutePathFunction;
+    this.macroRuleKeyAppendables = Suppliers.memoize(macroRuleKeyAppendables);
   }
 
   /** @return the absolute path to the output file */
@@ -226,7 +234,17 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
     } catch (NoAndroidSdkException e) {
       android = null;
     }
+
     if (android != null) {
+      Optional<Path> sdkDirectory = android.getSdkDirectory();
+      if (sdkDirectory.isPresent()) {
+        environmentVariablesBuilder.put("ANDROID_HOME", sdkDirectory.get().toString());
+      }
+      Optional<Path> ndkDirectory = android.getNdkDirectory();
+      if (ndkDirectory.isPresent()) {
+        environmentVariablesBuilder.put("NDK_HOME", ndkDirectory.get().toString());
+      }
+
       environmentVariablesBuilder.put("DX", android.getDxExecutable().toString());
       environmentVariablesBuilder.put("ZIPALIGN", android.getZipalignExecutable().toString());
     }
@@ -270,7 +288,6 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
     // The user's command (this.cmd) should be run from the directory that contains only the
     // symlinked files. This ensures that the user can reference only the files that were declared
     // as srcs. Without this, a genrule is not guaranteed to be hermetic.
-    File workingDirectory = new File(absolutePathToSrcDirectory.toString());
 
     return new AbstractGenruleStep(
         getBuildTarget(),
@@ -278,7 +295,7 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
             cmd.transform(macroExpander),
             bash.transform(macroExpander),
             cmdExe.transform(macroExpander)),
-        workingDirectory) {
+        absolutePathToSrcDirectory) {
       @Override
       protected void addEnvironmentVariables(
           ExecutionContext context,
@@ -299,18 +316,19 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
     // Delete the old output for this rule, if it exists.
     commands.add(
         new RmStep(
+            getProjectFilesystem(),
             getPathToOutput(),
             /* shouldForceDeletion */ true,
             /* shouldRecurse */ true));
 
     // Make sure that the directory to contain the output file exists. Rules get output to a
     // directory named after the base path, so we don't want to nuke the entire directory.
-    commands.add(new MkdirStep(pathToOutDirectory));
+    commands.add(new MkdirStep(getProjectFilesystem(), pathToOutDirectory));
 
     // Delete the old temp directory
-    commands.add(new MakeCleanDirectoryStep(pathToTmpDirectory));
+    commands.add(new MakeCleanDirectoryStep(getProjectFilesystem(), pathToTmpDirectory));
     // Create a directory to hold all the source files.
-    commands.add(new MakeCleanDirectoryStep(pathToSrcDirectory));
+    commands.add(new MakeCleanDirectoryStep(getProjectFilesystem(), pathToSrcDirectory));
 
     addSymlinkCommands(commands);
 
@@ -345,7 +363,8 @@ public class Genrule extends AbstractBuildRule implements HasOutputName {
       }
 
       Path destination = pathToSrcDirectory.resolve(localPath);
-      commands.add(new MkdirAndSymlinkFileStep(entry.getKey(), destination));
+      commands.add(
+          new MkdirAndSymlinkFileStep(getProjectFilesystem(), entry.getKey(), destination));
     }
   }
 

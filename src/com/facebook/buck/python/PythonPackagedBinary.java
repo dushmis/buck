@@ -45,7 +45,7 @@ public class PythonPackagedBinary extends PythonBinary implements HasRuntimeDeps
   private static final BuildableProperties OUTPUT_TYPE = new BuildableProperties(PACKAGING);
 
   @AddToRuleKey
-  private final Path pathToPex;
+  private final Tool builder;
   @AddToRuleKey
   private final ImmutableList<String> buildArgs;
   private final Path pathToPexExecuter;
@@ -62,7 +62,7 @@ public class PythonPackagedBinary extends PythonBinary implements HasRuntimeDeps
   protected PythonPackagedBinary(
       BuildRuleParams params,
       SourcePathResolver resolver,
-      Path pathToPex,
+      Tool builder,
       ImmutableList<String> buildArgs,
       Path pathToPexExecuter,
       String pexExtension,
@@ -71,7 +71,7 @@ public class PythonPackagedBinary extends PythonBinary implements HasRuntimeDeps
       PythonPackageComponents components,
       ImmutableSortedSet<BuildRule> runtimeDeps) {
     super(params, resolver, mainModule, components);
-    this.pathToPex = pathToPex;
+    this.builder = builder;
     this.buildArgs = buildArgs;
     this.pathToPexExecuter = pathToPexExecuter;
     this.pexExtension = pexExtension;
@@ -112,17 +112,20 @@ public class PythonPackagedBinary extends PythonBinary implements HasRuntimeDeps
     Path binPath = getBinPath();
 
     // Make sure the parent directory exists.
-    steps.add(new MkdirStep(binPath.getParent()));
+    steps.add(new MkdirStep(getProjectFilesystem(), binPath.getParent()));
 
     Path workingDirectory = BuildTargets.getGenPath(
         getBuildTarget(), "__%s__working_directory");
-    steps.add(new MakeCleanDirectoryStep(workingDirectory));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), workingDirectory));
 
     // Generate and return the PEX build step.
     steps.add(
         new PexStep(
-            pathToPex,
-            buildArgs,
+            getProjectFilesystem(),
+            ImmutableList.<String>builder()
+                .addAll(builder.getCommandPrefix(getResolver()))
+                .addAll(buildArgs)
+                .build(),
             pythonEnvironment.getPythonPath(),
             workingDirectory,
             binPath,

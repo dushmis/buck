@@ -34,6 +34,7 @@ java_library(
 
 CONFIG_SRCS = [
   'BuckConfig.java',
+  'DownloadConfig.java',
 ]
 java_library(
   name = 'config',
@@ -56,6 +57,7 @@ java_library(
     '//src/com/facebook/buck/util:io',
     '//src/com/facebook/buck/util:util',
     '//src/com/facebook/buck/util/environment:platform',
+    '//src/com/facebook/buck/util/network:network',
     '//src/com/facebook/buck/util/unit:unit',
     '//third-party/java/guava:guava',
     '//third-party/java/jsr:jsr305',
@@ -64,6 +66,7 @@ java_library(
   visibility = [
     '//src/com/facebook/buck/android:rules',
     '//src/com/facebook/buck/apple:rules',
+    '//src/com/facebook/buck/artifact_cache:config',
     '//src/com/facebook/buck/command:command',
     '//src/com/facebook/buck/cxx:rules',
     '//src/com/facebook/buck/d:d',
@@ -79,6 +82,8 @@ java_library(
     '//src/com/facebook/buck/rust:rust',
     '//src/com/facebook/buck/test:config',
     '//src/com/facebook/buck/thrift:rules',
+    '//src/com/facebook/buck/util/versioncontrol:versioncontrol',
+    '//src/com/facebook/buck/util/versioncontrol:impl',
     '//test/com/facebook/buck/...',
   ]
 )
@@ -86,6 +91,14 @@ java_library(
 java_immutables_library(
   name = 'cli',
   srcs = glob(['*.java'], excludes = EVENTS_SRCS + CONFIG_SRCS + RAW_CONFIG_SRCS),
+  resources = [
+    '//src/com/facebook/buck/cli/quickstart/android:android-template',
+    '//src/com/facebook/buck/cli/quickstart/ios:ios-template',
+  ],
+  tests = [
+    '//test/com/facebook/buck/cli:cli',
+    '//test/com/facebook/buck/cli:cli-apple-integration',
+  ],
   deps = [
     ':config',
     ':events',
@@ -94,8 +107,11 @@ java_immutables_library(
     '//src/com/facebook/buck/android:packageable',
     '//src/com/facebook/buck/android:rules',
     '//src/com/facebook/buck/android:utils',
+    '//src/com/facebook/buck/apple/device:device',
     '//src/com/facebook/buck/apple/simulator:simulator',
     '//src/com/facebook/buck/apple:rules',
+    '//src/com/facebook/buck/artifact_cache:artifact_cache',
+    '//src/com/facebook/buck/artifact_cache:config',
     '//src/com/facebook/buck/command:command',
     '//src/com/facebook/buck/cxx:platform',
     '//src/com/facebook/buck/cxx:rules',
@@ -105,6 +121,7 @@ java_immutables_library(
     '//src/com/facebook/buck/file:file',
     '//src/com/facebook/buck/graph:graph',
     '//src/com/facebook/buck/io:io',
+    '//src/com/facebook/buck/io:watchman',
     '//src/com/facebook/buck/js:js',
     '//src/com/facebook/buck/java:autodeps',
     '//src/com/facebook/buck/java:classhash',
@@ -124,6 +141,7 @@ java_immutables_library(
     '//src/com/facebook/buck/parser:rule_pattern',
     '//src/com/facebook/buck/python:config',
     '//src/com/facebook/buck/python:support',
+    '//src/com/facebook/buck/query:query',
     '//src/com/facebook/buck/rules:build_rule',
     '//src/com/facebook/buck/rules:rules',
     '//src/com/facebook/buck/rules:target_graph_to_action_graph',
@@ -153,9 +171,10 @@ java_immutables_library(
     '//src/com/facebook/buck/util/environment:platform',
     '//src/com/facebook/buck/util/network:network',
     '//src/com/facebook/buck/timing:timing',
+    '//src/com/facebook/buck/util/versioncontrol:versioncontrol',
+    '//src/com/facebook/buck/util/versioncontrol:impl',
     '//third-party/java/aether:aether-api',
     '//third-party/java/args4j:args4j',
-    '//third-party/java/bazel:query-engine',
     '//third-party/java/ddmlib:ddmlib',
     '//third-party/java/guava:guava',
     '//third-party/java/infer-annotations:infer-annotations',
@@ -164,12 +183,12 @@ java_immutables_library(
     '//third-party/java/jackson:jackson-datatype-jdk7',
     '//third-party/java/jsr:jsr305',
     '//third-party/java/nailgun:nailgun',
+    '//third-party/java/okhttp:okhttp',
   ],
   provided_deps = [
     # Event API is loaded by the bootstrapper at runtime; don't need to depend on it strongly
     '//src/com/facebook/buck/event/api:api',
   ],
-  resources = glob(['quickstart/**'], include_dotfiles=True),
   visibility = [
     '//src/com/facebook/buck/event:dependencies-for-external-projects-inner',
     '//src/com/facebook/buck/event:event',
@@ -178,6 +197,7 @@ java_immutables_library(
     '//test/com/facebook/buck/java:java',
     '//test/com/facebook/buck/cli/...',
     '//test/com/facebook/buck/parser:parser',
+    '//test/com/facebook/buck/query:query',
     '//test/com/facebook/buck/test:test',
     '//test/com/facebook/buck/testutil/integration:integration',
   ],

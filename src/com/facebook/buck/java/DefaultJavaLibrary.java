@@ -27,7 +27,7 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.model.HasBuildTarget;
-import com.facebook.buck.rules.AbiRule;
+import com.facebook.buck.model.HasTests;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
@@ -44,6 +44,7 @@ import com.facebook.buck.rules.OnDiskBuildInfo;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
+import com.facebook.buck.rules.keys.SupportsInputBasedRuleKey;
 import com.facebook.buck.shell.BashStep;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
@@ -100,8 +101,9 @@ import javax.annotation.Nullable;
  * from the {@code //src/com/facebook/feed/model:model} rule.
  */
 public class DefaultJavaLibrary extends AbstractBuildRule
-    implements JavaLibrary, AbiRule, HasClasspathEntries, ExportDependencies,
-    InitializableFromDisk<JavaLibrary.Data>, AndroidPackageable, MavenPublishable {
+    implements JavaLibrary, HasClasspathEntries, ExportDependencies,
+    InitializableFromDisk<JavaLibrary.Data>, AndroidPackageable,
+    SupportsInputBasedRuleKey, HasTests {
 
   private static final BuildableProperties OUTPUT_TYPE = new BuildableProperties(LIBRARY);
 
@@ -118,9 +120,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   private final Optional<SourcePath> proguardConfig;
   @AddToRuleKey
   private final ImmutableList<String> postprocessClassesCommands;
-  @AddToRuleKey
   private final ImmutableSortedSet<BuildRule> exportedDeps;
-  @AddToRuleKey
   private final ImmutableSortedSet<BuildRule> providedDeps;
   // Some classes need to override this when enhancing deps (see AndroidLibrary).
   private final ImmutableSet<Path> additionalClasspathEntries;
@@ -128,15 +128,28 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       outputClasspathEntriesSupplier;
   private final Supplier<ImmutableSetMultimap<JavaLibrary, Path>>
       transitiveClasspathEntriesSupplier;
+  private final Supplier<ImmutableSet<JavaLibrary>> transitiveClasspathDepsSupplier;
   private final Supplier<ImmutableSetMultimap<JavaLibrary, Path>>
       declaredClasspathEntriesSupplier;
+
+  private final SourcePath abiJar;
+  @AddToRuleKey
+  @SuppressWarnings("PMD.UnusedPrivateField")
+  private final Supplier<ImmutableSortedSet<SourcePath>> abiClasspath;
+
   private final BuildOutputInitializer<Data> buildOutputInitializer;
+  private final ImmutableSortedSet<BuildTarget> tests;
 
 
   // TODO(jacko): This really should be final, but we need to refactor how we get the
   // AndroidPlatformTarget first before it can be.
   @AddToRuleKey
   private JavacOptions javacOptions;
+
+  @Override
+  public ImmutableSortedSet<BuildTarget> getTests() {
+    return tests;
+  }
 
   /**
    * Function for opening a JAR and returning all symbols that can be referenced from inside of that
@@ -175,7 +188,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   };
 
   public DefaultJavaLibrary(
-      BuildRuleParams params,
+      final BuildRuleParams params,
       SourcePathResolver resolver,
       Set<? extends SourcePath> srcs,
       Set<? extends SourcePath> resources,
@@ -183,11 +196,61 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       ImmutableList<String> postprocessClassesCommands,
       ImmutableSortedSet<BuildRule> exportedDeps,
       ImmutableSortedSet<BuildRule> providedDeps,
+      SourcePath abiJar,
       ImmutableSet<Path> additionalClasspathEntries,
       JavacOptions javacOptions,
       Optional<Path> resourcesRoot,
-      Optional<String> mavenCoords) {
-    super(params, resolver);
+      Optional<String> mavenCoords,
+      ImmutableSortedSet<BuildTarget> tests) {
+    this(
+        params,
+        resolver,
+        srcs,
+        resources,
+        proguardConfig,
+        postprocessClassesCommands,
+        exportedDeps,
+        providedDeps,
+        abiJar,
+        Suppliers.memoize(
+            new Supplier<ImmutableSortedSet<SourcePath>>() {
+              @Override
+              public ImmutableSortedSet<SourcePath> get() {
+                return JavaLibraryRules.getAbiInputs(params.getDeps());
+              }
+            }),
+        additionalClasspathEntries,
+        javacOptions,
+        resourcesRoot,
+        mavenCoords,
+        tests);
+  }
+
+  private DefaultJavaLibrary(
+      BuildRuleParams params,
+      final SourcePathResolver resolver,
+      Set<? extends SourcePath> srcs,
+      Set<? extends SourcePath> resources,
+      Optional<SourcePath> proguardConfig,
+      ImmutableList<String> postprocessClassesCommands,
+      ImmutableSortedSet<BuildRule> exportedDeps,
+      ImmutableSortedSet<BuildRule> providedDeps,
+      SourcePath abiJar,
+      final Supplier<ImmutableSortedSet<SourcePath>> abiClasspath,
+      ImmutableSet<Path> additionalClasspathEntries,
+      JavacOptions javacOptions,
+      Optional<Path> resourcesRoot,
+      Optional<String> mavenCoords,
+      ImmutableSortedSet<BuildTarget> tests) {
+    super(
+        params.appendExtraDeps(
+            new Supplier<Iterable<? extends BuildRule>>() {
+              @Override
+              public Iterable<? extends BuildRule> get() {
+                return resolver.filterBuildRuleInputs(abiClasspath.get());
+              }
+            }),
+        resolver);
 
     // Exported deps are meant to be forwarded onto the CLASSPATH for dependents,
     // and so only make sense for java library types.
@@ -210,6 +273,10 @@ public class DefaultJavaLibrary extends AbstractBuildRule
     this.javacOptions = javacOptions;
     this.resourcesRoot = resourcesRoot;
     this.mavenCoords = mavenCoords;
+    this.tests = tests;
+
+    this.abiJar = abiJar;
+    this.abiClasspath = abiClasspath;
 
     if (!srcs.isEmpty() || !resources.isEmpty()) {
       this.outputJar = Optional.of(getOutputJarPath(getBuildTarget()));
@@ -236,6 +303,17 @@ public class DefaultJavaLibrary extends AbstractBuildRule
                 outputJar);
           }
         });
+
+    this.transitiveClasspathDepsSupplier =
+        Suppliers.memoize(
+            new Supplier<ImmutableSet<JavaLibrary>>() {
+              @Override
+              public ImmutableSet<JavaLibrary> get() {
+                return JavaLibraryClasspathProvider.getTransitiveClasspathDeps(
+                    DefaultJavaLibrary.this,
+                    outputJar);
+              }
+            });
 
     this.declaredClasspathEntriesSupplier =
         Suppliers.memoize(new Supplier<ImmutableSetMultimap<JavaLibrary, Path>>() {
@@ -265,17 +343,17 @@ public class DefaultJavaLibrary extends AbstractBuildRule
       ImmutableList.Builder<Step> commands,
       BuildTarget target) {
     // Make sure that this directory exists because ABI information will be written here.
-    Step mkdir = new MakeCleanDirectoryStep(getPathToAbiOutputDir());
+    Step mkdir = new MakeCleanDirectoryStep(getProjectFilesystem(), getPathToAbiOutputDir());
     commands.add(mkdir);
 
     // Only run javac if there are .java files to compile.
     if (!getJavaSrcs().isEmpty()) {
       Path pathToSrcsList = BuildTargets.getGenPath(getBuildTarget(), "__%s__srcs");
-      commands.add(new MkdirStep(pathToSrcsList.getParent()));
+      commands.add(new MkdirStep(getProjectFilesystem(), pathToSrcsList.getParent()));
 
       Optional<Path> workingDirectory;
       Path scratchDir = BuildTargets.getGenPath(target, "lib__%s____working_directory");
-      commands.add(new MakeCleanDirectoryStep(scratchDir));
+      commands.add(new MakeCleanDirectoryStep(getProjectFilesystem(), scratchDir));
       workingDirectory = Optional.of(scratchDir);
 
       JavacStep javacStep = new JavacStep(
@@ -287,7 +365,8 @@ public class DefaultJavaLibrary extends AbstractBuildRule
           javacOptions,
           target,
           suggestBuildRules,
-          getResolver());
+          getResolver(),
+          getProjectFilesystem());
 
       commands.add(javacStep);
     }
@@ -321,7 +400,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
     return BuildTargets.getGenPath(target, "lib__%s__output");
   }
 
-  private static Path getOutputJarPath(BuildTarget target) {
+  static Path getOutputJarPath(BuildTarget target) {
     return Paths.get(
         String.format(
             "%s/%s.jar",
@@ -335,15 +414,6 @@ public class DefaultJavaLibrary extends AbstractBuildRule
    */
   private static Path getClassesDir(BuildTarget target) {
     return BuildTargets.getScratchPath(target, "lib__%s__classes");
-  }
-
-  /**
-   * Finds all deps that implement JavaLibraryRule and hash their ABI keys together.
-   */
-  @Override
-  public Sha1HashCode getAbiKeyForDeps() {
-    return Sha1HashCode.of(
-        createHasherWithAbiKeyForDeps(getDepsForAbiKey()).hash().toString());
   }
 
   /**
@@ -410,6 +480,11 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   }
 
   @Override
+  public ImmutableSortedSet<SourcePath> getSources() {
+    return srcs;
+  }
+
+  @Override
   public ImmutableSortedSet<BuildRule> getDepsForTransitiveClasspathEntries() {
     return ImmutableSortedSet.copyOf(Sets.union(getDeclaredDeps(), exportedDeps));
   }
@@ -417,6 +492,11 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   @Override
   public ImmutableSetMultimap<JavaLibrary, Path> getTransitiveClasspathEntries() {
     return transitiveClasspathEntriesSupplier.get();
+  }
+
+  @Override
+  public ImmutableSet<JavaLibrary> getTransitiveClasspathDeps() {
+    return transitiveClasspathDepsSupplier.get();
   }
 
   @Override
@@ -461,12 +541,6 @@ public class DefaultJavaLibrary extends AbstractBuildRule
           .build();
     }
 
-    ImmutableSetMultimap<JavaLibrary, Path> transitiveClasspathEntries =
-        ImmutableSetMultimap.<JavaLibrary, Path>builder()
-            .putAll(getTransitiveClasspathEntries())
-            .putAll(this, additionalClasspathEntries)
-            .build();
-
     ImmutableSetMultimap<JavaLibrary, Path> declaredClasspathEntries =
         ImmutableSetMultimap.<JavaLibrary, Path>builder()
             .putAll(getDeclaredClasspathEntries())
@@ -478,7 +552,7 @@ public class DefaultJavaLibrary extends AbstractBuildRule
         javacOptions.getAnnotationProcessingParams().getGeneratedSourceFolderName();
     if (annotationGenFolder != null) {
       MakeCleanDirectoryStep mkdirGeneratedSources =
-          new MakeCleanDirectoryStep(annotationGenFolder);
+          new MakeCleanDirectoryStep(getProjectFilesystem(), annotationGenFolder);
       steps.add(mkdirGeneratedSources);
       buildableContext.recordArtifact(annotationGenFolder);
     }
@@ -487,11 +561,11 @@ public class DefaultJavaLibrary extends AbstractBuildRule
     // might be resources that need to be copied there.
     BuildTarget target = getBuildTarget();
     Path outputDirectory = getClassesDir(target);
-    steps.add(new MakeCleanDirectoryStep(outputDirectory));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), outputDirectory));
 
     Optional<JavacStep.SuggestBuildRules> suggestBuildRule =
-        createSuggestBuildFunction(context,
-            transitiveClasspathEntries,
+        createSuggestBuildFunction(
+            context,
             declaredClasspathEntries,
             JAR_RESOLVER);
 
@@ -522,7 +596,11 @@ public class DefaultJavaLibrary extends AbstractBuildRule
         steps,
         target);
 
-    addPostprocessClassesCommands(steps, postprocessClassesCommands, outputDirectory);
+    addPostprocessClassesCommands(
+        getProjectFilesystem().getRootPath(),
+        steps,
+        postprocessClassesCommands,
+        outputDirectory);
 
     // If there are resources, then link them to the appropriate place in the classes directory.
     JavaPackageFinder finder = context.getJavaPackageFinder();
@@ -531,38 +609,41 @@ public class DefaultJavaLibrary extends AbstractBuildRule
     }
     steps.add(
         new CopyResourcesStep(
+            getProjectFilesystem(),
             getResolver(),
             target,
             resources,
             outputDirectory,
             finder));
 
-    steps.add(new MakeCleanDirectoryStep(getOutputJarDirPath(target)));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), getOutputJarDirPath(target)));
 
     Path abiJar = getOutputJarDirPath(target)
         .resolve(String.format("%s-abi.jar", target.getShortNameAndFlavorPostfix()));
-    steps.add(new MkdirStep(abiJar.getParent()));
+    steps.add(new MkdirStep(getProjectFilesystem(), abiJar.getParent()));
 
     if (outputJar.isPresent()) {
       Path output = outputJar.get();
 
-      steps.add(new JarDirectoryStep(
+      steps.add(
+          new JarDirectoryStep(
+              getProjectFilesystem(),
               output,
-          Collections.singleton(outputDirectory),
+              Collections.singleton(outputDirectory),
           /* mainClass */ null,
           /* manifestFile */ null));
       buildableContext.recordArtifact(output);
 
       // Calculate the ABI.
 
-      steps.add(new CalculateAbiStep(buildableContext, output, abiJar));
+      steps.add(new CalculateAbiStep(buildableContext, getProjectFilesystem(), output, abiJar));
     } else {
       Path scratch = BuildTargets.getScratchPath(
           target,
           String.format("%%s/%s-temp-abi.jar", target.getShortNameAndFlavorPostfix()));
-      steps.add(new MakeCleanDirectoryStep(scratch.getParent()));
-      steps.add(new TouchStep(scratch));
-      steps.add(new CalculateAbiStep(buildableContext, scratch, abiJar));
+      steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), scratch.getParent()));
+      steps.add(new TouchStep(getProjectFilesystem(), scratch));
+      steps.add(new CalculateAbiStep(buildableContext, getProjectFilesystem(), scratch, abiJar));
     }
 
     JavaLibraryRules.addAccumulateClassNamesStep(this, buildableContext, steps);
@@ -618,7 +699,6 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   @VisibleForTesting
   Optional<JavacStep.SuggestBuildRules> createSuggestBuildFunction(
       final BuildContext context,
-      final ImmutableSetMultimap<JavaLibrary, Path> transitiveClasspathEntries,
       final ImmutableSetMultimap<JavaLibrary, Path> declaredClasspathEntries,
       final JarResolver jarResolver) {
 
@@ -627,6 +707,13 @@ public class DefaultJavaLibrary extends AbstractBuildRule
             new Supplier<ImmutableList<JavaLibrary>>() {
               @Override
               public ImmutableList<JavaLibrary> get() {
+                ImmutableSetMultimap<JavaLibrary, Path> transitiveClasspathEntries =
+                    ImmutableSetMultimap.<JavaLibrary, Path>builder()
+                        .putAll(getTransitiveClasspathEntries())
+                        .putAll(
+                            DefaultJavaLibrary.this,
+                            DefaultJavaLibrary.this.additionalClasspathEntries)
+                        .build();
                 Set<JavaLibrary> transitiveNotDeclaredDeps = Sets.difference(
                     transitiveClasspathEntries.keySet(),
                     Sets.union(ImmutableSet.of(this), declaredClasspathEntries.keySet()));
@@ -690,6 +777,11 @@ public class DefaultJavaLibrary extends AbstractBuildRule
   }
 
   @Override
+  public Optional<SourcePath> getAbiJar() {
+    return outputJar.isPresent() ? Optional.of(abiJar) : Optional.<SourcePath>absent();
+  }
+
+  @Override
   public ImmutableSortedMap<String, HashCode> getClassNamesToHashes() {
     return buildOutputInitializer.getBuildOutput().getClassNamesToHashes();
   }
@@ -711,11 +803,14 @@ public class DefaultJavaLibrary extends AbstractBuildRule
    */
   @VisibleForTesting
   static void addPostprocessClassesCommands(
+      Path workingDirectory,
       ImmutableList.Builder<Step> commands,
       List<String> postprocessClassesCommands,
       Path outputDirectory) {
     for (final String postprocessClassesCommand : postprocessClassesCommands) {
-      BashStep bashStep = new BashStep(postprocessClassesCommand + " " + outputDirectory);
+      BashStep bashStep = new BashStep(
+          workingDirectory,
+          postprocessClassesCommand + " " + outputDirectory);
       commands.add(bashStep);
     }
   }

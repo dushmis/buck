@@ -62,18 +62,17 @@ public class ArchiveStepIntegrationTest {
 
     // Build an archive step.
     ArchiveStep archiveStep = new ArchiveStep(
+        filesystem.getRootPath(),
         archiver,
         output,
         ImmutableList.of(input));
     FileScrubberStep fileScrubberStep = new FileScrubberStep(
+        filesystem,
         output,
         platform.getAr().getScrubbers());
 
     // Execute the archive step and verify it ran successfully.
-    ExecutionContext executionContext =
-        TestExecutionContext.newBuilder()
-            .setProjectFilesystem(new ProjectFilesystem(tmp.getRoot().toPath()))
-            .build();
+    ExecutionContext executionContext = TestExecutionContext.newInstance();
     TestConsole console = (TestConsole) executionContext.getConsole();
     int exitCode = archiveStep.execute(executionContext);
     assertEquals("archive step failed: " + console.getTextWrittenToStdErr(), 0, exitCode);

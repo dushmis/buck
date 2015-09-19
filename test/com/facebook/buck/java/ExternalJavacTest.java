@@ -24,9 +24,9 @@ import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.NoopBuildRule;
 import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.keys.DefaultRuleKeyBuilderFactory;
-import com.facebook.buck.rules.keys.RuleKeyBuilder;
 import com.facebook.buck.testutil.FakeFileHashCache;
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.facebook.buck.util.FakeProcess;
@@ -101,11 +101,10 @@ public class ExternalJavacTest extends EasyMockSupport {
     DefaultRuleKeyBuilderFactory fakeRuleKeyBuilderFactory =
         new DefaultRuleKeyBuilderFactory(fileHashCache, pathResolver);
 
-    RuleKey javacKey =
-        new RuleKeyBuilder(pathResolver, fileHashCache)
-            .setReflectively("javac", javac)
-            .build();
-    RuleKey.Builder builder = fakeRuleKeyBuilderFactory.newInstance(buildRule);
+    RuleKey javacKey = new RuleKeyBuilder(pathResolver, fileHashCache)
+        .setReflectively("javac", javac)
+        .build();
+    RuleKeyBuilder builder = fakeRuleKeyBuilderFactory.newInstance(buildRule);
     builder.setReflectively("key.appendableSubKey", javacKey);
     RuleKey expected = builder.build();
 
@@ -147,11 +146,10 @@ public class ExternalJavacTest extends EasyMockSupport {
     DefaultRuleKeyBuilderFactory fakeRuleKeyBuilderFactory =
         new DefaultRuleKeyBuilderFactory(fileHashCache, pathResolver);
 
-    RuleKey javacKey =
-        new RuleKeyBuilder(pathResolver, fileHashCache)
-            .setReflectively("javac.version", javacVersion.toString())
-            .build();
-    RuleKey.Builder builder = fakeRuleKeyBuilderFactory.newInstance(buildRule);
+    RuleKey javacKey = new RuleKeyBuilder(pathResolver, fileHashCache)
+        .setReflectively("javac.version", javacVersion.toString())
+        .build();
+    RuleKeyBuilder builder = fakeRuleKeyBuilderFactory.newInstance(buildRule);
     builder.setReflectively("key.appendableSubKey", javacKey);
     RuleKey expected = builder.build();
 

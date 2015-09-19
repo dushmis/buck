@@ -54,11 +54,13 @@ The following sections are recognized by Buck:
     'adb',
     'alias',
     'android',
+    'apple',
     'build',
     'buildfile',
     'cache',
     'color',
     'cxx',
+    'download',
     'java',
     'httpserver',
     'log',
@@ -75,12 +77,16 @@ The following sections are recognized by Buck:
 
 {call .section}{param title: 'adb' /}{/call}
 
-This section controls adb restart behavior on errors.
+This section configures adb behavior.
 
 {literal}<pre class="prettyprint lang-ini">
 [adb]
   # This specifies a whether to restart adb on failure or not.
   adb_restart_on_failure = true
+
+  # This specifies whether multi-install mode is enabled or
+  # disabled by default.
+  multi_install_mode = false
 </pre>{/literal}
 
 
@@ -133,6 +139,64 @@ the version of the SDK that Buck has chosen will be printed to the console.
 
 You can find the list of valid values on your system by running{sp}
 <code>android list targets --compact</code>.
+
+{call .section}{param title: 'apple' /}{/call}
+
+This section includes settings that control settings that are specific to Apple platform rules.
+
+<p>
+  By default, Buck will use the output of <code>xcode-select --print-path</code> to determine where
+  Xcode's developer directory is.  However, you can specificy a directory in the config to override
+  whatever value that would return.
+</p>
+{literal}<pre class="prettyprint lang-ini">
+[apple]
+  xcode_developer_dir = path/to/developer/directory
+</pre>{/literal}
+
+<p>
+  For each platform, you can specify the target SDK version to use.  The format is
+  {sp}<code>{lb}platform{rb}_target_sdk_version</code>.
+</p>
+{literal}<pre class = "prettyprint lang-ini">
+[apple]
+  iphonesimulator_target_sdk_version = 7.0
+  iphoneos_target_sdk_version = 7.0
+  macosx_target_sdk_version = 10.9
+</pre>{/literal}
+
+<p>
+  If you want to run tests with Buck, you will need to get
+  {sp}<a href="https://github.com/facebook/xctool"><code>xctool</code></a> and tell Buck where to
+  find it.  You can specify the path to a binary or a {call buck.build_target /} that will produce a
+  zipped version of <code>xctool</code>.
+</p>
+{literal}<pre class = "prettyprint lang-ini">
+[apple]
+  xctool_path = path/to/binary/of/xctool
+  # -or-
+  xctool_zip_target = //path/to/target/that/creates:xctool-zip
+</pre>{/literal}
+
+<p>
+  This setting is passed directly to <code>xctool</code>, and then to <code>xcodebuild</code> as
+  the <code>-destination</code> argument.  See the
+  {sp}<a href="https://developer.apple.com/library/mac/documentation/Darwin/Reference/ManPages/man1/xcodebuild.1.html">
+  man page</a> for the proper syntax.
+</p>
+{literal}<pre class = "prettyprint lang-ini">
+[apple]
+  xctool_default_destination_specifier = platform=iOS Simulator
+</pre>{/literal}
+
+<p>
+  If you want to have Buck be able to install to devices, you need to provide the path to the
+  {sp}<a href="https://github.com/ryu2/SDMMobileDevice"><code>iOSConsole</code></a> binary.
+</p>
+{literal}<pre class = "prettyprint lang-ini">
+[apple]
+  device_helper_path = third-party/iOSConsole/iOSConsole
+</pre>{/literal}
 
 {call .section}{param title: 'build' /}{/call}
 
@@ -227,6 +291,37 @@ Specify the following to disable colorized output:
   ui = false
 </pre>{/literal}
 
+{call .section}{param title: 'download' /}{/call}
+This section configures downloading from the network.
+
+
+<p>
+  By default when fetching remote files from the network Buck will
+  try directly connecting. However if you are behind a firewall this
+  might not work. So you can specify a proxy to use when downloading
+  from http or https servers.
+</p>
+<p>
+  Valid types for proxy_type are HTTP and SOCKS but it defaults to HTTP
+  if unset. These values correspond to{sp}
+  <a href="http://docs.oracle.com/javase/8/docs/api/java/net/Proxy.Type.html">Java's Proxy.Type</a>
+</p>
+{literal}<pre class="prettyprint lang-ini">
+[download]
+    proxy_host=proxy.example.com
+    proxy_port=8080
+    proxy_type=HTTP
+</pre>{/literal}
+
+<p>
+  If a remote file's url starts with mvn: it that file (usually a jar)
+  is supposed to come from a maven repo. You can specify the repo to
+  download from.
+</p>
+{literal}<pre class="prettyprint lang-ini">
+[download]
+    maven_repo = https://repo1.maven.org/maven2
+</pre>{/literal}
 
 {call .section}{param title: 'cxx' /}{param status: 'UNFROZEN' /}{/call}
 
@@ -511,6 +606,16 @@ You can define which glob handler Buck will use in this section by setting the
 {literal}<pre class="prettyprint lang-ini">
 [project]
   glob_handler = python
+</pre>{/literal}
+
+When Buck talks to Watchman, by default each query times out after 1000 ms.
+You can change this by setting the
+{sp}<code>watchman_query_timeout_ms</code> property, which allows you to set
+a shorter or longer timeout for each Watchman query.
+
+{literal}<pre class="prettyprint lang-ini">
+[project]
+  watchman_query_timeout_ms = 3000
 </pre>{/literal}
 
 This section may also define an <code>initial_targets</code> property,

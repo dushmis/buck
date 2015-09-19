@@ -116,14 +116,16 @@ public class ProjectFilesystem {
 
   @VisibleForTesting
   static final String BUCK_BUCKD_DIR_KEY = "buck.buckd_dir";
-  private static final String DEFAULT_CACHE_DIR = "buck-cache";
+  @VisibleForTesting
+  static final String DEFAULT_CACHE_DIR = "buck-cache";
 
   private final Path projectRoot;
 
   private final Function<Path, Path> pathAbsolutifier;
   private final Function<Path, Path> pathRelativizer;
 
-  private final ImmutableSet<Path> ignorePaths;
+  private final Optional<ImmutableSet<Path>> whiteListedPaths;
+  private final ImmutableSet<Path> blackListedPaths;
 
   // Defaults to false, and so paths should be valid.
   @VisibleForTesting
@@ -141,18 +143,38 @@ public class ProjectFilesystem {
    * a mock filesystem via EasyMock instead. Note that there are cases (such as integration tests)
    * where specifying {@code new File(".")} as the project root might be the appropriate thing.
    */
-  public ProjectFilesystem(Path projectRoot, ImmutableSet<Path> ignorePaths) {
-    this(projectRoot.getFileSystem(), projectRoot, ignorePaths);
+  public ProjectFilesystem(Path projectRoot, ImmutableSet<Path> blackListedPaths) {
+    this(
+        projectRoot.getFileSystem(),
+        projectRoot,
+        Optional.<ImmutableSet<Path>>absent(),
+        blackListedPaths);
+  }
+
+  public ProjectFilesystem(
+      Path projectRoot,
+      Optional<ImmutableSet<Path>> whiteListedPaths,
+      ImmutableSet<Path> blackListedPaths) {
+    this(
+        projectRoot.getFileSystem(),
+        projectRoot,
+        whiteListedPaths,
+        blackListedPaths);
   }
 
   public ProjectFilesystem(Path root, Config config) {
-    this(root.getFileSystem(), root, extractIgnorePaths(root, config));
+    this(
+        root.getFileSystem(),
+        root,
+        Optional.<ImmutableSet<Path>>absent(),
+        extractIgnorePaths(root, config));
   }
 
   protected ProjectFilesystem(
       FileSystem vfs,
       final Path projectRoot,
-      ImmutableSet<Path> ignorePaths) {
+      Optional<ImmutableSet<Path>> whiteListedPaths,
+      ImmutableSet<Path> blackListedPaths) {
     Preconditions.checkArgument(Files.isDirectory(projectRoot));
     Preconditions.checkState(vfs.equals(projectRoot.getFileSystem()));
     this.projectRoot = projectRoot.toAbsolutePath();
@@ -168,11 +190,20 @@ public class ProjectFilesystem {
         return projectRoot.relativize(input);
       }
     };
-    this.ignorePaths = MorePaths.filterForSubpaths(ignorePaths, this.projectRoot);
+    this.blackListedPaths = MorePaths.filterForSubpaths(blackListedPaths, this.projectRoot);
+    this.whiteListedPaths =
+        whiteListedPaths.transform(
+            new Function<ImmutableSet<Path>, ImmutableSet<Path>>() {
+              @Override
+              public ImmutableSet<Path> apply(ImmutableSet<Path> input) {
+                return MorePaths.filterForSubpaths(input, ProjectFilesystem.this.projectRoot);
+              }
+            });
     this.ignoreValidityOfPaths = false;
   }
 
-  private static ImmutableSet<Path> extractIgnorePaths(Path root, Config config) {
+  @VisibleForTesting
+  static ImmutableSet<Path> extractIgnorePaths(Path root, Config config) {
     ImmutableSet.Builder<Path> builder = ImmutableSet.builder();
 
     builder.add(Paths.get(BuckConstant.BUCK_OUTPUT_DIRECTORY));
@@ -206,11 +237,22 @@ public class ProjectFilesystem {
    * @return the specified {@code path} resolved against {@link #getRootPath()} to an absolute path.
    */
   public Path resolve(Path path) {
-    return getRootPath().resolve(path).toAbsolutePath().normalize();
+    return resolvePathFromOtherVfs(path).toAbsolutePath().normalize();
   }
 
   public Path resolve(String path) {
     return getRootPath().resolve(path).toAbsolutePath().normalize();
+  }
+
+  /**
+   * We often create {@link Path} instances using {@link Paths#get(String, String...)}, but there's
+   * no guarantee that the underlying {@link FileSystem} is the default one.
+   */
+  protected Path resolvePathFromOtherVfs(Path path) {
+    if (path.getFileSystem().equals(getRootPath().getFileSystem())) {
+      return getRootPath().resolve(path);
+    }
+    return getRootPath().resolve(path.toString());
   }
 
   /**
@@ -229,7 +271,7 @@ public class ProjectFilesystem {
    *     relative to the {@link ProjectFilesystem#getRootPath()}.
    */
   public ImmutableSet<Path> getIgnorePaths() {
-    return ignorePaths;
+    return blackListedPaths;
   }
 
   /**
@@ -243,7 +285,7 @@ public class ProjectFilesystem {
   }
 
   public Path getPathForRelativePath(Path pathRelativeToProjectRoot) {
-    return projectRoot.resolve(pathRelativeToProjectRoot);
+    return resolvePathFromOtherVfs(pathRelativeToProjectRoot);
   }
 
   public Path getPathForRelativePath(String pathRelativeToProjectRoot) {
@@ -767,6 +809,11 @@ public class ProjectFilesystem {
     return Hashing.sha1().hashBytes(Files.readAllBytes(fileToHash)).toString();
   }
 
+  public String computeSha256(Path pathRelativeToProjectRoot) throws IOException {
+    Path fileToHash = getPathForRelativePath(pathRelativeToProjectRoot);
+    return Hashing.sha256().hashBytes(Files.readAllBytes(fileToHash)).toString();
+  }
+
   /**
    * @param event The event to be tested.
    * @return true if event is a path change notification.
@@ -809,6 +856,7 @@ public class ProjectFilesystem {
 
   public void createSymLink(Path symLink, Path realFile, boolean force)
       throws IOException {
+    symLink = resolve(symLink);
     if (force) {
       Files.deleteIfExists(symLink);
     }
@@ -931,12 +979,34 @@ public class ProjectFilesystem {
     ProjectFilesystem that = (ProjectFilesystem) other;
 
     return Objects.equals(projectRoot, that.projectRoot) &&
-        Objects.equals(ignorePaths, that.ignorePaths);
+        Objects.equals(whiteListedPaths, that.whiteListedPaths) &&
+        Objects.equals(blackListedPaths, that.blackListedPaths);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(projectRoot, ignorePaths);
+    return Objects.hash(projectRoot, whiteListedPaths, blackListedPaths);
+  }
+
+  private boolean isWhiteListed(Path path) {
+    if (!whiteListedPaths.isPresent()) {
+      return true;
+    }
+    for (Path whiteListedPath : whiteListedPaths.get()) {
+      if (path.startsWith(whiteListedPath)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private boolean isBlackListed(Path path) {
+    for (Path blackListedPath : blackListedPaths) {
+      if (path.startsWith(blackListedPath)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -945,12 +1015,7 @@ public class ProjectFilesystem {
    */
   public boolean isIgnored(Path path) {
     Preconditions.checkArgument(!path.isAbsolute());
-    for (Path ignoredPath : getIgnorePaths()) {
-      if (path.startsWith(ignoredPath)) {
-        return true;
-      }
-    }
-    return false;
+    return !isWhiteListed(path) || isBlackListed(path);
   }
 
   public Path createTempFile(
@@ -969,4 +1034,5 @@ public class ProjectFilesystem {
       createNewFile(fileToTouch);
     }
   }
+
 }

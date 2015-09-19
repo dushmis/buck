@@ -21,7 +21,7 @@ import com.facebook.buck.dalvik.EstimateLinearAllocStep;
 import com.facebook.buck.java.JavaLibrary;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.model.HasBuildTarget;
-import com.facebook.buck.rules.AbiRule;
+import com.facebook.buck.rules.keys.AbiRule;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildOutputInitializer;
@@ -106,10 +106,10 @@ public class DexProducedFromJavaLibrary extends AbstractBuildRule
       final BuildableContext buildableContext) {
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
 
-    steps.add(new RmStep(getPathToDex(), /* shouldForceDeletion */ true));
+    steps.add(new RmStep(getProjectFilesystem(), getPathToDex(), /* shouldForceDeletion */ true));
 
     // Make sure that the buck-out/gen/ directory exists for this.buildTarget.
-    steps.add(new MkdirStep(getPathToDex().getParent()));
+    steps.add(new MkdirStep(getProjectFilesystem(), getPathToDex().getParent()));
 
     // If there are classes, run dx.
     final ImmutableSortedMap<String, HashCode> classNamesToHashes =
@@ -118,13 +118,17 @@ public class DexProducedFromJavaLibrary extends AbstractBuildRule
     final Supplier<Integer> linearAllocEstimate;
     if (hasClassesToDx) {
       Path pathToOutputFile = javaLibrary.getPathToOutput();
-      EstimateLinearAllocStep estimate = new EstimateLinearAllocStep(pathToOutputFile);
+      EstimateLinearAllocStep estimate = new EstimateLinearAllocStep(
+          getProjectFilesystem(),
+          pathToOutputFile);
       steps.add(estimate);
       linearAllocEstimate = estimate;
 
       // To be conservative, use --force-jumbo for these intermediate .dex files so that they can be
       // merged into a final classes.dex that uses jumbo instructions.
-      DxStep dx = new DxStep(getPathToDex(),
+      DxStep dx = new DxStep(
+          getProjectFilesystem(),
+          getPathToDex(),
           Collections.singleton(pathToOutputFile),
           EnumSet.of(
               DxStep.Option.USE_CUSTOM_DX_IF_AVAILABLE,
@@ -135,7 +139,7 @@ public class DexProducedFromJavaLibrary extends AbstractBuildRule
 
       // The `DxStep` delegates to android tools to build a ZIP with timestamps in it, making
       // the output non-deterministic.  So use an additional scrubbing step to zero these out.
-      steps.add(new ZipScrubberStep(getPathToDex()));
+      steps.add(new ZipScrubberStep(getProjectFilesystem(), getPathToDex()));
 
     } else {
       linearAllocEstimate = Suppliers.ofInstance(0);

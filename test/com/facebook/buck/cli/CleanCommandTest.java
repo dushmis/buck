@@ -27,7 +27,7 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.FakeJavaPackageFinder;
 import com.facebook.buck.java.intellij.Project;
 import com.facebook.buck.parser.Parser;
-import com.facebook.buck.rules.ArtifactCache;
+import com.facebook.buck.artifact_cache.ArtifactCache;
 import com.facebook.buck.rules.Repository;
 import com.facebook.buck.rules.TestRepositoryBuilder;
 import com.facebook.buck.testutil.TestConsole;
@@ -120,7 +120,7 @@ public class CleanCommandTest extends EasyMockSupport {
         new TestConsole(),
         repository,
         androidPlatformTargetSupplier,
-        new InstanceArtifactCacheFactory(createMock(ArtifactCache.class)),
+        createMock(ArtifactCache.class),
         BuckEventBusFactory.newInstance(),
         createMock(Parser.class),
         Platform.detect(),

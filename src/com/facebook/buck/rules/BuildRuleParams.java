@@ -32,7 +32,7 @@ import java.util.Set;
  * Standard set of parameters that is passed to all build rules.
  */
 @Beta
-public class BuildRuleParams {
+public class BuildRuleParams implements HasDependencies {
 
   private final BuildTarget buildTarget;
   private final Supplier<ImmutableSortedSet<BuildRule>> declaredDeps;
@@ -123,8 +123,8 @@ public class BuildRuleParams {
 
     return copyWithChanges(
         target,
-        Suppliers.ofInstance(getDeclaredDeps()),
-        Suppliers.ofInstance(getExtraDeps()));
+        declaredDeps,
+        extraDeps);
   }
 
   public BuildRuleParams withFlavor(Flavor flavor) {
@@ -138,24 +138,29 @@ public class BuildRuleParams {
 
     return copyWithChanges(
         target,
-        Suppliers.ofInstance(getDeclaredDeps()),
-        Suppliers.ofInstance(getExtraDeps()));
+        declaredDeps,
+        extraDeps);
   }
 
   public BuildTarget getBuildTarget() {
     return buildTarget;
   }
 
+  @Override
   public ImmutableSortedSet<BuildRule> getDeps() {
     return totalDeps.get();
   }
 
-  public ImmutableSortedSet<BuildRule> getDeclaredDeps() {
-    return declaredDeps.get();
+  public Supplier<ImmutableSortedSet<BuildRule>> getTotalDeps() {
+    return totalDeps;
   }
 
-  public ImmutableSortedSet<BuildRule> getExtraDeps() {
-    return extraDeps.get();
+  public Supplier<ImmutableSortedSet<BuildRule>> getDeclaredDeps() {
+    return declaredDeps;
+  }
+
+  public Supplier<ImmutableSortedSet<BuildRule>> getExtraDeps() {
+    return extraDeps;
   }
 
   public ProjectFilesystem getProjectFilesystem() {

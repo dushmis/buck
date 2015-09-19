@@ -31,7 +31,6 @@ import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.model.Flavor;
 import com.facebook.buck.model.FlavorDomain;
 import com.facebook.buck.rules.BuildRuleParams;
-import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.FakeBuildContext;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
@@ -116,7 +115,7 @@ public class PythonTestDescriptionTest {
   public void baseModule() {
     BuildRuleResolver resolver;
     BuildTarget target = BuildTargetFactory.newInstance("//foo:lib");
-    BuildRuleParams params = BuildRuleParamsFactory.createTrivialBuildRuleParams(target);
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder(target).build();
     String sourceName = "main.py";
     SourcePath source = new TestSourcePath("foo/" + sourceName);
     PythonTestDescription desc =
@@ -178,7 +177,9 @@ public class PythonTestDescriptionTest {
     PexStep pexStep = FluentIterable.from(buildSteps)
         .filter(PexStep.class)
         .get(0);
-    assertThat(pexStep.getArgs(), Matchers.equalTo(buildArgs));
+    assertThat(
+        pexStep.getCommandPrefix(),
+        Matchers.hasItems(buildArgs.toArray(new String[buildArgs.size()])));
   }
 
 }

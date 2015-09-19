@@ -25,6 +25,8 @@ import com.facebook.buck.android.FakeAndroidDirectoryResolver;
 import com.facebook.buck.apple.AppleBundleExtension;
 import com.facebook.buck.apple.AppleLibraryBuilder;
 import com.facebook.buck.apple.AppleTestBuilder;
+import com.facebook.buck.artifact_cache.ArtifactCache;
+import com.facebook.buck.artifact_cache.NoopArtifactCache;
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckEventBusFactory;
 import com.facebook.buck.httpserver.WebServer;
@@ -38,10 +40,9 @@ import com.facebook.buck.java.PrebuiltJarBuilder;
 import com.facebook.buck.json.BuildFileParseException;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
+import com.facebook.buck.model.Either;
 import com.facebook.buck.parser.ParserConfig;
-import com.facebook.buck.rules.ArtifactCache;
 import com.facebook.buck.rules.BuildRuleType;
-import com.facebook.buck.rules.NoopArtifactCache;
 import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.Repository;
 import com.facebook.buck.rules.SourcePath;
@@ -49,7 +50,6 @@ import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.TestRepositoryBuilder;
 import com.facebook.buck.rules.TestSourcePath;
-import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.rules.coercer.SourceWithFlags;
 import com.facebook.buck.shell.GenruleBuilder;
 import com.facebook.buck.testutil.FakeOutputStream;
@@ -71,14 +71,12 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Maps;
-import com.google.common.io.Files;
 
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.kohsuke.args4j.CmdLineException;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.io.UnsupportedEncodingException;
@@ -89,6 +87,7 @@ import java.util.SortedMap;
 public class TargetsCommandTest {
 
   private TestConsole console;
+  private ProjectWorkspace workspace;
   private TargetsCommand targetsCommand;
   private CommandRunnerParams params;
   private ObjectMapper objectMapper;
@@ -103,21 +102,18 @@ public class TargetsCommandTest {
     return buildRules;
   }
 
-  private String testDataPath(String fileName) {
-    return TestDataHelper.getTestDataDirectory(this)
-        .resolve("target_command")
-        .resolve(fileName)
-        .toString();
-  }
-
   @Rule
   public DebuggableTemporaryFolder tmp = new DebuggableTemporaryFolder();
 
   @Before
   public void setUp() throws IOException, InterruptedException {
     console = new TestConsole();
+    workspace = TestDataHelper.createProjectWorkspaceForScenario(
+      this, "target_command", tmp
+    );
+    workspace.setUp();
     Repository repository = new TestRepositoryBuilder()
-        .setFilesystem(new ProjectFilesystem(Paths.get(".")))
+        .setFilesystem(new ProjectFilesystem(workspace.getDestPath()))
         .build();
     AndroidDirectoryResolver androidDirectoryResolver = new FakeAndroidDirectoryResolver();
     ArtifactCache artifactCache = new NoopArtifactCache();
@@ -129,7 +125,7 @@ public class TargetsCommandTest {
         console,
         repository,
         androidDirectoryResolver,
-        new InstanceArtifactCacheFactory(artifactCache),
+        artifactCache,
         eventBus,
         new FakeBuckConfig(),
         Platform.detect(),
@@ -142,11 +138,9 @@ public class TargetsCommandTest {
   @Test
   public void testJsonOutputForBuildTarget()
       throws IOException, BuildFileParseException, InterruptedException {
-    final String testBuckFileJson1 = testDataPath("TargetsCommandTestBuckJson1.js");
-
     // run `buck targets` on the build file and parse the observed JSON.
     SortedMap<String, TargetNode<?>> nodes = buildTargetNodes(
-        "//" + testDataPath(""),
+        "//",
         "test-library");
 
     targetsCommand.printJsonForTargets(params, nodes, new ParserConfig(new FakeBuckConfig()));
@@ -155,7 +149,7 @@ public class TargetsCommandTest {
         objectMapper.getJsonFactory().createJsonParser(observedOutput));
 
     // parse the expected JSON.
-    String expectedJson = Files.toString(new File(testBuckFileJson1), Charsets.UTF_8);
+    String expectedJson = workspace.getFileContents("TargetsCommandTestBuckJson1.js");
     JsonNode expected = objectMapper.readTree(
       objectMapper.getJsonFactory().createJsonParser(expectedJson)
         .enable(Feature.ALLOW_COMMENTS)
@@ -170,12 +164,6 @@ public class TargetsCommandTest {
 
   @Test
   public void testJsonOutputWithDirectDependencies() throws IOException {
-    final String testBuckFileJson2 = testDataPath("TargetsCommandTestBuckJson2.js");
-    ProjectWorkspace workspace = TestDataHelper.createProjectWorkspaceForScenario(
-      this, "target_command", tmp
-    );
-    workspace.setUp();
-
     // Run Buck targets command on a case where the deps and direct_dependencies differ
     ProcessResult result = workspace.runBuckCommand(
       "targets", "--json", "//:B");
@@ -187,7 +175,7 @@ public class TargetsCommandTest {
     );
 
     // Parse the expected JSON.
-    String expectedJson = Files.toString(new File(testBuckFileJson2), Charsets.UTF_8);
+    String expectedJson = workspace.getFileContents("TargetsCommandTestBuckJson2.js");
     JsonNode expected = objectMapper.readTree(
       objectMapper.getJsonFactory().createJsonParser(expectedJson)
         .enable(Feature.ALLOW_COMMENTS)

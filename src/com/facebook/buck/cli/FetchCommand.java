@@ -29,11 +29,8 @@ import com.facebook.buck.rules.ActionGraph;
 import com.facebook.buck.rules.BuildEvent;
 import com.facebook.buck.rules.CachingBuildEngine;
 import com.facebook.buck.rules.Description;
-import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetGraphToActionGraph;
-import com.facebook.buck.rules.keys.DependencyFileRuleKeyBuilderFactory;
-import com.facebook.buck.rules.keys.InputBasedRuleKeyBuilderFactory;
 import com.facebook.buck.step.AdbOptions;
 import com.facebook.buck.step.TargetDevice;
 import com.facebook.buck.step.TargetDeviceOptions;
@@ -96,20 +93,14 @@ public class FetchCommand extends BuildCommand {
          Build build = createBuild(
              params.getBuckConfig(),
              actionGraph,
-             params.getRepository().getFilesystem(),
              params.getAndroidPlatformTargetSupplier(),
              new CachingBuildEngine(
                  pool.getExecutor(),
                  params.getFileHashCache(),
                  getBuildEngineMode().or(params.getBuckConfig().getBuildEngineMode()),
                  params.getBuckConfig().getBuildDepFiles(),
-                 new InputBasedRuleKeyBuilderFactory(
-                     params.getFileHashCache(),
-                     new SourcePathResolver(transformer.getRuleResolver())),
-                 new DependencyFileRuleKeyBuilderFactory(
-                     params.getFileHashCache(),
-                     new SourcePathResolver(transformer.getRuleResolver()))),
-             getArtifactCache(params),
+                 transformer.getRuleResolvers()),
+             params.getArtifactCache(),
              params.getConsole(),
              params.getBuckEventBus(),
              Optional.<TargetDevice>absent(),
@@ -138,8 +129,11 @@ public class FetchCommand extends BuildCommand {
   }
 
   private FetchTargetNodeToBuildRuleTransformer createFetchTransformer(CommandRunnerParams params) {
-    Optional<String> defaultMavenRepo = params.getBuckConfig().getValue("download", "maven_repo");
-    Downloader downloader = new HttpDownloader(Optional.<Proxy>absent(), defaultMavenRepo);
+    DownloadConfig downloadConfig = new DownloadConfig(params.getBuckConfig());
+    Optional<String> defaultMavenRepo = downloadConfig.getMavenRepo();
+    Optional<Proxy> proxy = downloadConfig.getProxy();
+
+    Downloader downloader = new HttpDownloader(proxy, defaultMavenRepo);
     Description<?> description = new RemoteFileDescription(downloader);
     return new FetchTargetNodeToBuildRuleTransformer(
         ImmutableSet.<Description<?>>of(description)

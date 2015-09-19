@@ -21,6 +21,7 @@ import com.dd.plist.NSDictionary;
 import com.dd.plist.NSObject;
 import com.dd.plist.PropertyListParser;
 
+import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.io.ProjectFilesystem.CopySourceMode;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.Pair;
@@ -28,7 +29,6 @@ import com.facebook.buck.step.ExecutionContext;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.WriteFileStep;
 import com.facebook.buck.util.HumanReadableException;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -55,6 +55,7 @@ public class ProvisioningProfileCopyStep implements Step {
   private static final String APPLICATION_IDENTIFIER = "application-identifier";
   private static final Logger LOG = Logger.get(ProvisioningProfileCopyStep.class);
 
+  private final ProjectFilesystem filesystem;
   private final Optional<Path> entitlementsPlist;
   private final Optional<String> provisioningProfileUUID;
   private final Path provisioningProfileDestination;
@@ -75,13 +76,14 @@ public class ProvisioningProfileCopyStep implements Step {
    *                                        normally a scratch directory.
    */
   public ProvisioningProfileCopyStep(
+      ProjectFilesystem filesystem,
       Path infoPlist,
       Optional<String> provisioningProfileUUID,
       Optional<Path> entitlementsPlist,
       ImmutableSet<ProvisioningProfileMetadata> profiles,
       Path provisioningProfileDestination,
-      Path signingEntitlementsTempPath
-  ) {
+      Path signingEntitlementsTempPath) {
+    this.filesystem = filesystem;
     this.provisioningProfileDestination = provisioningProfileDestination;
     this.infoPlist = infoPlist;
     this.provisioningProfileUUID = provisioningProfileUUID;
@@ -129,8 +131,7 @@ public class ProvisioningProfileCopyStep implements Step {
   // If multiple valid ones, find the one which matches the most specifically.  I.e.,
   // XXXXXXXXXX.com.example.* will match over XXXXXXXXXX.* for com.example.TestApp
   // TODO(user): Account for differences between development and distribution certificates.
-  @VisibleForTesting
-  static Optional<ProvisioningProfileMetadata> getBestProvisioningProfile(
+  public static Optional<ProvisioningProfileMetadata> getBestProvisioningProfile(
       ImmutableSet<ProvisioningProfileMetadata> profiles,
       String bundleID,
       Optional<String> provisioningProfileUUID,
@@ -180,7 +181,7 @@ public class ProvisioningProfileCopyStep implements Step {
     final String bundleID;
     try {
       bundleID = AppleInfoPlistParsing.getBundleIdFromPlistStream(
-          context.getProjectFilesystem().getInputStreamForRelativePath(infoPlist)
+          filesystem.getInputStreamForRelativePath(infoPlist)
       ).get();
     } catch (IOException e) {
       throw new HumanReadableException("Unable to get bundle ID from info.plist: " + infoPlist);
@@ -202,7 +203,7 @@ public class ProvisioningProfileCopyStep implements Step {
       try {
         String appID = ((NSArray) entitlementsPlistDict.get("keychain-access-groups"))
             .objectAtIndex(0).toString();
-        prefix = Optional.<String>of(ProvisioningProfileMetadata.splitAppID(appID).getFirst());
+        prefix = Optional.of(ProvisioningProfileMetadata.splitAppID(appID).getFirst());
       } catch (Exception e) {
         throw new HumanReadableException(
             "Malformed entitlement .plist (missing keychain-access-groups): " +
@@ -224,7 +225,7 @@ public class ProvisioningProfileCopyStep implements Step {
 
     // Copy the actual .mobileprovision.
     try {
-      context.getProjectFilesystem().copy(
+      filesystem.copy(
           provisioningProfileSource,
           provisioningProfileDestination,
           CopySourceMode.FILE);
@@ -236,6 +237,7 @@ public class ProvisioningProfileCopyStep implements Step {
     // Merge tne entitlements with the profile, and write out.
     if (entitlementsPlist.isPresent()) {
       return (new PlistProcessStep(
+          filesystem,
           entitlementsPlist.get(),
           signingEntitlementsTempPath,
           bestProfile.get().getEntitlements(),
@@ -249,6 +251,7 @@ public class ProvisioningProfileCopyStep implements Step {
       entitlements.put(APPLICATION_IDENTIFIER, appID);
       entitlements.put(KEYCHAIN_ACCESS_GROUPS, new String[]{appID});
       return (new WriteFileStep(
+          filesystem,
           entitlements.toXMLPropertyList(),
           signingEntitlementsTempPath,
           /* executable */ false)).execute(context);

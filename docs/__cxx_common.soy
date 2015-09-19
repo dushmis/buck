@@ -1,17 +1,21 @@
 {namespace cxx_common}
 
-/***/
+/**
+ * @param? sample_file_name File name to use in samples. If null, defaults to 'foo/bar.c'.
+ */
 {template .srcs_arg}
 {call buck.arg}
   {param name : 'srcs' /}
   {param default : '[]' /}
   {param desc}
-  The set of C, C++, or assembler source files to be preprocessed, compiled, and assembled by this
+  The set of C, C++, Objective-C, Objective-C++, or assembly source files
+  to be preprocessed, compiled, and assembled by this
   rule.  We determine which stages to run on each input source based on it's file extension. See the
   {sp}<a href="https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html">GCC documentation</a>{sp}
   for more detail on how file extensions are interpreted. Each element can be either a string
-  specifying a source file (e.g. <code>'foo/bar.c'</code>) or a tuple of a string specifying a
-  source file and a list of compilation flags (e.g. <code>('foo/bar.c', ['-Wall', '-Werror'])
+  specifying a source file (e.g. <code>'{$sample_file_name ?: 'foo/bar.c'}'</code>) or a tuple of
+  a string specifying a source file and a list of compilation flags
+  (e.g. <code>('{$sample_file_name ?: 'foo/bar.c'}', ['-Wall', '-Werror'])
   </code>). In the latter case the specified flags will be used in addition to the rule's other
   flags when preprocessing and compiling that file (if applicable).
   {/param}
@@ -39,8 +43,8 @@
   {param name : 'headers' /}
   {param default : '[]' /}
   {param desc}
-  The set of header files that are made available for inclusion to the source files in the
-  target and all targets that transitively depend on it. These should be specified as either a list
+  The set of header files that are made available for inclusion to the source files in this
+  target. These should be specified as either a list
   of header files or a dictionary of header names to header files. The header name can contain
   forward slashes (<code>/</code>).  The headers can be included with <code>#include
   "$HEADER_NAMESPACE/$HEADER_NAME"</code> or <code>#include &lt;$HEADER_NAMESPACE/$HEADER_NAME&gt;
@@ -67,12 +71,48 @@
 {/template}
 
 /***/
+{template .exported_headers_arg}
+{call buck.arg}
+  {param name : 'exported_headers' /}
+  {param default : '[]' /}
+  {param desc}
+  The set of header files that are made available for inclusion to the source files in the
+  target and all targets that transitively depend on it. These should be specified as either a list
+  of header files or a dictionary of header names to header files. The headers can be included
+  with <code>#include "$HEADER_NAMESPACE/$HEADER_NAME"</code> or <code>#include
+  &lt;$HEADER_NAMESPACE/$HEADER_NAME&gt;</code>, where <code>$HEADER_NAMESPACE</code> is the value
+  of the target's <code>header_namespace</code> attribute, and <code>$HEADER_NAME</code> is the
+  header name if specified, and the filename of the header file otherwise. Note that the header name
+  can contain forward slashes (<code>/</code>). See <code>header_namespace</code> for more
+  information.
+  {/param}
+{/call}
+{/template}
+
+/***/
+{template .platform_exported_headers_arg}
+{call buck.arg}
+  {param name : 'platform_exported_headers' /}
+  {param default : '[]' /}
+  {param desc}
+  Platform specific header files. These should be specified as a list of pairs where the first
+  element is an un-anchored regex (in java.util.regex.Pattern syntax) against which the platform
+  name is matched, and the second element is either a list of header files or a dictionary of
+  header names to header files that will be made available for inclusion to the source files in the
+  target and all targets that transitively depend on it if the platform matches the regex.
+  See <code>headers</code> for more information.
+  {/param}
+{/call}
+{/template}
+
+/***/
 {template .header_namespace_arg}
 {call buck.arg}
   {param name : 'header_namespace' /}
   {param default : 'name' /}
   {param desc}
-  A path prefix when including headers of this target. Defaults to the name of the target. Can
+  A path prefix when including headers of this target. Defaults to the path from the root of the
+  repository to the directory where this target is defined. Can
   contain forward slashes (<code>/</code>), but cannot start with one. See <code>headers</code> for
   more information.
   {/param}
@@ -100,6 +140,35 @@
   element is an un-anchored regex (in java.util.regex.Pattern syntax) against which the platform
   name is matched, and the second element is a list of flags to use when preprocessing the target's
   sources. See <code>preprocessor_flags</code> for more information.
+  {/param}
+{/call}
+{/template}
+
+/***/
+{template .exported_preprocessor_flags_arg}
+{call buck.arg}
+  {param name : 'exported_preprocessor_flags' /}
+  {param default : '[]' /}
+  {param desc}
+  Just as <code>preprocessor_flags</code>, flags to use when preprocessing any of the above sources
+  (which require preprocessing). However, unlike <code>preprocessor_flags</code>, these preprocessor
+  flags are also used by rules that transitively depend on this rule when preprocessing their own
+  sources.
+  {/param}
+{/call}
+{/template}
+
+/***/
+{template .exported_platform_preprocessor_flags_arg}
+{call buck.arg}
+  {param name : 'exported_platform_preprocessor_flags' /}
+  {param default : '[]' /}
+  {param desc}
+  Platform specific exported preprocessor flags. These should be specified as a list of pairs where
+  the first element is an un-anchored regex (in java.util.regex.Pattern syntax) against which the
+  platform name is matched, and the second element is a list of flags to use when preprocessing the
+  source files in the target and all targets that transitively depend on it if the platform matches
+  the regex. See <code>exported_preprocessor_flags</code> for more information.
   {/param}
 {/call}
 {/template}
@@ -156,12 +225,23 @@
 {/template}
 
 /***/
+{template .exported_linker_flags_arg}
+{call buck.arg}
+  {param name : 'exported_linker_flags' /}
+  {param default : '[]' /}
+  {param desc}
+  Linker flags to add to this library and to libraries that depend on this library.
+  {/param}
+{/call}
+{/template}
+
+/***/
 {template .link_style}
 {call buck.arg}
   {param name : 'link_style' /}
   {param default: 'static' /}
   {param desc}
-  Determines whether to build and link this binary's dependencies statically or dynamically. Can be
+  Determines whether to build and link this rule's dependencies statically or dynamically. Can be
   either <code>static</code> or <code>dynamic</code>.
   {/param}
 {/call}

@@ -18,8 +18,10 @@ package com.facebook.buck.android;
 
 import com.facebook.buck.java.JavacOptions;
 import com.facebook.buck.java.PrebuiltJar;
+import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
+import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.HasRuntimeDeps;
 import com.facebook.buck.rules.Sha1HashCode;
 import com.facebook.buck.rules.SourcePath;
@@ -31,14 +33,11 @@ import com.google.common.collect.ImmutableSortedSet;
 
 import java.nio.file.Path;
 
-import javax.annotation.Nullable;
-
 public class AndroidPrebuiltAar
     extends AndroidLibrary
     implements HasAndroidResourceDeps, HasRuntimeDeps {
 
-  private final AndroidResource androidResource;
-  private final BuildRule unzipRule;
+  private final UnzipAar unzipAar;
   private final SourcePath nativeLibsDirectory;
   private final PrebuiltJar prebuiltJar;
 
@@ -48,10 +47,10 @@ public class AndroidPrebuiltAar
       SourcePath proguardConfig,
       SourcePath nativeLibsDirectory,
       PrebuiltJar prebuiltJar,
-      AndroidResource androidResource,
-      BuildRule unzipRule,
+      UnzipAar unzipAar,
       JavacOptions javacOptions,
-      Iterable<PrebuiltJar> exportedDeps) {
+      Iterable<PrebuiltJar> exportedDeps,
+      SourcePath abiJar) {
     super(
         androidLibraryParams,
         resolver,
@@ -64,50 +63,52 @@ public class AndroidPrebuiltAar
             .addAll(exportedDeps)
             .build(),
         /* providedDeps */ ImmutableSortedSet.<BuildRule>of(),
+        abiJar,
         /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
         javacOptions,
         /* resourcesRoot */ Optional.<Path>absent(),
         /* mavenCoords */ Optional.<String>absent(),
-        /* manifestFile */ Optional.<SourcePath>absent(),
-        /* isPrebuiltAar */ true);
-    this.androidResource = androidResource;
-    this.unzipRule = unzipRule;
+        Optional.<SourcePath>of(
+            new BuildTargetSourcePath(unzipAar.getBuildTarget(), unzipAar.getAndroidManifest())),
+        /* isPrebuiltAar */ true,
+        /* tests */ ImmutableSortedSet.<BuildTarget>of());
+    this.unzipAar = unzipAar;
     this.prebuiltJar = prebuiltJar;
     this.nativeLibsDirectory = nativeLibsDirectory;
   }
 
   @Override
   public String getRDotJavaPackage() {
-    return androidResource.getRDotJavaPackage();
+    return unzipAar.getRDotJavaPackage();
   }
 
   @Override
-  @Nullable
   public Path getPathToTextSymbolsFile() {
-    return androidResource.getPathToTextSymbolsFile();
+    return unzipAar.getTextSymbolsFile();
   }
 
   @Override
   public Sha1HashCode getTextSymbolsAbiKey() {
-    return androidResource.getTextSymbolsAbiKey();
+    return unzipAar.getTextSymbolsHash();
   }
 
-  @Nullable
   @Override
   public SourcePath getRes() {
-    return androidResource.getRes();
+    return unzipAar.getResDirectory();
   }
 
-  @Nullable
   @Override
   public SourcePath getAssets() {
-    return androidResource.getAssets();
+    return unzipAar.getAssetsDirectory();
   }
 
   @Override
   public void addToCollector(AndroidPackageableCollector collector) {
     super.addToCollector(collector);
     collector.addNativeLibsDirectory(getBuildTarget(), nativeLibsDirectory);
+
+    collector.addResourceDirectory(getBuildTarget(), getRes());
+    collector.addAssetsDirectory(getBuildTarget(), getAssets());
   }
 
   public PrebuiltJar getPrebuiltJar() {
@@ -123,7 +124,7 @@ public class AndroidPrebuiltAar
   // a dependent is building against us.
   @Override
   public ImmutableSortedSet<BuildRule> getRuntimeDeps() {
-    return ImmutableSortedSet.<BuildRule>of(androidResource, unzipRule);
+    return ImmutableSortedSet.<BuildRule>of(unzipAar);
   }
 
 }

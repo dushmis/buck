@@ -30,9 +30,10 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.model.Pair;
 import com.facebook.buck.rules.BuildRule;
-import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
+import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.RuleKeyBuilderFactory;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
@@ -92,7 +93,7 @@ public class NdkCxxPlatformTest {
     for (Map.Entry<NdkCxxPlatforms.TargetCpuType, NdkCxxPlatform> entry : cxxPlatforms.entrySet()) {
       CxxSourceRuleFactory cxxSourceRuleFactory =
           new CxxSourceRuleFactory(
-              BuildRuleParamsFactory.createTrivialBuildRuleParams(target),
+              new FakeBuildRuleParamsBuilder(target).build(),
               resolver,
               pathResolver,
               entry.getValue().getCxxPlatform(),
@@ -138,7 +139,7 @@ public class NdkCxxPlatformTest {
         default:
           throw new IllegalStateException();
       }
-      RuleKey.Builder builder = ruleKeyBuilderFactory.newInstance(rule);
+      RuleKeyBuilder builder = ruleKeyBuilderFactory.newInstance(rule);
       ruleKeys.put(entry.getKey(), builder.build());
     }
     return ruleKeys.build();
@@ -163,7 +164,7 @@ public class NdkCxxPlatformTest {
       BuildRule rule = CxxLinkableEnhancer.createCxxLinkableBuildRule(
           TargetGraph.EMPTY,
           entry.getValue().getCxxPlatform(),
-          BuildRuleParamsFactory.createTrivialBuildRuleParams(target),
+          new FakeBuildRuleParamsBuilder(target).build(),
           pathResolver,
           ImmutableList.<String>of(),
           target,
@@ -171,12 +172,13 @@ public class NdkCxxPlatformTest {
           Optional.<String>absent(),
           Paths.get("output"),
           ImmutableList.<SourcePath>of(new TestSourcePath("input.o")),
+          /* extraInputs */ ImmutableList.<SourcePath>of(),
           Linker.LinkableDepType.SHARED,
           ImmutableList.<BuildRule>of(),
           Optional.<Linker.CxxRuntimeType>absent(),
           Optional.<SourcePath>absent(),
           ImmutableSet.<BuildRule>of());
-      RuleKey.Builder builder = ruleKeyBuilderFactory.newInstance(rule);
+      RuleKeyBuilder builder = ruleKeyBuilderFactory.newInstance(rule);
       ruleKeys.put(entry.getKey(), builder.build());
     }
     return ruleKeys.build();

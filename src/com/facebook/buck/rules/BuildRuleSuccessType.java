@@ -16,6 +16,7 @@
 
 package com.facebook.buck.rules;
 
+import com.facebook.buck.artifact_cache.ArtifactCache;
 import com.facebook.buck.step.Step;
 import com.google.common.collect.ImmutableSet;
 
@@ -53,15 +54,15 @@ public enum BuildRuleSuccessType {
 
   /** Computed input-based {@link RuleKey} matches the one on disk. */
   MATCHING_INPUT_BASED_RULE_KEY(
-      Property.SHOULD_UPLOAD_RESULTING_ARTIFACT,
+      // TODO(#8364892): We should re-upload to the cache under the main rule key once local
+      // caching performance is better and we don't hurt the incremental workflow as much.
       Property.SHOULD_UPDATE_METADATA_ON_DISK
   ),
 
   /**
-   * Computed {@link RuleKey} without deps matches the one on disk <em>AND</em> the ABI key for
-   * the deps matches the one on disk.
+   * Computed ABI {@link RuleKey} matches the one on disk.
    */
-  MATCHING_DEPS_ABI_AND_RULE_KEY_NO_DEPS(
+  MATCHING_ABI_RULE_KEY(
       Property.SHOULD_UPDATE_METADATA_ON_DISK
   ),
 

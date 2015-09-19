@@ -19,6 +19,7 @@ package com.facebook.buck.android;
 import com.facebook.buck.java.DefaultJavaLibrary;
 import com.facebook.buck.java.JavaLibrary;
 import com.facebook.buck.java.JavacOptions;
+import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildTargetSourcePath;
@@ -47,6 +48,7 @@ class AndroidBuildConfigJavaLibrary extends DefaultJavaLibrary implements Androi
       BuildRuleParams params,
       SourcePathResolver resolver,
       JavacOptions javacOptions,
+      SourcePath abiJar,
       AndroidBuildConfig androidBuildConfig) {
     super(
         params,
@@ -58,10 +60,12 @@ class AndroidBuildConfigJavaLibrary extends DefaultJavaLibrary implements Androi
         /* postprocessClassesCommands */ ImmutableList.<String>of(),
         /* exportedDeps */ ImmutableSortedSet.<BuildRule>of(),
         /* providedDeps */ ImmutableSortedSet.<BuildRule>of(),
+        abiJar,
         /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
         javacOptions,
         /* resourcesRoot */ Optional.<Path>absent(),
-        /* mavenCoords */ Optional.<String>absent());
+        /* mavenCoords */ Optional.<String>absent(),
+        /* tests */ ImmutableSortedSet.<BuildTarget>of());
     this.androidBuildConfig = androidBuildConfig;
     Preconditions.checkState(
         params.getDeps().contains(androidBuildConfig),

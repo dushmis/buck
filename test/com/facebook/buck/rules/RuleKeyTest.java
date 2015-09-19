@@ -17,6 +17,7 @@
 package com.facebook.buck.rules;
 
 import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -28,6 +29,7 @@ import com.facebook.buck.java.JavaLibraryBuilder;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.keys.DefaultRuleKeyBuilderFactory;
+import com.facebook.buck.testutil.FakeFileHashCache;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.facebook.buck.util.cache.FileHashCache;
 import com.google.common.collect.ImmutableList;
@@ -477,47 +479,29 @@ public class RuleKeyTest {
   }
 
   @Test
-  public void declaredDepsAndExtraDepsGenerateDifferentRuleKeys() {
-    SourcePathResolver sourcePathResolver = new SourcePathResolver(new BuildRuleResolver());
-    BuildTarget target = BuildTargetFactory.newInstance("//a:target");
+  public void subclassWithNoopSetter() {
+    class NoopSetterRuleKeyBuilder extends RuleKeyBuilder {
 
-    BuildTarget depTarget = BuildTargetFactory.newInstance("//some:dep");
-    BuildRuleParams depParams = new FakeBuildRuleParamsBuilder(depTarget).build();
-    NoopBuildRule dep = new NoopBuildRule(depParams, sourcePathResolver);
+      public NoopSetterRuleKeyBuilder(SourcePathResolver pathResolver, FileHashCache hashCache) {
+        super(pathResolver, hashCache);
+      }
 
-    BuildRuleParams paramsWithDeclaredDep = new FakeBuildRuleParamsBuilder(target)
-        .setDeps(ImmutableSortedSet.<BuildRule>of(dep))
+      @Override
+      protected RuleKeyBuilder setSourcePath(SourcePath sourcePath) {
+        return this;
+      }
+    }
+
+    SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
+    FileHashCache hashCache = new FakeFileHashCache(ImmutableMap.<Path, HashCode>of());
+
+    RuleKey nullRuleKey = new NoopSetterRuleKeyBuilder(pathResolver, hashCache)
         .build();
-    NoopBuildRule ruleWithDeclaredDep =
-        new NoopBuildRule(paramsWithDeclaredDep, sourcePathResolver);
-
-    BuildRuleParams paramsWithExtraDep = new FakeBuildRuleParamsBuilder(target)
-        .setExtraDeps(ImmutableSortedSet.<BuildRule>of(dep))
+    RuleKey noopRuleKey = new NoopSetterRuleKeyBuilder(pathResolver, hashCache)
+        .setReflectively("key", new TestSourcePath("value"))
         .build();
-    NoopBuildRule ruleWithExtraDep =
-        new NoopBuildRule(paramsWithExtraDep, sourcePathResolver);
 
-    BuildRuleParams paramsWithBothDeps = new FakeBuildRuleParamsBuilder(target)
-        .setDeps(ImmutableSortedSet.<BuildRule>of(dep))
-        .setExtraDeps(ImmutableSortedSet.<BuildRule>of(dep))
-        .build();
-    NoopBuildRule ruleWithBothDeps =
-        new NoopBuildRule(paramsWithBothDeps, sourcePathResolver);
-
-    assertNotEquals(ruleWithDeclaredDep.getRuleKey(), ruleWithExtraDep.getRuleKey());
-    assertNotEquals(ruleWithDeclaredDep.getRuleKey(), ruleWithBothDeps.getRuleKey());
-    assertNotEquals(ruleWithExtraDep.getRuleKey(), ruleWithBothDeps.getRuleKey());
-
-    assertEquals(
-        ruleWithDeclaredDep.getRuleKeyWithoutDeps(),
-        ruleWithExtraDep.getRuleKeyWithoutDeps());
-    assertEquals(
-        ruleWithDeclaredDep.getRuleKeyWithoutDeps(),
-        ruleWithBothDeps.getRuleKeyWithoutDeps());
-    assertEquals(
-        ruleWithExtraDep.getRuleKeyWithoutDeps(),
-        ruleWithBothDeps.getRuleKeyWithoutDeps());
-
+    assertThat(noopRuleKey, is(equalTo(nullRuleKey)));
   }
 
   private static class TestRuleKeyAppendable implements RuleKeyAppendable {
@@ -528,7 +512,7 @@ public class RuleKeyTest {
     }
 
     @Override
-    public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+    public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
       return builder
           .setReflectively("value", value)
           .setReflectively("foo", "foo")
@@ -555,17 +539,17 @@ public class RuleKeyTest {
     }
 
     @Override
-    public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+    public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
       return builder
           .setReflectively("foo", foo);
     }
   }
 
-  private RuleKey.Builder createEmptyRuleKey(SourcePathResolver resolver) {
+  private RuleKeyBuilder createEmptyRuleKey(SourcePathResolver resolver) {
     FileHashCache fileHashCache =
         new FileHashCache() {
           @Override
-          public boolean contains(Path path) {
+          public boolean willGet(Path path) {
             return true;
           }
 

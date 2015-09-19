@@ -26,11 +26,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 
 import com.facebook.buck.android.AndroidPlatformTarget;
+import com.facebook.buck.artifact_cache.ArtifactCache;
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.event.BuckEventBusFactory;
 import com.facebook.buck.event.BuckEventBusFactory.CapturingConsoleEventListener;
 import com.facebook.buck.io.MorePaths;
-import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.java.JavaPackageFinder;
 import com.facebook.buck.model.BuildId;
 import com.facebook.buck.step.StepRunner;
@@ -56,7 +56,6 @@ public class BuildContextTest {
     // Set to non-null values.
     builder.setActionGraph(createMock(ActionGraph.class));
     builder.setStepRunner(createMock(StepRunner.class));
-    builder.setProjectFilesystem(createMock(ProjectFilesystem.class));
     builder.setArtifactCache(createMock(ArtifactCache.class));
     builder.setJavaPackageFinder(createMock(JavaPackageFinder.class));
     builder.setEventBus(BuckEventBusFactory.newInstance());
@@ -100,7 +99,6 @@ public class BuildContextTest {
     // Set to non-null values.
     builder.setActionGraph(createMock(ActionGraph.class));
     builder.setStepRunner(createMock(StepRunner.class));
-    builder.setProjectFilesystem(createMock(ProjectFilesystem.class));
     builder.setArtifactCache(createMock(ArtifactCache.class));
     builder.setJavaPackageFinder(createMock(JavaPackageFinder.class));
     builder.setEventBus(BuckEventBusFactory.newInstance());
@@ -122,7 +120,6 @@ public class BuildContextTest {
     // Set to non-null values.
     builder.setActionGraph(createMock(ActionGraph.class));
     builder.setStepRunner(createMock(StepRunner.class));
-    builder.setProjectFilesystem(createMock(ProjectFilesystem.class));
     builder.setArtifactCache(createMock(ArtifactCache.class));
     builder.setJavaPackageFinder(createMock(JavaPackageFinder.class));
     builder.setEventBus(BuckEventBusFactory.newInstance());
@@ -150,7 +147,6 @@ public class BuildContextTest {
     BuildContext buildContext = ImmutableBuildContext.builder()
         .setActionGraph(createMock(ActionGraph.class))
         .setStepRunner(createMock(StepRunner.class))
-        .setProjectFilesystem(createMock(ProjectFilesystem.class))
         .setArtifactCache(createMock(ArtifactCache.class))
         .setJavaPackageFinder(createMock(JavaPackageFinder.class))
         .setClock(createMock(Clock.class))

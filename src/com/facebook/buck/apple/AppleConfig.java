@@ -17,6 +17,7 @@
 package com.facebook.buck.apple;
 
 import com.facebook.buck.cli.BuckConfig;
+import com.facebook.buck.io.ExecutableFinder;
 import com.facebook.buck.log.Logger;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.util.ProcessExecutor;
@@ -160,8 +161,9 @@ public class AppleConfig {
         if (allValidIdentities.isEmpty()) {
           LOG.warn("No valid code signing identities found.  Device build/install won't work.");
         } else if (allValidIdentities.size() > 1) {
-          LOG.warn("More than 1 valid identity found.  This could potentially " +
-              "cause the wrong one to be used unless explicitly specified via CODE_SIGN_IDENTITY.");
+          LOG.info(
+              "More than 1 valid identity found.  This could potentially  cause the wrong one to" +
+                  " be used unless explicitly specified via CODE_SIGN_IDENTITY.");
         }
         return allValidIdentities;
       }
@@ -216,12 +218,8 @@ public class AppleConfig {
   }
 
   public Optional<Path> getXctoolPath() {
-    Optional<String> xctoolPath = delegate.getValue("apple", "xctool_path");
-    if (xctoolPath.isPresent()) {
-      return Optional.of(Paths.get(xctoolPath.get()));
-    } else {
-      return Optional.absent();
-    }
+    Path xctool = getOptionalPath("apple", "xctool_path").or(Paths.get("xctool"));
+    return new ExecutableFinder().getOptionalExecutable(xctool, delegate.getEnvironment());
   }
 
   public Optional<BuildTarget> getXctoolZipTarget() {
@@ -232,4 +230,24 @@ public class AppleConfig {
     return delegate.getValue("apple", "xctool_default_destination_specifier");
   }
 
+  public boolean getXcodeDisableParallelizeBuild() {
+    return delegate.getBooleanValue("apple", "xcode_disable_parallelize_build", false);
+  }
+
+  public Optional<Path> getAppleDeviceHelperPath() {
+    return getOptionalPath("apple", "device_helper_path");
+  }
+
+  public Optional<BuildTarget> getAppleDeviceHelperTarget() {
+    return delegate.getBuildTarget("apple", "device_helper_target");
+  }
+
+  private Optional<Path> getOptionalPath(String sectionName, String propertyName) {
+    Optional<String> pathString = delegate.getValue(sectionName, propertyName);
+    if (pathString.isPresent()) {
+      return Optional.of(Paths.get(pathString.get()));
+    } else {
+      return Optional.absent();
+    }
+  }
 }

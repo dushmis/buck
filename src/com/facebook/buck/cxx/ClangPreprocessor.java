@@ -17,7 +17,7 @@
 package com.facebook.buck.cxx;
 
 import com.facebook.buck.rules.BuildRule;
-import com.facebook.buck.rules.RuleKey;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.Tool;
@@ -59,6 +59,10 @@ public class ClangPreprocessor implements Preprocessor {
           public Iterable<String> apply(String input) {
             String remainder = input;
             ImmutableList.Builder<String> processedLines = ImmutableList.builder();
+            if (remainder.isEmpty()) {
+              processedLines.add(remainder);
+            }
+
             while (!remainder.isEmpty()) {
               Matcher m = PRAGMA_TOKEN_PLACEHOLDER_PATTERN.matcher(remainder);
               if (!m.matches()) {
@@ -97,7 +101,7 @@ public class ClangPreprocessor implements Preprocessor {
   }
 
   @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+  public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
     return builder
         .setReflectively("tool", tool)
         .setReflectively("type", getClass().getSimpleName());

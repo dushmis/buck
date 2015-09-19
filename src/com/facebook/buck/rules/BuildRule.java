@@ -32,18 +32,18 @@ import javax.annotation.Nullable;
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE,
     getterVisibility = JsonAutoDetect.Visibility.NONE,
     setterVisibility = JsonAutoDetect.Visibility.NONE)
-public interface BuildRule extends Comparable<BuildRule>, HasBuildTarget {
+public interface BuildRule extends Comparable<BuildRule>, HasBuildTarget, HasDependencies {
 
   @Override
-  public BuildTarget getBuildTarget();
+  BuildTarget getBuildTarget();
 
   @JsonProperty("name")
-  public String getFullyQualifiedName();
+  String getFullyQualifiedName();
 
   @JsonProperty("type")
-  public String getType();
+  String getType();
 
-  public BuildableProperties getProperties();
+  BuildableProperties getProperties();
 
   /**
    * @return the set of rules that must be built before this rule. Normally, this matches the value
@@ -55,32 +55,24 @@ public interface BuildRule extends Comparable<BuildRule>, HasBuildTarget {
    *     original {@code deps} argument, as defined in the build file, must be accessed via a
    *     custom getter provided by the build rule.
    */
-  public ImmutableSortedSet<BuildRule> getDeps();
+  @Override
+  ImmutableSortedSet<BuildRule> getDeps();
 
   /**
    * @return key based on the BuildRule's state, including the transitive closure of its
    *     dependencies' keys.
    */
-  public RuleKey getRuleKey();
-
-  /**
-   * Normally, a {@link RuleKey} is a function of the {@link RuleKey} of each of its deps as well as
-   * that of its inputs. This returns a {@link RuleKey} that is a function of only its inputs, which
-   * can be used to determine whether the definition or inputs of the rule changed independent of
-   * changes to its [transitive] deps.
-   * @return a non-null {@link RuleKey}.
-   */
-  public RuleKey getRuleKeyWithoutDeps();
+  RuleKey getRuleKey();
 
   /** @return the same value as {@link #getFullyQualifiedName()} */
   @Override
-  public String toString();
+  String toString();
 
-  public ImmutableList<Step> getBuildSteps(BuildContext context, BuildableContext buildableContext);
+  ImmutableList<Step> getBuildSteps(BuildContext context, BuildableContext buildableContext);
 
   @Nullable
-  public Path getPathToOutput();
+  Path getPathToOutput();
 
-  public ProjectFilesystem getProjectFilesystem();
+  ProjectFilesystem getProjectFilesystem();
 
 }

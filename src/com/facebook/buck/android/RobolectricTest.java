@@ -86,6 +86,7 @@ public class RobolectricTest extends JavaTest {
       Set<Label> labels,
       Set<String> contacts,
       Optional<SourcePath> proguardConfig,
+      SourcePath abiJar,
       ImmutableSet<Path> additionalClasspathEntries,
       JavacOptions javacOptions,
       List<String> vmArgs,
@@ -97,7 +98,8 @@ public class RobolectricTest extends JavaTest {
       Optional<Long> testRuleTimeoutMs,
       boolean runTestSeparately,
       Optional<Level> stdOutLogLevel,
-      Optional<Level> stdErrLogLevel) {
+      Optional<Level> stdErrLogLevel,
+      Optional<Path> testTempDirOverride) {
     super(
         buildRuleParams,
         resolver,
@@ -106,6 +108,7 @@ public class RobolectricTest extends JavaTest {
         labels,
         contacts,
         proguardConfig,
+        abiJar,
         additionalClasspathEntries,
         TestType.JUNIT,
         javacOptions,
@@ -117,7 +120,8 @@ public class RobolectricTest extends JavaTest {
         testRuleTimeoutMs,
         runTestSeparately,
         stdOutLogLevel,
-        stdErrLogLevel
+        stdErrLogLevel,
+        testTempDirOverride
     );
     this.optionalDummyRDotJava = optionalDummyRDotJava;
   }

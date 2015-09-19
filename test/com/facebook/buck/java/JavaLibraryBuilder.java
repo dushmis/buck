@@ -19,12 +19,12 @@ package com.facebook.buck.java;
 import static com.facebook.buck.java.JavaCompilationConstants.DEFAULT_JAVAC_OPTIONS;
 
 import com.facebook.buck.model.BuildTarget;
+import com.facebook.buck.model.Either;
 import com.facebook.buck.rules.AbstractNodeBuilder;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.PathSourcePath;
 import com.facebook.buck.rules.SourcePath;
-import com.facebook.buck.rules.coercer.Either;
 import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableSet;
@@ -61,14 +61,22 @@ public class JavaLibraryBuilder extends AbstractNodeBuilder<JavaLibraryDescripti
     return this;
   }
 
-  public JavaLibraryBuilder addSrc(Path path) {
-    arg.srcs = amend(arg.srcs, new PathSourcePath(new FakeProjectFilesystem(), path));
+  public JavaLibraryBuilder setResourcesRoot(Path root) {
+    arg.resourcesRoot = Optional.of(root);
     return this;
   }
 
-  public JavaLibraryBuilder addSrcTarget(BuildTarget target) {
-    arg.srcs = amend(arg.srcs, new BuildTargetSourcePath(target));
+  public JavaLibraryBuilder addSrc(SourcePath path) {
+    arg.srcs = amend(arg.srcs, path);
     return this;
+  }
+
+  public JavaLibraryBuilder addSrc(Path path) {
+    return addSrc(new PathSourcePath(new FakeProjectFilesystem(), path));
+  }
+
+  public JavaLibraryBuilder addSrcTarget(BuildTarget target) {
+    return addSrc(new BuildTargetSourcePath(target));
   }
 
   public JavaLibraryBuilder setProguardConfig(Path proguardConfig) {

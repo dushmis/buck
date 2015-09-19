@@ -29,19 +29,17 @@ import com.facebook.buck.rules.ActionGraph;
 import com.facebook.buck.rules.BuildEvent;
 import com.facebook.buck.rules.CachingBuildEngine;
 import com.facebook.buck.rules.Label;
-import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetGraphToActionGraph;
 import com.facebook.buck.rules.TargetNode;
 import com.facebook.buck.rules.TargetNodes;
 import com.facebook.buck.rules.TestRule;
-import com.facebook.buck.rules.keys.DependencyFileRuleKeyBuilderFactory;
-import com.facebook.buck.rules.keys.InputBasedRuleKeyBuilderFactory;
 import com.facebook.buck.step.AdbOptions;
 import com.facebook.buck.step.DefaultStepRunner;
 import com.facebook.buck.step.TargetDevice;
 import com.facebook.buck.step.TargetDeviceOptions;
 import com.facebook.buck.test.CoverageReportFormat;
+import com.facebook.buck.test.TestRunningOptions;
 import com.facebook.buck.util.Console;
 import com.facebook.buck.util.concurrent.ConcurrencyLimit;
 import com.facebook.infer.annotation.SuppressFieldNotInitialized;
@@ -93,6 +91,11 @@ public class TestCommand extends BuildCommand {
   @Option(name = "--xml", usage = "Where to write test output as XML.")
   @Nullable
   private String pathToXmlTestOutput = null;
+
+  @Option(name = "--run-with-java-agent",
+      usage = "Whether the test will start a java profiling agent")
+  @Nullable
+  private String pathToJavaAgent = null;
 
   @Option(name = "--no-results-cache", usage = "Whether to use cached test results.")
   @Nullable
@@ -184,8 +187,8 @@ public class TestCommand extends BuildCommand {
     return targetDeviceOptions.getTargetDeviceOptional();
   }
 
-  public AdbOptions getAdbOptions() {
-    return adbOptions.getAdbOptions();
+  public AdbOptions getAdbOptions(BuckConfig buckConfig) {
+    return adbOptions.getAdbOptions(buckConfig);
   }
 
   public TargetDeviceOptions getTargetDeviceOptions() {
@@ -218,7 +221,7 @@ public class TestCommand extends BuildCommand {
     if (isDebugEnabled()) {
       return 1;
     }
-    return getNumThreads(buckConfig);
+    return buckConfig.getNumThreads();
   }
 
   @Override
@@ -341,19 +344,13 @@ public class TestCommand extends BuildCommand {
               params.getFileHashCache(),
               getBuildEngineMode().or(params.getBuckConfig().getBuildEngineMode()),
               params.getBuckConfig().getBuildDepFiles(),
-              new InputBasedRuleKeyBuilderFactory(
-                  params.getFileHashCache(),
-                  new SourcePathResolver(targetGraphToActionGraph.getRuleResolver())),
-              new DependencyFileRuleKeyBuilderFactory(
-                  params.getFileHashCache(),
-                  new SourcePathResolver(targetGraphToActionGraph.getRuleResolver())));
+              targetGraphToActionGraph.getRuleResolvers());
       try (Build build = createBuild(
           params.getBuckConfig(),
           graph,
-          params.getRepository().getFilesystem(),
           params.getAndroidPlatformTargetSupplier(),
           cachingBuildEngine,
-          getArtifactCache(params),
+          params.getArtifactCache(),
           params.getConsole(),
           params.getBuckEventBus(),
           getTargetDeviceOptional(),
@@ -361,7 +358,7 @@ public class TestCommand extends BuildCommand {
           params.getEnvironment(),
           params.getObjectMapper(),
           params.getClock(),
-          Optional.of(getAdbOptions()),
+          Optional.of(getAdbOptions(params.getBuckConfig())),
           Optional.of(getTargetDeviceOptions()))) {
 
         // Build all of the test rules.
@@ -386,7 +383,7 @@ public class TestCommand extends BuildCommand {
         // Once all of the rules are built, then run the tests.
         ConcurrencyLimit concurrencyLimit = new ConcurrencyLimit(
             getNumTestThreads(params.getBuckConfig()),
-            getLoadLimit(params.getBuckConfig()));
+            params.getBuckConfig().getLoadLimit());
         try (CommandThreadManager testPool =
                  new CommandThreadManager("Test-Run", concurrencyLimit)) {
           TestRunningOptions options = TestRunningOptions.builder()
@@ -400,6 +397,7 @@ public class TestCommand extends BuildCommand {
               .setDryRun(isDryRun)
               .setShufflingTests(isShufflingTests)
               .setPathToXmlTestOutput(Optional.fromNullable(pathToXmlTestOutput))
+              .setPathToJavaAgent(Optional.fromNullable(pathToJavaAgent))
               .setCoverageReportFormat(coverageReportFormat)
               .setCoverageReportTitle(coverageReportTitle)
               .build();

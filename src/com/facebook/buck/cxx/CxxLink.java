@@ -19,13 +19,14 @@ package com.facebook.buck.cxx;
 import static com.google.common.base.Predicates.notNull;
 
 import com.facebook.buck.io.MorePaths;
+import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AbstractBuildRule;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyAppendable;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.Tool;
@@ -85,7 +86,7 @@ public class CxxLink
   }
 
   @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+  public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
     return builder
         .setReflectively(
             "args",
@@ -111,16 +112,25 @@ public class CxxLink
       BuildContext context,
       BuildableContext buildableContext) {
     buildableContext.recordArtifact(output);
+    Path argFilePath = getProjectFilesystem().getRootPath().resolve(
+        BuildTargets.getScratchPath(getBuildTarget(), "%s__argfile.txt"));
     return ImmutableList.of(
-        new MkdirStep(output.getParent()),
-        new CxxLinkStep(
-            linker.getCommandPrefix(getResolver()),
+        new MkdirStep(getProjectFilesystem(), output.getParent()),
+        new CxxPrepareForLinkStep(
+            argFilePath,
             output,
             args,
             frameworkRoots,
             getLibrarySearchDirectories(),
             getLibraryNames()),
-        new FileScrubberStep(output, linker.getScrubbers(context.getProjectRoot())));
+        new CxxLinkStep(
+            getProjectFilesystem().getRootPath(),
+            linker.getCommandPrefix(getResolver()),
+            argFilePath),
+        new FileScrubberStep(
+            getProjectFilesystem(),
+            output,
+            linker.getScrubbers(getProjectFilesystem().getRootPath())));
   }
 
   @Override

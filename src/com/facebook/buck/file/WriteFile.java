@@ -25,6 +25,7 @@ import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.Step;
 import com.facebook.buck.step.fs.MkdirStep;
 import com.facebook.buck.step.fs.WriteFileStep;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 
 import java.nio.file.Path;
@@ -46,6 +47,8 @@ public class WriteFile extends AbstractBuildRule {
       boolean executable) {
     super(buildRuleParams, resolver);
 
+    Preconditions.checkArgument(!output.isAbsolute(), "'%s' must not be absolute.", output);
+
     this.fileContents = fileContents;
     this.output = output;
     this.executable = executable;
@@ -56,8 +59,8 @@ public class WriteFile extends AbstractBuildRule {
       BuildContext context, BuildableContext buildableContext) {
     buildableContext.recordArtifact(output);
     return ImmutableList.of(
-        new MkdirStep(output.getParent()),
-        new WriteFileStep(fileContents, output, executable));
+        new MkdirStep(getProjectFilesystem(), output.getParent()),
+        new WriteFileStep(getProjectFilesystem(), fileContents, output, executable));
   }
 
   @Override

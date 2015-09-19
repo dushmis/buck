@@ -28,6 +28,7 @@ import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildRuleType;
 import com.facebook.buck.rules.Description;
 import com.facebook.buck.rules.ImplicitDepsInferringDescription;
+import com.facebook.buck.rules.NoopBuildRule;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.SourcePaths;
@@ -319,6 +320,18 @@ public class CxxLibraryDescription implements
             params.getBuildTarget(),
             cxxPlatform.getFlavor(),
             pic);
+
+    if (objects.isEmpty()) {
+      return new NoopBuildRule(
+          new BuildRuleParams(
+              staticTarget,
+              Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
+              Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
+              params.getProjectFilesystem(),
+              params.getRuleKeyBuilderFactory()),
+          pathResolver);
+    }
+
     Path staticLibraryPath =
         CxxDescriptionEnhancer.getStaticLibraryPath(
             params.getBuildTarget(),
@@ -388,6 +401,18 @@ public class CxxLibraryDescription implements
         CxxDescriptionEnhancer.createSharedLibraryBuildTarget(
             params.getBuildTarget(),
             cxxPlatform.getFlavor());
+
+    if (objects.isEmpty()) {
+      return new NoopBuildRule(
+          new BuildRuleParams(
+              sharedTarget,
+              Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
+              Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
+              params.getProjectFilesystem(),
+              params.getRuleKeyBuilderFactory()),
+          pathResolver);
+    }
+
     String sharedLibrarySoname =
         soname.or(
             CxxDescriptionEnhancer.getDefaultSharedLibrarySoname(
@@ -420,13 +445,14 @@ public class CxxLibraryDescription implements
         linkType,
         Optional.of(sharedLibrarySoname),
         sharedLibraryPath,
-        FluentIterable.from(objects.values())
-            .append(
-                FluentIterable.from(getExtraMacroBuildInputs(
-                        params.getBuildTarget(),
-                        ruleResolver,
-                        extraLdFlags))
-                    .transform(SourcePaths.getToBuildTargetSourcePath()))
+        objects.values(),
+        FluentIterable
+            .from(
+                getExtraMacroBuildInputs(
+                    params.getBuildTarget(),
+                    ruleResolver,
+                    extraLdFlags))
+            .transform(SourcePaths.getToBuildTargetSourcePath())
             .toList(),
         linkableDepType,
         params.getDeps(),
@@ -853,8 +879,8 @@ public class CxxLibraryDescription implements
       BuildRuleParams typeParams =
           params.copyWithChanges(
               target,
-              Suppliers.ofInstance(params.getDeclaredDeps()),
-              Suppliers.ofInstance(params.getExtraDeps()));
+              params.getDeclaredDeps(),
+              params.getExtraDeps());
       if (type.get().getValue().equals(Type.HEADERS)) {
         return createHeaderSymlinkTreeBuildRule(
             typeParams,
@@ -1033,6 +1059,7 @@ public class CxxLibraryDescription implements
         exportedLangPreprocessorFlags;
     public Optional<ImmutableList<String>> exportedLinkerFlags;
     public Optional<PatternMatchedCollection<ImmutableList<String>>> exportedPlatformLinkerFlags;
+    public Optional<ImmutableSortedSet<BuildTarget>> exportedDeps;
     public Optional<Pattern> supportedPlatformsRegex;
     public Optional<String> soname;
     public Optional<Boolean> forceStatic;

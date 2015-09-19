@@ -2,10 +2,14 @@
 java_library(
   name = 'command',
   srcs = glob(['*.java']),
+  tests = [
+    '//test/com/facebook/buck/command:command',
+  ],
   deps = [
     '//src/com/facebook/buck/android:packageable',
     '//src/com/facebook/buck/android:rules',
     '//src/com/facebook/buck/android:utils',
+    '//src/com/facebook/buck/artifact_cache:artifact_cache',
     '//src/com/facebook/buck/cli:config',
     '//src/com/facebook/buck/event:event',
     '//src/com/facebook/buck/graph:graph',

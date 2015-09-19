@@ -16,11 +16,22 @@
 
 package com.facebook.buck.cli;
 
-import com.facebook.buck.android.AndroidDirectoryResolver;
 import com.facebook.buck.android.AndroidPlatformTarget;
+import com.facebook.buck.apple.AppleConfig;
+import com.facebook.buck.apple.AppleSdk;
+import com.facebook.buck.apple.AppleSdkPaths;
 import com.facebook.buck.io.MoreFiles;
+import com.facebook.buck.util.Ansi;
+import com.facebook.buck.util.Console;
+import com.facebook.buck.util.HumanReadableException;
+import com.facebook.buck.util.PackagedResource;
+import com.facebook.buck.util.ProcessExecutor;
+import com.facebook.buck.util.Verbosity;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
+import com.google.common.base.Preconditions;
+import com.google.common.base.Supplier;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.io.Files;
 
@@ -28,29 +39,40 @@ import org.kohsuke.args4j.Argument;
 import org.kohsuke.args4j.Option;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 
 import javax.annotation.Nullable;
 
 /**
  * This class creates a terminal command for Buck that creates a sample Buck project in the
- * directory the user specifies. It copies from {@link #PATH_TO_QUICKSTART_DIR} to the
- * directory specified. It then asks the user for the location of the Android SDK so Buck can
- * successfully build the quickstart project. It will fail if it cannot find the template directory,
- * or if it is unable to write to the destination directory.
+ * directory the user specifies. It will fail if it cannot find the template directory, or if it is
+ * unable to write to the destination directory.
  */
 public class QuickstartCommand extends AbstractCommand {
 
-  private static final Path PATH_TO_QUICKSTART_DIR = Paths.get(
-      System.getProperty(
-          "buck.quickstart_origin_dir",
-          new File("src/com/facebook/buck/cli/quickstart/android").getAbsolutePath()));
+  enum Type {
+    ANDROID,
+    IOS,
+  }
+
+  private static final ImmutableMap<Type, PackagedResource> PATHS_TO_QUICKSTART_DIR =
+      ImmutableMap.of(
+          Type.ANDROID,
+          new PackagedResource(QuickstartCommand.class, "quickstart/android/android-template.zip"),
+
+          Type.IOS,
+          new PackagedResource(QuickstartCommand.class, "quickstart/ios/ios-template.zip"));
 
   @Option(name = "--dest-dir", usage = "Destination project directory")
   private String destDir = "";
@@ -58,6 +80,9 @@ public class QuickstartCommand extends AbstractCommand {
   @Nullable
   @Option(name = "--android-sdk", usage = "Android SDK directory")
   private String androidSdkDir;
+
+  @Option(name = "--type", usage = "Type of project")
+  private Type type = Type.ANDROID;
 
   @Argument
   private List<String> arguments = Lists.newArrayList();
@@ -75,11 +100,17 @@ public class QuickstartCommand extends AbstractCommand {
     return destDir;
   }
 
-  public String getAndroidSdkDir(AndroidDirectoryResolver androidDirectoryResolver) {
+  public String getAndroidSdkDir(Supplier<AndroidPlatformTarget> platformTargetSupplier) {
     if (androidSdkDir == null) {
-      Optional<Path> androidSdkDir = androidDirectoryResolver.findAndroidSdkDirSafe();
-      this.androidSdkDir = androidSdkDir.isPresent() ?
-          androidSdkDir.get().toAbsolutePath().toString() : "";
+      try {
+        Optional<Path> possibleSdkDir = platformTargetSupplier.get().getSdkDirectory();
+
+        this.androidSdkDir = possibleSdkDir.isPresent() ?
+            possibleSdkDir.get().toAbsolutePath().toString() :
+            "";
+      } catch (HumanReadableException e) {
+        this.androidSdkDir = "";
+      }
     }
 
     return androidSdkDir;
@@ -121,34 +152,80 @@ public class QuickstartCommand extends AbstractCommand {
       return 1;
     }
 
-    String sdkLocation = getAndroidSdkDir(params.getRepository().getAndroidDirectoryResolver());
-    if (sdkLocation.isEmpty()) {
-      sdkLocation = promptForPath(params, "Enter your Android SDK's location: ");
+    PackagedResource resource = Preconditions.checkNotNull(PATHS_TO_QUICKSTART_DIR.get(type));
+    Path origin = resource.get();
+
+    final Path destination = Paths.get(projectDir);
+
+    switch (type) {
+      case ANDROID: {
+        String sdkLocation = getAndroidSdkDir(params.getAndroidPlatformTargetSupplier());
+        if (sdkLocation.isEmpty()) {
+          sdkLocation = promptForPath(params, "Enter your Android SDK's location: ");
+        }
+
+        File sdkLocationFile = new File(sdkLocation);
+        if (!sdkLocationFile.isDirectory()) {
+          params
+              .getConsole()
+              .getStdErr()
+              .println("WARNING: That Android SDK directory does not exist.");
+        }
+
+        sdkLocation = sdkLocationFile.getAbsoluteFile().toString();
+
+        MoreFiles.copyRecursively(origin, destination);
+
+        // Specify the default Android target so everyone on the project builds against the same
+        // SDK.
+        File buckConfig = new File(projectDir + "/.buckconfig");
+        Files.append(
+            "[android]\n    target = " + AndroidPlatformTarget.DEFAULT_ANDROID_PLATFORM_TARGET +
+                "\n",
+            buckConfig,
+            StandardCharsets.UTF_8);
+
+        File localProperties = new File(projectDir + "/local.properties");
+        Files.write("sdk.dir=" + sdkLocation + "\n", localProperties, StandardCharsets.UTF_8);
+        break;
+      }
+
+      case IOS: {
+        ImmutableMap<AppleSdk, AppleSdkPaths> appleSdkPaths = null;
+        try (
+            PrintStream stdout = new PrintStream(new ByteArrayOutputStream());
+            PrintStream stderr = new PrintStream(new ByteArrayOutputStream())) {
+          AppleConfig appleConfig = new AppleConfig(params.getBuckConfig());
+          appleSdkPaths = appleConfig.getAppleSdkPaths(
+              new ProcessExecutor(
+                  new Console(Verbosity.SILENT, stdout, stderr, Ansi.withoutTty())));
+        }
+        if (appleSdkPaths == null || appleSdkPaths.isEmpty()) {
+          throw new HumanReadableException(
+              "Could not find any Apple SDK, check your Xcode installation.");
+        }
+
+        MoreFiles.copyRecursively(origin, destination);
+
+        File buckConfig = new File(projectDir + "/.buckconfig");
+        Files.append("\n", buckConfig, StandardCharsets.UTF_8);
+
+        break;
+      }
     }
 
-    File sdkLocationFile = new File(sdkLocation);
-    if (!sdkLocationFile.isDirectory()) {
-      params
-          .getConsole()
-          .getStdErr()
-          .println("WARNING: That Android SDK directory does not exist.");
-    }
-
-    sdkLocation = sdkLocationFile.getAbsoluteFile().toString();
-
-    Path origin = PATH_TO_QUICKSTART_DIR;
-    Path destination = Paths.get(projectDir);
-    MoreFiles.copyRecursively(origin, destination);
-
-    // Specify the default Android target so everyone on the project builds against the same SDK.
-    File buckConfig = new File(projectDir + "/.buckconfig");
-    Files.append(
-        "[android]\n    target = " + AndroidPlatformTarget.DEFAULT_ANDROID_PLATFORM_TARGET + "\n",
-        buckConfig,
-        StandardCharsets.UTF_8);
-
-    File localProperties = new File(projectDir + "/local.properties");
-    Files.write("sdk.dir=" + sdkLocation + "\n", localProperties, StandardCharsets.UTF_8);
+    java.nio.file.Files.walkFileTree(destination, new SimpleFileVisitor<Path>() {
+          @Override
+          public FileVisitResult visitFile(
+              Path file, BasicFileAttributes attrs) throws IOException {
+            if ("BUCK.tmpl".equals(file.getFileName().toString())) {
+              Path actualBuck = file.getParent().resolve("BUCK");
+              java.nio.file.Files.copy(file, actualBuck);
+              java.nio.file.Files.delete(file);
+            }
+            return FileVisitResult.CONTINUE;
+          }
+        });
 
     params.getConsole().getStdOut().print(
         Files.toString(origin.resolve("README.md").toFile(), StandardCharsets.UTF_8));

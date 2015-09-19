@@ -68,9 +68,8 @@ public class CxxDescriptionEnhancer {
 
   private static final Logger LOG = Logger.get(CxxDescriptionEnhancer.class);
 
-  public static final Flavor HEADER_SYMLINK_TREE_FLAVOR = ImmutableFlavor.of("header-symlink-tree");
-  public static final Flavor EXPORTED_HEADER_SYMLINK_TREE_FLAVOR =
-      ImmutableFlavor.of("exported-header-symlink-tree");
+  public static final Flavor HEADER_SYMLINK_TREE_FLAVOR = ImmutableFlavor.of("private-headers");
+  public static final Flavor EXPORTED_HEADER_SYMLINK_TREE_FLAVOR = ImmutableFlavor.of("headers");
   public static final Flavor STATIC_FLAVOR = ImmutableFlavor.of("static");
   public static final Flavor STATIC_PIC_FLAVOR = ImmutableFlavor.of("static-pic");
   public static final Flavor SHARED_FLAVOR = ImmutableFlavor.of("shared");
@@ -869,7 +868,7 @@ public class CxxDescriptionEnhancer {
 
       // Add all the shared libraries and the symlink tree as inputs to the tool that represents
       // this binary, so that users can attach the proper deps.
-      executableBuilder.addInput(new BuildTargetSourcePath(sharedLibraries.getBuildTarget()));
+      executableBuilder.addDep(sharedLibraries);
       executableBuilder.addInputs(sharedLibraries.getLinks().values());
     }
 
@@ -887,6 +886,7 @@ public class CxxDescriptionEnhancer {
             Optional.<String>absent(),
             output,
             objects.values(),
+            /* extraInputs */ ImmutableList.<SourcePath>of(),
             linkStyle,
             params.getDeps(),
             args.cxxRuntimeType,
@@ -916,8 +916,8 @@ public class CxxDescriptionEnhancer {
         targetGraph,
         params.copyWithChanges(
             target,
-            Suppliers.ofInstance(params.getDeclaredDeps()),
-            Suppliers.ofInstance(params.getExtraDeps())),
+            params.getDeclaredDeps(),
+            params.getExtraDeps()),
         ruleResolver,
         args);
   }

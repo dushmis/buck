@@ -21,8 +21,6 @@ import static com.facebook.buck.util.BuckConstant.SCRATCH_PATH;
 import static org.easymock.EasyMock.createNiceMock;
 import static org.easymock.EasyMock.expect;
 import static org.easymock.EasyMock.replay;
-import static org.hamcrest.CoreMatchers.equalTo;
-import static org.hamcrest.CoreMatchers.not;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
@@ -39,19 +37,18 @@ import com.facebook.buck.java.abi.AbiWriterProtocol;
 import com.facebook.buck.model.BuildId;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
-import com.facebook.buck.rules.AbiRule;
 import com.facebook.buck.rules.ActionGraph;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildTargetSourcePath;
-import com.facebook.buck.rules.FakeBuildRule;
 import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.FakeBuildableContext;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.keys.DefaultRuleKeyBuilderFactory;
 import com.facebook.buck.rules.ImmutableBuildContext;
-import com.facebook.buck.rules.NoopArtifactCache;
+import com.facebook.buck.artifact_cache.NoopArtifactCache;
 import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyBuilderFactory;
 import com.facebook.buck.rules.Sha1HashCode;
@@ -59,6 +56,7 @@ import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.SourcePaths;
 import com.facebook.buck.rules.TestSourcePath;
+import com.facebook.buck.rules.keys.InputBasedRuleKeyBuilderFactory;
 import com.facebook.buck.shell.GenruleBuilder;
 import com.facebook.buck.shell.ShellStep;
 import com.facebook.buck.step.ExecutionContext;
@@ -76,6 +74,7 @@ import com.facebook.buck.util.BuckConstant;
 import com.facebook.buck.util.Console;
 import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.Verbosity;
+import com.facebook.buck.util.cache.DefaultFileHashCache;
 import com.google.common.base.Charsets;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
@@ -91,10 +90,10 @@ import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
-import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 
 import org.easymock.EasyMock;
+import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -323,6 +322,38 @@ public class DefaultJavaLibraryTest {
   }
 
   @Test
+  public void testGetClasspathDeps() {
+    BuildRuleResolver ruleResolver = new BuildRuleResolver();
+
+    BuildTarget libraryOneTarget = BuildTargetFactory.newInstance("//:libone");
+    BuildRule libraryOne = JavaLibraryBuilder.createBuilder(libraryOneTarget)
+        .addSrc(Paths.get("java/src/com/libone/Bar.java"))
+        .build(ruleResolver);
+
+    BuildTarget libraryTwoTarget = BuildTargetFactory.newInstance("//:libtwo");
+    BuildRule libraryTwo = JavaLibraryBuilder
+        .createBuilder(libraryTwoTarget)
+        .addSrc(Paths.get("java/src/com/libtwo/Foo.java"))
+        .addDep(libraryOne.getBuildTarget())
+        .build(ruleResolver);
+
+    BuildTarget parentTarget = BuildTargetFactory.newInstance("//:parent");
+    BuildRule parent = JavaLibraryBuilder
+        .createBuilder(parentTarget)
+        .addSrc(Paths.get("java/src/com/parent/Meh.java"))
+        .addDep(libraryTwo.getBuildTarget())
+        .build(ruleResolver);
+
+    assertThat(
+        ((HasClasspathEntries) parent).getTransitiveClasspathDeps(),
+        Matchers.equalTo(
+            ImmutableSet.of(
+                getJavaLibrary(libraryOne),
+                getJavaLibrary(libraryTwo),
+                getJavaLibrary(parent))));
+  }
+
+  @Test
   public void testClasspathForJavacCommand() throws IOException {
     // libraryOne responds like an ordinary prebuilt_jar with no dependencies. We have to use a
     // FakeJavaLibraryRule so that we can override the behavior of getAbiKey().
@@ -333,6 +364,11 @@ public class DefaultJavaLibraryTest {
       @Override
       public Sha1HashCode getAbiKey() {
         return Sha1HashCode.of(Strings.repeat("cafebabe", 5));
+      }
+
+      @Override
+      public Optional<SourcePath> getAbiJar() {
+        return Optional.absent();
       }
 
       @Override
@@ -352,6 +388,11 @@ public class DefaultJavaLibraryTest {
       @Override
       public ImmutableSetMultimap<JavaLibrary, Path> getTransitiveClasspathEntries() {
         return ImmutableSetMultimap.of();
+      }
+
+      @Override
+      public ImmutableSet<JavaLibrary> getTransitiveClasspathDeps() {
+        return ImmutableSet.of();
       }
     };
 
@@ -546,6 +587,17 @@ public class DefaultJavaLibraryTest {
             .build(),
         getJavaLibrary(parent).getTransitiveClasspathEntries());
 
+    assertThat(
+        getJavaLibrary(parent).getTransitiveClasspathDeps(),
+        Matchers.equalTo(
+            ImmutableSet.<JavaLibrary>builder()
+                .add(getJavaLibrary(included))
+                .add(getJavaLibrary(notIncluded))
+                .add(getJavaLibrary(libraryOne))
+                .add(getJavaLibrary(libraryTwo))
+                .add(getJavaLibrary(parent))
+                .build()));
+
     assertEquals(
         "A java_library that depends on //:parent should include only parent.jar in its " +
             "-classpath when compiling itself.",
@@ -593,126 +645,324 @@ public class DefaultJavaLibraryTest {
   }
 
   /**
-   * Tests DefaultJavaLibraryRule#getAbiKeyForDeps() when the dependencies contain a JavaAbiRule
-   * that is not a JavaLibraryRule.
+   * Tests that input-based rule keys work properly with generated sources.
    */
   @Test
-  public void testGetAbiKeyForDepsWithMixedDeps() throws IOException {
-    String tinyLibAbiKeyHash = Strings.repeat("a", 40);
-    BuildRule tinyLibrary = createDefaultJavaLibaryRuleWithAbiKey(
-        tinyLibAbiKeyHash,
-        BuildTargetFactory.newInstance("//:tinylib"),
-        // Must have a source file or else its ABI will be AbiWriterProtocol.EMPTY_ABI_KEY.
-        /* srcs */ ImmutableSet.of("foo/Bar.java"),
-        /* deps */ ImmutableSortedSet.<BuildRule>of(),
-        /* exportedDeps */ ImmutableSortedSet.<BuildRule>of());
+  public void testInputBasedRuleKeySourceChange() throws IOException {
+    ProjectFilesystem filesystem = new FakeProjectFilesystem();
 
-    String javaAbiRuleKeyHash = Strings.repeat("b", 40);
-    FakeJavaAbiRule fakeJavaAbiRule = new FakeJavaAbiRule(
-        BuildTargetFactory.newInstance("//:tinylibfakejavaabi"),
-        javaAbiRuleKeyHash);
+    // Setup a Java library consuming a source generated by a genrule and grab its rule key.
+    BuildRuleResolver resolver = new BuildRuleResolver();
+    BuildRule genSrc =
+        GenruleBuilder.newGenruleBuilder(BuildTargetFactory.newInstance("//:gen_srcs"))
+            .setOut("Test.java")
+            .setCmd("something")
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath("class Test {}", genSrc.getPathToOutput());
+    JavaLibrary library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addSrc(new BuildTargetSourcePath(genSrc.getBuildTarget()))
+            .build(resolver, filesystem);
+    InputBasedRuleKeyBuilderFactory factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey originalRuleKey = factory.newInstance(library).build();
 
-    BuildRule defaultJavaLibary = createDefaultJavaLibaryRuleWithAbiKey(
-        Strings.repeat("c", 40),
-        BuildTargetFactory.newInstance("//:javalib"),
-        /* srcs */ ImmutableSet.<String>of(),
-        /* deps */ ImmutableSortedSet.of(tinyLibrary, fakeJavaAbiRule),
-        /* exportedDeps */ ImmutableSortedSet.<BuildRule>of());
+    // Now change the genrule such that its rule key changes, but it's output stays the same (since
+    // we don't change it).  This should *not* affect the input-based rule key of the consuming
+    // java library, since it only cares about the contents of the source.
+    resolver = new BuildRuleResolver();
+    genSrc =
+        GenruleBuilder.newGenruleBuilder(BuildTargetFactory.newInstance("//:gen_srcs"))
+            .setOut("Test.java")
+            .setCmd("something else")
+            .build(resolver, filesystem);
+    library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addSrc(new BuildTargetSourcePath(genSrc.getBuildTarget()))
+            .build(resolver, filesystem);
+    factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey unaffectedRuleKey = factory.newInstance(library).build();
+    assertThat(originalRuleKey, Matchers.equalTo(unaffectedRuleKey));
 
-    Hasher hasher = Hashing.sha1().newHasher();
-    hasher.putUnencodedChars(tinyLibAbiKeyHash);
-    hasher.putUnencodedChars(javaAbiRuleKeyHash);
-
-    assertEquals(
-        Sha1HashCode.of(hasher.hash().toString()),
-        ((AbiRule) defaultJavaLibary).getAbiKeyForDeps());
+    // Now actually modify the source, which should make the input-based rule key change.
+    resolver = new BuildRuleResolver();
+    genSrc =
+        GenruleBuilder.newGenruleBuilder(BuildTargetFactory.newInstance("//:gen_srcs"))
+            .setOut("Test.java")
+            .setCmd("something else")
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath("class Test2 {}", genSrc.getPathToOutput());
+    library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addSrc(new BuildTargetSourcePath(genSrc.getBuildTarget()))
+            .build(resolver, filesystem);
+    factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey affectedRuleKey = factory.newInstance(library).build();
+    assertThat(originalRuleKey, Matchers.not(Matchers.equalTo(affectedRuleKey)));
   }
 
   /**
-   * @see com.facebook.buck.rules.AbiRule#getAbiKeyForDeps()
+   * Tests that input-based rule keys work properly with simple Java library deps.
    */
   @Test
-  public void testGetAbiKeyForDepsInThePresenceOfExportedDeps() throws IOException {
-    // Create a java_library named //:tinylib with a hardcoded ABI key.
-    String tinyLibAbiKeyHash = Strings.repeat("a", 40);
-    BuildRule tinyLibrary = createDefaultJavaLibaryRuleWithAbiKey(
-        tinyLibAbiKeyHash,
-        BuildTargetFactory.newInstance("//:tinylib"),
-        // Must have a source file or else its ABI will be AbiWriterProtocol.EMPTY_ABI_KEY.
-        /* srcs */ ImmutableSet.of("foo/Bar.java"),
-        /* deps */ ImmutableSortedSet.<BuildRule>of(),
-        /* exportedDeps */ ImmutableSortedSet.<BuildRule>of());
+  public void testInputBasedRuleKeyWithJavaLibraryDep() throws IOException {
+    ProjectFilesystem filesystem = new FakeProjectFilesystem();
 
-    // Create two java_library rules, each of which depends on //:tinylib, but only one of which
-    // exports its deps.
-    String commonWithExportAbiKeyHash = Strings.repeat("b", 40);
-    BuildRule commonWithExport = createDefaultJavaLibaryRuleWithAbiKey(
-        commonWithExportAbiKeyHash,
-        BuildTargetFactory.newInstance("//:common_with_export"),
-        /* srcs */ ImmutableSet.<String>of(),
-        /* deps */ ImmutableSortedSet.of(tinyLibrary),
-        /* exportedDeps */ ImmutableSortedSet.of(tinyLibrary));
-    BuildRule commonNoExport = createDefaultJavaLibaryRuleWithAbiKey(
-        /* abiHash */ null,
-        BuildTargetFactory.newInstance("//:common_no_export"),
-        /* srcs */ ImmutableSet.<String>of(),
-        /* deps */ ImmutableSortedSet.of(tinyLibrary),
-        /* exportedDeps */ ImmutableSortedSet.<BuildRule>of());
+    // Setup a Java library which builds against another Java library dep.
+    BuildRuleResolver resolver = new BuildRuleResolver();
+    SourcePathResolver pathResolver = new SourcePathResolver(resolver);
+    JavaLibrary dep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep"))
+            .addSrc(Paths.get("Source.java"))
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath("JAR contents", dep.getPathToOutput());
+    filesystem.writeContentsToPath("ABI JAR contents", pathResolver.getPath(dep.getAbiJar().get()));
+    JavaLibrary library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addDep(dep.getBuildTarget())
+            .build(resolver, filesystem);
+    InputBasedRuleKeyBuilderFactory factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey originalRuleKey = factory.newInstance(library).build();
 
-    // Verify getAbiKeyForDeps() for the two //:common_XXX rules.
-    assertEquals(
-        "getAbiKeyForDeps() should be the same for both rules because they have the same deps.",
-        ((AbiRule) commonNoExport).getAbiKeyForDeps(),
-        ((AbiRule) commonWithExport).getAbiKeyForDeps());
-    String expectedAbiKeyForDepsHash = Hashing.sha1().newHasher()
-        .putUnencodedChars(tinyLibAbiKeyHash).hash().toString();
-    String observedAbiKeyForDepsHash =
-        ((AbiRule) commonNoExport).getAbiKeyForDeps().getHash();
-    assertEquals(expectedAbiKeyForDepsHash, observedAbiKeyForDepsHash);
+    // Now change the Java library dependency such that its rule key changes, and change its JAR
+    // contents, but keep its ABI JAR the same.  This should *not* affect the input-based rule key
+    // of the consuming java library, since it only cares about the contents of the ABI JAR.
+    resolver = new BuildRuleResolver();
+    dep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep"))
+            .addSrc(Paths.get("Source.java"))
+            .setResourcesRoot(Paths.get("some root that changes the rule key"))
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath("different JAR contents", dep.getPathToOutput());
+    library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addDep(dep.getBuildTarget())
+            .build(resolver, filesystem);
+    factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey unaffectedRuleKey = factory.newInstance(library).build();
+    assertThat(originalRuleKey, Matchers.equalTo(unaffectedRuleKey));
 
-    // Create a BuildRuleResolver populated with the three build rules we created thus far.
-    Map<BuildTarget, BuildRule> buildRuleIndex = Maps.newHashMap();
-    buildRuleIndex.put(tinyLibrary.getBuildTarget(), tinyLibrary);
-    buildRuleIndex.put(commonWithExport.getBuildTarget(), commonWithExport);
-    buildRuleIndex.put(commonNoExport.getBuildTarget(), commonNoExport);
-    BuildRuleResolver ruleResolver = new BuildRuleResolver(buildRuleIndex);
+    // Now actually change the Java library dependency's ABI JAR.  This *should* affect the
+    // input-based rule key of the consuming java library.
+    resolver = new BuildRuleResolver();
+    pathResolver = new SourcePathResolver(resolver);
+    dep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep"))
+            .addSrc(Paths.get("Source.java"))
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath(
+        "changed ABI JAR contents",
+        pathResolver.getPath(dep.getAbiJar().get()));
+    library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addDep(dep.getBuildTarget())
+            .build(resolver, filesystem);
+    factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey affectedRuleKey = factory.newInstance(library).build();
+    assertThat(originalRuleKey, Matchers.not(Matchers.equalTo(affectedRuleKey)));
+  }
 
-    // Create two rules, each of which depends on one of the //:common_XXX rules.
-    BuildRule consumerNoExport = JavaLibraryBuilder
-        .createBuilder(BuildTargetFactory.newInstance("//:consumer_no_export"))
-        .addDep(commonNoExport.getBuildTarget())
-        .build(ruleResolver);
-    BuildRule consumerWithExport = JavaLibraryBuilder
-        .createBuilder(BuildTargetFactory.newInstance("//:consumer_with_export"))
-        .addDep(commonWithExport.getBuildTarget())
-        .build(ruleResolver);
+  /**
+   * Tests that input-based rule keys work properly with a Java library dep exported by a
+   * first-order dep.
+   */
+  @Test
+  public void testInputBasedRuleKeyWithExportedDeps() throws IOException {
+    ProjectFilesystem filesystem = new FakeProjectFilesystem();
 
-    // Verify getAbiKeyForDeps() for the two //:consumer_XXX rules.
+    // Setup a Java library which builds against another Java library dep exporting another Java
+    // library dep.
+    BuildRuleResolver resolver = new BuildRuleResolver();
+    SourcePathResolver pathResolver = new SourcePathResolver(resolver);
+    JavaLibrary exportedDep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:edep"))
+            .addSrc(Paths.get("Source1.java"))
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath("JAR contents", exportedDep.getPathToOutput());
+    filesystem.writeContentsToPath(
+        "ABI JAR contents",
+        pathResolver.getPath(exportedDep.getAbiJar().get()));
+    JavaLibrary dep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep"))
+            .addExportedDep(exportedDep.getBuildTarget())
+            .build(resolver, filesystem);
+    JavaLibrary library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addDep(dep.getBuildTarget())
+            .build(resolver, filesystem);
+    InputBasedRuleKeyBuilderFactory factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey originalRuleKey = factory.newInstance(library).build();
 
-    // This differs from the EMPTY_ABI_KEY in that the value of that comes from the SHA1 of an empty
-    // jar file, whereas this is constructed from the empty set of values.
-    Sha1HashCode noAbiDeps = Sha1HashCode.of(Hashing.sha1().newHasher().hash().toString());
-    assertEquals(
-        "The ABI of the deps of //:consumer_no_export should be the empty ABI.",
-        noAbiDeps,
-        ((AbiRule) consumerNoExport).getAbiKeyForDeps());
-    assertThat(
-        "Although //:consumer_no_export and //:consumer_with_export have the same deps, " +
-        "the ABIs of their deps will differ because of the use of exported_deps is non-empty",
-        ((AbiRule) consumerNoExport).getAbiKeyForDeps(),
-        not(equalTo(((AbiRule) consumerWithExport).getAbiKeyForDeps())));
-    String expectedAbiKeyNoDepsHashForConsumerWithExport = Hashing.sha1().newHasher()
-        .putUnencodedChars(((HasJavaAbi) commonWithExport).getAbiKey().getHash())
-        .putUnencodedChars(tinyLibAbiKeyHash)
-        .hash()
-        .toString();
-    String observedAbiKeyNoDepsHashForConsumerWithExport =
-        ((AbiRule) consumerWithExport).getAbiKeyForDeps()
-        .getHash();
-    assertEquals(
-        "By hardcoding the ABI keys for the deps, we made getAbiKeyForDeps() a predictable value.",
-        expectedAbiKeyNoDepsHashForConsumerWithExport,
-        observedAbiKeyNoDepsHashForConsumerWithExport);
+    // Now change the exported Java library dependency such that its rule key changes, and change
+    // its JAR contents, but keep its ABI JAR the same.  This should *not* affect the input-based
+    // rule key of the consuming java library, since it only cares about the contents of the ABI
+    // JAR.
+    resolver = new BuildRuleResolver();
+    exportedDep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:edep"))
+            .addSrc(Paths.get("Source1.java"))
+            .setResourcesRoot(Paths.get("some root that changes the rule key"))
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath("different JAR contents", exportedDep.getPathToOutput());
+    dep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep"))
+            .addExportedDep(exportedDep.getBuildTarget())
+            .build(resolver, filesystem);
+    library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addDep(dep.getBuildTarget())
+            .build(resolver, filesystem);
+    factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey unaffectedRuleKey = factory.newInstance(library).build();
+    assertThat(originalRuleKey, Matchers.equalTo(unaffectedRuleKey));
+
+    // Now actually change the exproted Java library dependency's ABI JAR.  This *should* affect
+    // the input-based rule key of the consuming java library.
+    resolver = new BuildRuleResolver();
+    pathResolver = new SourcePathResolver(resolver);
+    exportedDep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:edep"))
+            .addSrc(Paths.get("Source1.java"))
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath(
+        "changed ABI JAR contents",
+        pathResolver.getPath(exportedDep.getAbiJar().get()));
+    dep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep"))
+            .addExportedDep(exportedDep.getBuildTarget())
+            .build(resolver, filesystem);
+    library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addDep(dep.getBuildTarget())
+            .build(resolver, filesystem);
+    factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey affectedRuleKey = factory.newInstance(library).build();
+    assertThat(originalRuleKey, Matchers.not(Matchers.equalTo(affectedRuleKey)));
+  }
+
+  /**
+   * Tests that input-based rule keys work properly with a Java library dep exported through
+   * multiple Java library dependencies.
+   */
+  @Test
+  public void testInputBasedRuleKeyWithRecursiveExportedDeps() throws IOException {
+    ProjectFilesystem filesystem = new FakeProjectFilesystem();
+
+    // Setup a Java library which builds against another Java library dep exporting another Java
+    // library dep.
+    BuildRuleResolver resolver = new BuildRuleResolver();
+    SourcePathResolver pathResolver = new SourcePathResolver(resolver);
+    JavaLibrary exportedDep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:edep"))
+            .addSrc(Paths.get("Source1.java"))
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath("JAR contents", exportedDep.getPathToOutput());
+    filesystem.writeContentsToPath(
+        "ABI JAR contents",
+        pathResolver.getPath(exportedDep.getAbiJar().get()));
+    JavaLibrary dep2 =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep2"))
+            .addExportedDep(exportedDep.getBuildTarget())
+            .build(resolver, filesystem);
+    JavaLibrary dep1 =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep1"))
+            .addExportedDep(dep2.getBuildTarget())
+            .build(resolver, filesystem);
+    JavaLibrary library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addDep(dep1.getBuildTarget())
+            .build(resolver, filesystem);
+    InputBasedRuleKeyBuilderFactory factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey originalRuleKey = factory.newInstance(library).build();
+
+    // Now change the exported Java library dependency such that its rule key changes, and change
+    // its JAR contents, but keep its ABI JAR the same.  This should *not* affect the input-based
+    // rule key of the consuming java library, since it only cares about the contents of the ABI
+    // JAR.
+    resolver = new BuildRuleResolver();
+    exportedDep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:edep"))
+            .addSrc(Paths.get("Source1.java"))
+            .setResourcesRoot(Paths.get("some root that changes the rule key"))
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath("different JAR contents", exportedDep.getPathToOutput());
+    dep2 =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep2"))
+            .addExportedDep(exportedDep.getBuildTarget())
+            .build(resolver, filesystem);
+    dep1 =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep1"))
+            .addExportedDep(dep2.getBuildTarget())
+            .build(resolver, filesystem);
+    library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addDep(dep1.getBuildTarget())
+            .build(resolver, filesystem);
+    factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey unaffectedRuleKey = factory.newInstance(library).build();
+    assertThat(originalRuleKey, Matchers.equalTo(unaffectedRuleKey));
+
+    // Now actually change the exproted Java library dependency's ABI JAR.  This *should* affect
+    // the input-based rule key of the consuming java library.
+    resolver = new BuildRuleResolver();
+    pathResolver = new SourcePathResolver(resolver);
+    exportedDep =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:edep"))
+            .addSrc(Paths.get("Source1.java"))
+            .build(resolver, filesystem);
+    filesystem.writeContentsToPath(
+        "changed ABI JAR contents",
+        pathResolver.getPath(exportedDep.getAbiJar().get()));
+    dep2 =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep2"))
+            .addExportedDep(exportedDep.getBuildTarget())
+            .build(resolver, filesystem);
+    dep1 =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:dep1"))
+            .addExportedDep(dep2.getBuildTarget())
+            .build(resolver, filesystem);
+    library =
+        (JavaLibrary) JavaLibraryBuilder.createBuilder(BuildTargetFactory.newInstance("//:lib"))
+            .addDep(dep1.getBuildTarget())
+            .build(resolver, filesystem);
+    factory =
+        new InputBasedRuleKeyBuilderFactory(
+            new DefaultFileHashCache(filesystem),
+            new SourcePathResolver(resolver));
+    RuleKey affectedRuleKey = factory.newInstance(library).build();
+    assertThat(originalRuleKey, Matchers.not(Matchers.equalTo(affectedRuleKey)));
   }
 
   /**
@@ -932,10 +1182,12 @@ public class DefaultJavaLibraryTest {
         /* postprocessClassesCommands */ ImmutableList.<String>of(),
         exportedDeps,
         /* providedDeps */ ImmutableSortedSet.<BuildRule>of(),
+        /* abiJar */ new TestSourcePath("abi.jar"),
         /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
         DEFAULT_JAVAC_OPTIONS,
         /* resourcesRoot */ Optional.<Path>absent(),
-        /* mavenCoords */ Optional.<String>absent()) {
+        /* mavenCoords */ Optional.<String>absent(),
+        /* tests */ ImmutableSortedSet.<BuildTarget>of()) {
       @Override
       public Sha1HashCode getAbiKey() {
         if (partialAbiHash == null) {
@@ -995,7 +1247,6 @@ public class DefaultJavaLibraryTest {
     Optional<JavacStep.SuggestBuildRules> suggestFn =
         ((DefaultJavaLibrary) grandparent).createSuggestBuildFunction(
             context,
-            transitive,
             /* declaredClasspathEntries */ ImmutableSetMultimap.<JavaLibrary, Path>of(),
             createJarResolver(classToSymbols));
 
@@ -1063,8 +1314,8 @@ public class DefaultJavaLibraryTest {
             FakeFileHashCache.createFromStrings(fileHashes.build()),
             pathResolver2);
 
-    RuleKey.Builder builder1 = ruleKeyBuilderFactory1.newInstance(rule1);
-    RuleKey.Builder builder2 = ruleKeyBuilderFactory2.newInstance(rule2);
+    RuleKeyBuilder builder1 = ruleKeyBuilderFactory1.newInstance(rule1);
+    RuleKeyBuilder builder2 = ruleKeyBuilderFactory2.newInstance(rule2);
     RuleKey key1 = builder1.build();
     RuleKey key2 = builder2.build();
     assertEquals(key1, key2);
@@ -1137,6 +1388,7 @@ public class DefaultJavaLibraryTest {
     ExecutionContext executionContext = EasyMock.createMock(ExecutionContext.class);
     ImmutableList.Builder<Step> commands = ImmutableList.builder();
     DefaultJavaLibrary.addPostprocessClassesCommands(
+        new FakeProjectFilesystem().getRootPath(),
         commands,
         postprocessClassesCommands,
         outputDirectory);
@@ -1220,7 +1472,6 @@ public class DefaultJavaLibraryTest {
     return ImmutableBuildContext.builder()
         .setActionGraph(RuleMap.createGraphFromSingleRule(javaLibrary))
         .setStepRunner(EasyMock.createMock(StepRunner.class))
-        .setProjectFilesystem(projectFilesystem)
         .setClock(new DefaultClock())
         .setBuildId(new BuildId())
         .setArtifactCache(new NoopArtifactCache())
@@ -1304,7 +1555,6 @@ public class DefaultJavaLibraryTest {
       JavacStep javacCommand = lastJavacCommand(steps);
 
       executionContext = TestExecutionContext.newBuilder()
-          .setProjectFilesystem(projectFilesystem)
           .setConsole(new Console(Verbosity.SILENT, System.out, System.err, Ansi.withoutTty()))
           .setDebugEnabled(true)
           .build();
@@ -1343,12 +1593,14 @@ public class DefaultJavaLibraryTest {
           /* postprocessClassesCommands */ ImmutableList.<String>of(),
           /* exportedDeps */ ImmutableSortedSet.<BuildRule>of(),
           /* providedDeps */ ImmutableSortedSet.<BuildRule>of(),
+          /* abiJar */ new TestSourcePath("abi.jar"),
           /* additionalClasspathEntries */ ImmutableSet.<Path>of(),
           options.build(),
           /* resourcesRoot */ Optional.<Path>absent(),
           /* mavenCoords */ Optional.<String>absent(),
           /* manifestFile */ Optional.<SourcePath>absent(),
-          /* isPrebuiltAar */ false);
+          /* isPrebuiltAar */ false,
+          /* tests */ ImmutableSortedSet.<BuildTarget>of());
     }
 
     private JavacStep lastJavacCommand(Iterable<Step> commands) {
@@ -1364,17 +1616,4 @@ public class DefaultJavaLibraryTest {
     }
   }
 
-  private static class FakeJavaAbiRule extends FakeBuildRule implements HasJavaAbi {
-    private final String abiKeyHash;
-
-    public FakeJavaAbiRule(BuildTarget buildTarget, String abiKeyHash) {
-      super(buildTarget, new SourcePathResolver(new BuildRuleResolver()));
-      this.abiKeyHash = abiKeyHash;
-    }
-
-    @Override
-    public Sha1HashCode getAbiKey() {
-      return Sha1HashCode.of(abiKeyHash);
-    }
-  }
 }

@@ -18,6 +18,7 @@ package com.facebook.buck.java;
 
 import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.log.Logger;
+import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargets;
 import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
@@ -35,9 +36,9 @@ import com.facebook.buck.step.fs.MakeCleanDirectoryStep;
 import com.facebook.buck.test.TestCaseSummary;
 import com.facebook.buck.test.TestResultSummary;
 import com.facebook.buck.test.TestResults;
+import com.facebook.buck.test.TestRunningOptions;
 import com.facebook.buck.test.XmlTestResultParser;
 import com.facebook.buck.test.result.type.ResultType;
-import com.facebook.buck.test.selectors.TestSelectorList;
 import com.facebook.buck.util.BuckConstant;
 import com.facebook.buck.util.ZipFileTraversal;
 import com.google.common.annotations.VisibleForTesting;
@@ -86,7 +87,7 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
 
   private final ImmutableSet<String> contacts;
 
-  @AddToRuleKey
+  @AddToRuleKey(stringify = true)
   private ImmutableSet<BuildRule> sourceUnderTest;
 
   private final ImmutableSet<Path> additionalClasspathEntries;
@@ -109,6 +110,8 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
   @AddToRuleKey
   private final boolean runTestSeparately;
 
+  private final Optional<Path> testTempDirOverride;
+
   protected JavaTest(
       BuildRuleParams params,
       SourcePathResolver resolver,
@@ -117,6 +120,7 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
       Set<Label> labels,
       Set<String> contacts,
       Optional<SourcePath> proguardConfig,
+      SourcePath abiJar,
       ImmutableSet<Path> addtionalClasspathEntries,
       TestType testType,
       JavacOptions javacOptions,
@@ -128,7 +132,8 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
       Optional<Long> testRuleTimeoutMs,
       boolean runTestSeparately,
       Optional<Level> stdOutLogLevel,
-      Optional<Level> stdErrLogLevel) {
+      Optional<Level> stdErrLogLevel,
+      Optional<Path> testTempDirOverride) {
     super(
         params,
         resolver,
@@ -138,10 +143,12 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
         ImmutableList.<String>of(),
         /* exportDeps */ ImmutableSortedSet.<BuildRule>of(),
         /* providedDeps */ ImmutableSortedSet.<BuildRule>of(),
+        abiJar,
         addtionalClasspathEntries,
         javacOptions,
         resourcesRoot,
-        mavenCoords);
+        mavenCoords,
+        /* tests */ ImmutableSortedSet.<BuildTarget>of());
     this.vmArgs = ImmutableList.copyOf(vmArgs);
     this.nativeLibsEnvironment = ImmutableMap.copyOf(nativeLibsEnvironment);
     this.sourceUnderTest = sourceUnderTest;
@@ -153,6 +160,7 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
     this.runTestSeparately = runTestSeparately;
     this.stdOutLogLevel = stdOutLogLevel;
     this.stdErrLogLevel = stdErrLogLevel;
+    this.testTempDirOverride = testTempDirOverride;
   }
 
   @Override
@@ -188,9 +196,7 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
   public ImmutableList<Step> runTests(
       BuildContext buildContext,
       ExecutionContext executionContext,
-      boolean isDryRun,
-      boolean isShufflingTests,
-      TestSelectorList testSelectorList,
+      TestRunningOptions options,
       TestRule.TestReportingCallback testReportingCallback) {
     // If no classes were generated, then this is probably a java_test() that declares a number of
     // other java_test() rules as deps, functioning as a test suite. In this case, simply return an
@@ -201,14 +207,15 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
       return ImmutableList.of();
     }
 
-    Iterable<String> reorderedTestClasses = reorderClasses(testClassNames, isShufflingTests);
+    Iterable<String> reorderedTestClasses =
+        reorderClasses(testClassNames, options.isShufflingTests());
 
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
 
     Path pathToTestOutput = getPathToTestOutputDirectory();
     Path tmpDirectory = getPathToTmpDirectory();
-    steps.add(new MakeCleanDirectoryStep(pathToTestOutput));
-    steps.add(new MakeCleanDirectoryStep(tmpDirectory));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), pathToTestOutput));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), tmpDirectory));
 
     ImmutableSet<Path> classpathEntries = ImmutableSet.<Path>builder()
         .addAll(getTransitiveClasspathEntries().values())
@@ -221,6 +228,7 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
         executionContext.getTargetDeviceOptional());
 
     junit = new JUnitStep(
+        getProjectFilesystem(),
         classpathEntries,
         reorderedTestClasses,
         properVmArgs,
@@ -231,12 +239,13 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
         executionContext.isCodeCoverageEnabled(),
         executionContext.isDebugEnabled(),
         executionContext.getBuckEventBus().getBuildId(),
-        testSelectorList,
-        isDryRun,
+        options.getTestSelectorList(),
+        options.isDryRun(),
         testType,
         testRuleTimeoutMs,
         stdOutLogLevel,
-        stdErrLogLevel
+        stdErrLogLevel,
+        options.getPathToJavaAgent()
     );
     steps.add(junit);
 
@@ -332,7 +341,19 @@ public class JavaTest extends DefaultJavaLibrary implements TestRule, HasRuntime
   }
 
   private Path getPathToTmpDirectory() {
-    Path base = BuildTargets.getScratchPath(getBuildTarget(), "__java_test_%s_tmp__");
+    Path base;
+    if (testTempDirOverride.isPresent()) {
+      base = testTempDirOverride.get()
+          .resolve(getBuildTarget().getBasePath())
+          .resolve(
+              String.format(
+                  "__java_test_%s_tmp__",
+                  getBuildTarget().getShortNameAndFlavorPostfix()));
+      LOG.debug("Using overridden test temp dir base %s", base);
+    } else {
+      base = BuildTargets.getScratchPath(getBuildTarget(), "__java_test_%s_tmp__");
+      LOG.debug("Using standard test temp dir base %s", base);
+    }
     String subdir = BuckConstant.oneTimeTestSubdirectory;
     if (subdir != null && !subdir.isEmpty()) {
       base = base.resolve(subdir);

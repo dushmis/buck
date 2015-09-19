@@ -28,8 +28,8 @@ import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyAppendable;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.step.AbstractExecutionStep;
@@ -104,6 +104,14 @@ public class CopyNativeLibraries extends AbstractBuildRule implements RuleKeyApp
 
   public Path getPathToNativeLibsAssetsDir() { return getBinPath().resolve("assetLibs"); }
 
+  /**
+   * Returns the path that is the immediate parent of {@link #getPathToNativeLibsAssetsDir()} and
+   * {@link #getPathToNativeLibsDir()}.
+   */
+  public Path getPathToAllLibsDir() {
+    return getBinPath();
+  }
+
   public Path getPathToMetadataTxt() {
     return getBinPath().resolve("metadata.txt");
   }
@@ -123,7 +131,7 @@ public class CopyNativeLibraries extends AbstractBuildRule implements RuleKeyApp
   }
 
   @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+  public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
     // Hash in the pre-filtered native libraries we're pulling in.
     ImmutableSortedMap<Pair<TargetCpuType, String>, SourcePath> sortedLibs =
         ImmutableSortedMap.<Pair<TargetCpuType, String>, SourcePath>orderedBy(
@@ -156,9 +164,10 @@ public class CopyNativeLibraries extends AbstractBuildRule implements RuleKeyApp
               .resolve(entry.getKey().getSecond());
       NdkCxxPlatform platform =
           Preconditions.checkNotNull(nativePlatforms.get(entry.getKey().getFirst()));
-      steps.add(new MkdirStep(destination.getParent()));
+      steps.add(new MkdirStep(getProjectFilesystem(), destination.getParent()));
       steps.add(
           new StripStep(
+              getProjectFilesystem().getRootPath(),
               platform.getCxxPlatform().getStrip().getCommandPrefix(getResolver()),
               ImmutableList.of("--strip-unneeded"),
               getResolver().getPath(entry.getValue()),
@@ -172,11 +181,13 @@ public class CopyNativeLibraries extends AbstractBuildRule implements RuleKeyApp
       BuildableContext buildableContext) {
     ImmutableList.Builder<Step> steps = ImmutableList.builder();
 
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), getBinPath()));
+
     final Path pathToNativeLibs = getPathToNativeLibsDir();
-    steps.add(new MakeCleanDirectoryStep(pathToNativeLibs));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), pathToNativeLibs));
 
     final Path pathToNativeLibsAssets = getPathToNativeLibsAssetsDir();
-    steps.add(new MakeCleanDirectoryStep(pathToNativeLibsAssets));
+    steps.add(new MakeCleanDirectoryStep(getProjectFilesystem(), pathToNativeLibsAssets));
 
     for (SourcePath nativeLibDir : nativeLibDirectories.asList().reverse()) {
       copyNativeLibrary(
@@ -198,18 +209,12 @@ public class CopyNativeLibraries extends AbstractBuildRule implements RuleKeyApp
         new AbstractExecutionStep("hash_native_libs") {
           @Override
           public int execute(ExecutionContext context) {
-            ProjectFilesystem filesystem = context.getProjectFilesystem();
+            ProjectFilesystem filesystem = getProjectFilesystem();
             ImmutableList.Builder<String> metadataLines = ImmutableList.builder();
             try {
-              for (Path nativeLib : filesystem.getFilesUnderPath(pathToNativeLibs)) {
+              for (Path nativeLib : filesystem.getFilesUnderPath(getPathToAllLibsDir())) {
                 String filesha1 = filesystem.computeSha1(nativeLib);
-                Path relativePath = pathToNativeLibs.relativize(nativeLib);
-                metadataLines.add(String.format("%s %s", relativePath.toString(), filesha1));
-              }
-
-              for (Path nativeLib : filesystem.getFilesUnderPath(pathToNativeLibsAssets)) {
-                String filesha1 = filesystem.computeSha1(nativeLib);
-                Path relativePath = pathToNativeLibsAssets.relativize(nativeLib);
+                Path relativePath = getPathToAllLibsDir().relativize(nativeLib);
                 metadataLines.add(String.format("%s %s", relativePath.toString(), filesha1));
               }
               filesystem.writeLinesToPath(metadataLines.build(), pathToMetadataTxt);
@@ -244,6 +249,7 @@ public class CopyNativeLibraries extends AbstractBuildRule implements RuleKeyApp
     if (cpuFilters.isEmpty()) {
       steps.add(
           CopyStep.forDirectory(
+              filesystem,
               sourceDir,
               destinationDir,
               CopyStep.DirectoryMode.CONTENTS_ONLY));
@@ -255,8 +261,9 @@ public class CopyNativeLibraries extends AbstractBuildRule implements RuleKeyApp
         final Path libSourceDir = sourceDir.resolve(abiDirectoryComponent.get());
         Path libDestinationDir = destinationDir.resolve(abiDirectoryComponent.get());
 
-        final MkdirStep mkDirStep = new MkdirStep(libDestinationDir);
+        final MkdirStep mkDirStep = new MkdirStep(filesystem, libDestinationDir);
         final CopyStep copyStep = CopyStep.forDirectory(
+            filesystem,
             libSourceDir,
             libDestinationDir,
             CopyStep.DirectoryMode.CONTENTS_ONLY);
@@ -300,8 +307,6 @@ public class CopyNativeLibraries extends AbstractBuildRule implements RuleKeyApp
         new AbstractExecutionStep("rename_native_executables") {
           @Override
           public int execute(ExecutionContext context) {
-
-            ProjectFilesystem filesystem = context.getProjectFilesystem();
             final ImmutableSet.Builder<Path> executablesBuilder = ImmutableSet.builder();
             try {
               filesystem.walkRelativeFileTree(destinationDir, new SimpleFileVisitor<Path>() {

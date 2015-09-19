@@ -22,9 +22,9 @@ import com.facebook.buck.io.ProjectFilesystem;
 import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.BuildRule;
-import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.CommandTool;
+import com.facebook.buck.rules.FakeBuildRuleParamsBuilder;
 import com.facebook.buck.rules.Label;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TestSourcePath;
@@ -36,6 +36,7 @@ import com.facebook.buck.testutil.integration.ProjectWorkspace;
 import com.facebook.buck.testutil.integration.TestDataHelper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -71,23 +72,22 @@ public class CxxBoostTestTest {
 
     BuildTarget target = BuildTargetFactory.newInstance("//:test");
     CxxBoostTest test = new CxxBoostTest(
-        BuildRuleParamsFactory.createTrivialBuildRuleParams(target),
+        new FakeBuildRuleParamsBuilder(target)
+            .setProjectFilesystem(new ProjectFilesystem(tmp.getRoot().toPath()))
+            .build(),
         new SourcePathResolver(new BuildRuleResolver()),
         new CommandTool.Builder()
             .addArg(new TestSourcePath(""))
             .build(),
-        ImmutableMap.<String, String>of(),
-        ImmutableSortedSet.<BuildRule>of(),
+        Suppliers.ofInstance(ImmutableMap.<String, String>of()),
+        Suppliers.ofInstance(ImmutableList.<String>of()),
+        Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of()),
         ImmutableSet.<Label>of(),
         ImmutableSet.<String>of(),
         ImmutableSet.<BuildRule>of(),
         /* runTestSeparately */ false);
 
-    ExecutionContext context =
-        TestExecutionContext.newBuilder()
-            .setProjectFilesystem(
-                new ProjectFilesystem(tmp.getRoot().toPath()))
-            .build();
+    ExecutionContext context = TestExecutionContext.newInstance();
 
     for (String sample : samples) {
       Path exitCode = Paths.get("unused");

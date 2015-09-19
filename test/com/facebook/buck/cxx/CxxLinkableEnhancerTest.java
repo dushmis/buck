@@ -29,7 +29,6 @@ import com.facebook.buck.model.BuildTarget;
 import com.facebook.buck.model.BuildTargetFactory;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleParams;
-import com.facebook.buck.rules.BuildRuleParamsFactory;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.BuildTargetSourcePath;
 import com.facebook.buck.rules.FakeBuildRule;
@@ -48,6 +47,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 
+import org.hamcrest.Matchers;
 import org.junit.Test;
 
 import java.nio.file.Path;
@@ -121,7 +121,7 @@ public class CxxLinkableEnhancerTest {
   public void testThatBuildTargetSourcePathDepsAndPathsArePropagated() {
     BuildRuleResolver resolver = new BuildRuleResolver();
     BuildTarget target = BuildTargetFactory.newInstance("//foo:bar");
-    BuildRuleParams params = BuildRuleParamsFactory.createTrivialBuildRuleParams(target);
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder(target).build();
 
     // Create a couple of genrules to generate inputs for an archive rule.
     Genrule genrule1 = (Genrule) GenruleBuilder
@@ -148,6 +148,7 @@ public class CxxLinkableEnhancerTest {
             new TestSourcePath("simple.o"),
             new BuildTargetSourcePath(genrule1.getBuildTarget()),
             new BuildTargetSourcePath(genrule2.getBuildTarget())),
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         EMPTY_DEPS,
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -161,6 +162,54 @@ public class CxxLinkableEnhancerTest {
         cxxLink.getDeps());
   }
 
+
+  @Test
+  public void testThatExtraInpusDoNotContributeToArgs() {
+    BuildRuleResolver resolver = new BuildRuleResolver();
+    BuildTarget target = BuildTargetFactory.newInstance("//foo:bar");
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder(target).build();
+
+    // Create a couple of genrules to generate inputs for an archive rule.
+    Genrule genrule = (Genrule) GenruleBuilder
+        .newGenruleBuilder(BuildTargetFactory.newInstance("//:genrule"))
+        .setOut("foo/bar.o")
+        .build(resolver);
+
+    // Build the archive using a normal input the outputs of the genrules above.
+    CxxLink cxxLink = CxxLinkableEnhancer.createCxxLinkableBuildRule(
+        TargetGraph.EMPTY,
+        CXX_PLATFORM,
+        params,
+        new SourcePathResolver(resolver),
+        /* extraLdFlags */ ImmutableList.<String>of(),
+        target,
+        Linker.LinkType.EXECUTABLE,
+        Optional.<String>absent(),
+        DEFAULT_OUTPUT,
+        /* inputs */ ImmutableList.<SourcePath>of(),
+        /* extraInputs */ ImmutableList.<SourcePath>of(
+            new TestSourcePath("something"),
+            new BuildTargetSourcePath(genrule.getBuildTarget())),
+        Linker.LinkableDepType.STATIC,
+        EMPTY_DEPS,
+        Optional.<Linker.CxxRuntimeType>absent(),
+        Optional.<SourcePath>absent(),
+        ImmutableSet.<BuildRule>of());
+
+    // Verify that extra inputs did not get added to args.
+    assertThat(
+        cxxLink.getArgs(),
+        Matchers.not(hasItem("something")));
+
+    // But it should contain the deps from them and the inputs.
+    assertThat(
+        cxxLink.getDeps(),
+        hasItem(genrule));
+    assertThat(
+        cxxLink.getInputs(),
+        hasItem(new BuildTargetSourcePath(genrule.getBuildTarget())));
+  }
+
   @Test
   public void testThatOriginalBuildParamsDepsDoNotPropagateToArchive() {
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
@@ -170,8 +219,8 @@ public class CxxLinkableEnhancerTest {
     // propagate to the `Archive` rule, since it only cares about dependencies generating
     // it's immediate inputs.
     BuildRule dep = new FakeBuildRule(
-        BuildRuleParamsFactory.createTrivialBuildRuleParams(
-            BuildTargetFactory.newInstance("//:fake")), pathResolver);
+        new FakeBuildRuleParamsBuilder("//:fake").build(),
+        pathResolver);
     BuildTarget target = BuildTargetFactory.newInstance("//:archive");
     BuildRuleParams params =
         new FakeBuildRuleParamsBuilder(BuildTargetFactory.newInstance("//:dummy"))
@@ -188,6 +237,7 @@ public class CxxLinkableEnhancerTest {
         Optional.<String>absent(),
         DEFAULT_OUTPUT,
         DEFAULT_INPUTS,
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         EMPTY_DEPS,
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -203,7 +253,7 @@ public class CxxLinkableEnhancerTest {
     BuildRuleResolver resolver = new BuildRuleResolver();
     SourcePathResolver pathResolver = new SourcePathResolver(resolver);
     BuildTarget target = BuildTargetFactory.newInstance("//foo:bar");
-    BuildRuleParams params = BuildRuleParamsFactory.createTrivialBuildRuleParams(target);
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder(target).build();
 
     // Create a dummy build rule and add it to the resolver.
     BuildTarget fakeBuildTarget = BuildTargetFactory.newInstance("//:fake");
@@ -237,6 +287,7 @@ public class CxxLinkableEnhancerTest {
         Optional.<String>absent(),
         DEFAULT_OUTPUT,
         DEFAULT_INPUTS,
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         ImmutableSortedSet.<BuildRule>of(nativeLinkable),
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -251,7 +302,7 @@ public class CxxLinkableEnhancerTest {
   public void createCxxLinkableBuildRuleExecutableVsShared() {
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
     BuildTarget target = BuildTargetFactory.newInstance("//foo:bar");
-    BuildRuleParams params = BuildRuleParamsFactory.createTrivialBuildRuleParams(target);
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder(target).build();
 
     String soname = "soname";
     ImmutableList<String> sonameArgs =
@@ -269,6 +320,7 @@ public class CxxLinkableEnhancerTest {
         Optional.<String>absent(),
         DEFAULT_OUTPUT,
         DEFAULT_INPUTS,
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         ImmutableSortedSet.<BuildRule>of(),
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -289,6 +341,7 @@ public class CxxLinkableEnhancerTest {
         Optional.<String>absent(),
         DEFAULT_OUTPUT,
         DEFAULT_INPUTS,
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         ImmutableSortedSet.<BuildRule>of(),
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -309,6 +362,7 @@ public class CxxLinkableEnhancerTest {
         Optional.of("soname"),
         DEFAULT_OUTPUT,
         DEFAULT_INPUTS,
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         ImmutableSortedSet.<BuildRule>of(),
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -322,7 +376,7 @@ public class CxxLinkableEnhancerTest {
   public void createCxxLinkableBuildRuleStaticVsSharedDeps() {
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
     BuildTarget target = BuildTargetFactory.newInstance("//foo:bar");
-    BuildRuleParams params = BuildRuleParamsFactory.createTrivialBuildRuleParams(target);
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder(target).build();
 
     // Create a native linkable dep and have it list the fake build rule above as a link
     // time dependency
@@ -354,6 +408,7 @@ public class CxxLinkableEnhancerTest {
         Optional.<String>absent(),
         DEFAULT_OUTPUT,
         DEFAULT_INPUTS,
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         ImmutableSortedSet.<BuildRule>of(nativeLinkable),
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -376,6 +431,7 @@ public class CxxLinkableEnhancerTest {
         Optional.<String>absent(),
         DEFAULT_OUTPUT,
         DEFAULT_INPUTS,
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.SHARED,
         ImmutableSortedSet.<BuildRule>of(nativeLinkable),
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -396,7 +452,7 @@ public class CxxLinkableEnhancerTest {
         .build();
     BuildTarget target = BuildTargetFactory.newInstance("//foo:bar");
     SourcePathResolver pathResolver = new SourcePathResolver(new BuildRuleResolver());
-    BuildRuleParams params = BuildRuleParamsFactory.createTrivialBuildRuleParams(target);
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder(target).build();
 
     ImmutableList<Optional<Linker.CxxRuntimeType>> runtimeTypes =
         ImmutableList.of(
@@ -422,6 +478,7 @@ public class CxxLinkableEnhancerTest {
           Optional.<String>absent(),
           DEFAULT_OUTPUT,
           DEFAULT_INPUTS,
+          /* extraInputs */ ImmutableList.<SourcePath>of(),
           Linker.LinkableDepType.SHARED,
           ImmutableSortedSet.<BuildRule>of(),
           runtimeTypes.get(i),
@@ -478,7 +535,7 @@ public class CxxLinkableEnhancerTest {
   public void machOBundleWithBundleLoaderHasExpectedArgs() {
     BuildRuleResolver resolver = new BuildRuleResolver();
     BuildTarget target = BuildTargetFactory.newInstance("//foo:bar");
-    BuildRuleParams params = BuildRuleParamsFactory.createTrivialBuildRuleParams(target);
+    BuildRuleParams params = new FakeBuildRuleParamsBuilder(target).build();
     CxxLink cxxLink = CxxLinkableEnhancer.createCxxLinkableBuildRule(
         TargetGraph.EMPTY,
         CXX_PLATFORM,
@@ -490,6 +547,7 @@ public class CxxLinkableEnhancerTest {
         Optional.<String>absent(),
         DEFAULT_OUTPUT,
         ImmutableList.<SourcePath>of(new TestSourcePath("simple.o")),
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         EMPTY_DEPS,
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -508,8 +566,7 @@ public class CxxLinkableEnhancerTest {
     BuildRuleResolver resolver = new BuildRuleResolver();
 
     BuildTarget bundleLoaderTarget = BuildTargetFactory.newInstance("//foo:bundleLoader");
-    BuildRuleParams bundleLoaderParams = BuildRuleParamsFactory.createTrivialBuildRuleParams(
-        bundleLoaderTarget);
+    BuildRuleParams bundleLoaderParams = new FakeBuildRuleParamsBuilder(bundleLoaderTarget).build();
     CxxLink bundleLoaderRule = CxxLinkableEnhancer.createCxxLinkableBuildRule(
         TargetGraph.EMPTY,
         CXX_PLATFORM,
@@ -521,6 +578,7 @@ public class CxxLinkableEnhancerTest {
         Optional.<String>absent(),
         DEFAULT_OUTPUT,
         ImmutableList.<SourcePath>of(new TestSourcePath("simple.o")),
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         EMPTY_DEPS,
         Optional.<Linker.CxxRuntimeType>absent(),
@@ -529,8 +587,7 @@ public class CxxLinkableEnhancerTest {
     resolver.addToIndex(bundleLoaderRule);
 
     BuildTarget bundleTarget = BuildTargetFactory.newInstance("//foo:bundle");
-    BuildRuleParams bundleParams = BuildRuleParamsFactory.createTrivialBuildRuleParams(
-        bundleTarget);
+    BuildRuleParams bundleParams = new FakeBuildRuleParamsBuilder(bundleTarget).build();
     CxxLink bundleRule = CxxLinkableEnhancer.createCxxLinkableBuildRule(
         TargetGraph.EMPTY,
         CXX_PLATFORM,
@@ -542,6 +599,7 @@ public class CxxLinkableEnhancerTest {
         Optional.<String>absent(),
         DEFAULT_OUTPUT,
         ImmutableList.<SourcePath>of(new TestSourcePath("another.o")),
+        /* extraInputs */ ImmutableList.<SourcePath>of(),
         Linker.LinkableDepType.STATIC,
         EMPTY_DEPS,
         Optional.<Linker.CxxRuntimeType>absent(),

@@ -23,6 +23,7 @@ import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.environment.EnvironmentFilter;
 import com.facebook.buck.util.environment.Platform;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Splitter;
 import com.google.common.collect.FluentIterable;
@@ -58,6 +59,13 @@ public class ExecutableFinder {
           ".vbs",
           ".wsf",
           ".wsh");
+  // Avoid using MorePaths.TO_PATH because of circular deps in this package
+  private static final Function<String, Path> TO_PATH = new Function<String, Path>() {
+    @Override
+    public Path apply(String path) {
+      return Paths.get(path);
+    }
+  };
 
   private final Platform platform;
 
@@ -120,7 +128,7 @@ public class ExecutableFinder {
       ImmutableCollection<Path> searchPath,
       ImmutableCollection<String> fileSuffixes) {
     // Fast path out of here.
-    if (Files.exists(suggestedPath) && Files.isExecutable(suggestedPath)) {
+    if (isExecutable(suggestedPath)) {
       return suggestedPath;
     }
 
@@ -132,15 +140,30 @@ public class ExecutableFinder {
     for (Path path : searchPath) {
       for (String suffix : fileSuffixes) {
         Path exe = path.resolve(path).resolve(suggestedPath + suffix);
-        if (Files.exists(exe) && !Files.isDirectory(exe)) {
-          if (Files.isExecutable(exe)) {
-            return exe;
-          }
-          LOG.debug("Found potential executable, but not actually executable: %s", exe);
+        if (isExecutable(exe)) {
+          return exe;
         }
       }
     }
     return null;
+  }
+
+  private boolean isExecutable(Path exe) {
+    if (!Files.exists(exe)) {
+      return false;
+    }
+
+    if (Files.isDirectory(exe)) {
+      LOG.debug("Found potential executable, but is a directory: %s", exe);
+      return false;
+    }
+
+    if (!Files.isExecutable(exe)) {
+      LOG.debug("Found potential executable, but not actually executable: %s", exe);
+      return false;
+    }
+
+    return true;
   }
 
   private ImmutableSet<Path> getPaths(ImmutableMap<String, String> env) {
@@ -154,7 +177,7 @@ public class ExecutableFinder {
     if (pathEnv != null) {
       paths.addAll(
           FluentIterable.from(Splitter.on(pathSeparator).omitEmptyStrings().split(pathEnv))
-              .transform(MorePaths.TO_PATH));
+              .transform(TO_PATH));
     }
 
     if (platform == Platform.MACOS) {
@@ -163,7 +186,7 @@ public class ExecutableFinder {
         try {
           paths.addAll(
               FluentIterable.from(Files.readAllLines(osXPaths, Charset.defaultCharset()))
-                  .transform(MorePaths.TO_PATH));
+                  .transform(TO_PATH));
         } catch (IOException e) {
           LOG.warn("Unable to read mac-specific paths. Skipping");
         }

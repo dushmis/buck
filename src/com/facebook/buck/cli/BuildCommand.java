@@ -17,6 +17,8 @@
 package com.facebook.buck.cli;
 
 import com.facebook.buck.android.AndroidPlatformTarget;
+import com.facebook.buck.artifact_cache.ArtifactCache;
+import com.facebook.buck.artifact_cache.NoopArtifactCache;
 import com.facebook.buck.command.Build;
 import com.facebook.buck.event.BuckEventBus;
 import com.facebook.buck.io.ProjectFilesystem;
@@ -29,23 +31,18 @@ import com.facebook.buck.parser.BuildTargetParser;
 import com.facebook.buck.parser.BuildTargetPatternParser;
 import com.facebook.buck.parser.ParserConfig;
 import com.facebook.buck.rules.ActionGraph;
-import com.facebook.buck.rules.ArtifactCache;
 import com.facebook.buck.rules.BuildEngine;
 import com.facebook.buck.rules.BuildEvent;
 import com.facebook.buck.rules.BuildRule;
 import com.facebook.buck.rules.BuildRuleResolver;
 import com.facebook.buck.rules.CachingBuildEngine;
-import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.rules.TargetGraph;
 import com.facebook.buck.rules.TargetGraphToActionGraph;
-import com.facebook.buck.rules.keys.DependencyFileRuleKeyBuilderFactory;
-import com.facebook.buck.rules.keys.InputBasedRuleKeyBuilderFactory;
 import com.facebook.buck.step.AdbOptions;
 import com.facebook.buck.step.TargetDevice;
 import com.facebook.buck.step.TargetDeviceOptions;
 import com.facebook.buck.timing.Clock;
 import com.facebook.buck.util.Console;
-import com.facebook.buck.util.HumanReadableException;
 import com.facebook.buck.util.Verbosity;
 import com.facebook.buck.util.concurrent.ConcurrencyLimit;
 import com.facebook.buck.util.environment.Platform;
@@ -73,17 +70,12 @@ import javax.annotation.Nullable;
 
 public class BuildCommand extends AbstractCommand {
 
-  private static final String NUM_THREADS_LONG_ARG = "--num-threads";
   private static final String KEEP_GOING_LONG_ARG = "--keep-going";
   private static final String BUILD_REPORT_LONG_ARG = "--build-report";
   private static final String LOAD_LIMIT_LONG_ARG = "--load-limit";
   private static final String JUST_BUILD_LONG_ARG = "--just-build";
   private static final String DEEP_LONG_ARG = "--deep";
   private static final String SHALLOW_LONG_ARG = "--shallow";
-
-  @Option(name = NUM_THREADS_LONG_ARG, aliases = "-j", usage = "Default is 1.25 * num processors.")
-  @Nullable
-  private Integer numThreads = null;
 
   @Option(
       name = KEEP_GOING_LONG_ARG,
@@ -138,6 +130,7 @@ public class BuildCommand extends AbstractCommand {
     this.arguments = arguments;
   }
 
+  private boolean isArtifactCacheDisabled = false;
 
   public boolean isCodeCoverageEnabled() {
     return false;
@@ -158,24 +151,12 @@ public class BuildCommand extends AbstractCommand {
     return mode;
   }
 
+  public void setArtifactCacheDisabled(boolean value) {
+    isArtifactCacheDisabled = value;
+  }
 
-  int getNumThreads(BuckConfig buckConfig) {
-    if (numThreads == null) {
-      ImmutableMap<String, String> build = buckConfig.getEntriesForSection("build");
-      if (build.containsKey("threads")) {
-        try {
-          numThreads = Integer.parseInt(build.get("threads"));
-        } catch (NumberFormatException e) {
-          throw new HumanReadableException(
-              e,
-              "Unable to determine number of threads to use from building from buck config file. " +
-                  "Value used was '%s'", build.get("threads"));
-        }
-      } else {
-        numThreads = (int) (Runtime.getRuntime().availableProcessors() * 1.25);
-      }
-    }
-    return numThreads;
+  public boolean isArtifactCacheDisabled() {
+    return isArtifactCacheDisabled;
   }
 
   public boolean isKeepGoing() {
@@ -186,27 +167,8 @@ public class BuildCommand extends AbstractCommand {
     this.keepGoing = keepGoing;
   }
 
-  public double getLoadLimit(BuckConfig buckConfig) {
-    if (loadLimit == null) {
-      ImmutableMap<String, String> build = buckConfig.getEntriesForSection("build");
-      if (build.containsKey("load_limit")) {
-        try {
-          loadLimit = Double.parseDouble(build.get("load_limit"));
-        } catch (NumberFormatException e) {
-          throw new HumanReadableException(
-              e,
-              "Unable to determine load limit to use from building from buck config file. " +
-                  "Value used was '%s'", build.get("load_limit"));
-        }
-      } else {
-        loadLimit = Double.POSITIVE_INFINITY;
-      }
-    }
-    return loadLimit;
-  }
-
   public ConcurrencyLimit getConcurrencyLimit(BuckConfig buckConfig) {
-    return new ConcurrencyLimit(getNumThreads(buckConfig), getLoadLimit(buckConfig));
+    return new ConcurrencyLimit(buckConfig.getNumThreads(), buckConfig.getLoadLimit());
   }
 
   /**
@@ -220,7 +182,6 @@ public class BuildCommand extends AbstractCommand {
   Build createBuild(
       BuckConfig buckConfig,
       ActionGraph graph,
-      ProjectFilesystem projectFilesystem,
       Supplier<AndroidPlatformTarget> androidPlatformTargetSupplier,
       BuildEngine buildEngine,
       ArtifactCache artifactCache,
@@ -234,12 +195,11 @@ public class BuildCommand extends AbstractCommand {
       Optional<AdbOptions> adbOptions,
       Optional<TargetDeviceOptions> targetDeviceOptions) {
     if (console.getVerbosity() == Verbosity.ALL) {
-      console.getStdErr().printf("Creating a build with %d threads.\n", numThreads);
+      console.getStdErr().printf("Creating a build with %d threads.\n", buckConfig.getNumThreads());
     }
     return new Build(
         graph,
         targetDevice,
-        projectFilesystem,
         androidPlatformTargetSupplier,
         buildEngine,
         artifactCache,
@@ -265,7 +225,15 @@ public class BuildCommand extends AbstractCommand {
   @Override
   @SuppressWarnings("PMD.PrematureDeclaration")
   public int runWithoutHelp(CommandRunnerParams params) throws IOException, InterruptedException {
-    ArtifactCache artifactCache = getArtifactCache(params);
+    return run(params, Optional.<String>absent());
+  }
+
+  protected int run(CommandRunnerParams params, Optional<String> additionalTarget)
+      throws IOException, InterruptedException {
+    ArtifactCache artifactCache = params.getArtifactCache();
+    if (isArtifactCacheDisabled()) {
+      artifactCache = new NoopArtifactCache();
+    }
 
     if (getArguments().isEmpty()) {
       params.getConsole().printBuildFailure("Must specify at least one build target.");
@@ -281,6 +249,10 @@ public class BuildCommand extends AbstractCommand {
       return 1;
     }
 
+    if (additionalTarget.isPresent()) {
+      arguments.add(additionalTarget.get());
+    }
+
     // Post the build started event, setting it to the Parser recorded start time if appropriate.
     BuildEvent.Started started = BuildEvent.started(getArguments());
     if (params.getParser().getParseStartTime().isPresent()) {
@@ -293,7 +265,7 @@ public class BuildCommand extends AbstractCommand {
 
     // Parse the build files to create a ActionGraph.
     ActionGraph actionGraph;
-    BuildRuleResolver resolver;
+    ImmutableMap<ProjectFilesystem, BuildRuleResolver> resolvers;
     try {
       Pair<ImmutableSet<BuildTarget>, TargetGraph> result = params.getParser()
           .buildTargetGraphForTargetNodeSpecs(
@@ -313,7 +285,7 @@ public class BuildCommand extends AbstractCommand {
               new BuildTargetNodeToBuildRuleTransformer(),
               params.getFileHashCache());
       actionGraph = targetGraphToActionGraph.apply(result.getSecond());
-      resolver = targetGraphToActionGraph.getRuleResolver();
+      resolvers = targetGraphToActionGraph.getRuleResolvers();
     } catch (BuildTargetException | BuildFileParseException e) {
       params.getConsole().printBuildFailureWithoutStacktrace(e);
       return 1;
@@ -340,19 +312,13 @@ public class BuildCommand extends AbstractCommand {
          Build build = createBuild(
              params.getBuckConfig(),
              actionGraph,
-             params.getRepository().getFilesystem(),
              params.getAndroidPlatformTargetSupplier(),
              new CachingBuildEngine(
                  pool.getExecutor(),
                  params.getFileHashCache(),
                  getBuildEngineMode().or(params.getBuckConfig().getBuildEngineMode()),
                  params.getBuckConfig().getBuildDepFiles(),
-                 new InputBasedRuleKeyBuilderFactory(
-                     params.getFileHashCache(),
-                     new SourcePathResolver(resolver)),
-                 new DependencyFileRuleKeyBuilderFactory(
-                     params.getFileHashCache(),
-                     new SourcePathResolver(resolver))),
+                 resolvers),
              artifactCache,
              params.getConsole(),
              params.getBuckEventBus(),
@@ -398,10 +364,6 @@ public class BuildCommand extends AbstractCommand {
   protected ImmutableList<String> getOptions() {
     ImmutableList.Builder<String> builder = ImmutableList.builder();
     builder.addAll(super.getOptions());
-    if (numThreads != null) {
-      builder.add(NUM_THREADS_LONG_ARG);
-      builder.add(numThreads.toString());
-    }
     if (keepGoing) {
       builder.add(KEEP_GOING_LONG_ARG);
     }

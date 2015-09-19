@@ -16,18 +16,16 @@
 
 package com.facebook.buck.cli;
 
+import com.facebook.buck.query.QueryException;
 import com.facebook.buck.event.ConsoleEvent;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
-import com.google.devtools.build.lib.query2.engine.QueryEnvironment;
 
 import org.kohsuke.args4j.Argument;
 import org.kohsuke.args4j.Option;
 
 import java.io.IOException;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 public class AuditDependenciesCommand extends AbstractCommand {
 
@@ -83,25 +81,32 @@ public class AuditDependenciesCommand extends AbstractCommand {
     if (params.getConsole().getAnsi().isAnsiTerminal()) {
       params.getBuckEventBus().post(ConsoleEvent.info(
           "'buck audit dependencies' is deprecated. Please use 'buck query' instead.\n" +
-          "The equivalent 'buck query' command is:\n$ %s",
+          "The equivalent 'buck query' command is:\n$ %s\n\nThe query language is documented at " +
+          "https://buckbuild.com/command/query.html",
           QueryCommand.buildAuditDependenciesQueryExpression(
               getArguments(),
               shouldShowTransitiveDependencies(),
               shouldIncludeTests(),
               shouldGenerateJsonOutput())));
     }
-    // We're not using any of Bazel's settings.
-    Set<QueryEnvironment.Setting> settings = new HashSet<>();
-    BuckQueryEnvironment env = new BuckQueryEnvironment(params, settings, getEnableProfiling());
 
-    return QueryCommand.runMultipleQuery(
-        params,
-        env,
-        QueryCommand.getAuditDependenciesQueryFormat(
-            shouldShowTransitiveDependencies(),
-            shouldIncludeTests()),
-        getArgumentsFormattedAsBuildTargets(params.getBuckConfig()),
-        shouldGenerateJsonOutput());
+    BuckQueryEnvironment env = new BuckQueryEnvironment(params, getEnableProfiling());
+    try {
+      return QueryCommand.runMultipleQuery(
+          params,
+          env,
+          QueryCommand.getAuditDependenciesQueryFormat(
+              shouldShowTransitiveDependencies(),
+              shouldIncludeTests()),
+          getArgumentsFormattedAsBuildTargets(params.getBuckConfig()),
+          shouldGenerateJsonOutput());
+    } catch (QueryException e) {
+      if (e.getCause() instanceof InterruptedException) {
+        throw (InterruptedException) e.getCause();
+      }
+      params.getConsole().printBuildFailureWithoutStacktrace(e);
+      return 1;
+    }
   }
 
   @Override

@@ -217,6 +217,9 @@ public class PythonBinaryDescription implements Description<PythonBinaryDescript
                     .add("MAIN_MODULE", Escaper.escapeAsPythonString(mainModule))
                     .add("MODULES_DIR", relativeLinkTreeRootStr)
                     .add(
+                        "NATIVE_LIBS_ENV_VAR",
+                        Escaper.escapeAsPythonString(cxxPlatform.getLd().searchPathEnvVar()))
+                    .add(
                         "NATIVE_LIBS_DIR",
                         components.getNativeLibraries().isEmpty() ?
                             "None" :
@@ -263,7 +266,7 @@ public class PythonBinaryDescription implements Description<PythonBinaryDescript
                 Suppliers.ofInstance(componentDeps),
                 Suppliers.ofInstance(ImmutableSortedSet.<BuildRule>of())),
             pathResolver,
-            pythonBuckConfig.getPathToPex(),
+            pythonBuckConfig.getPexTool(resolver),
             buildArgs,
             pythonBuckConfig.getPathToPexExecuter(),
             pythonBuckConfig.getPexExtension(),
@@ -273,7 +276,8 @@ public class PythonBinaryDescription implements Description<PythonBinaryDescript
             // Attach any additional declared deps that don't qualify as build time deps,
             // as runtime deps, so that we make to include other things we depend on in
             // the build.
-            ImmutableSortedSet.copyOf(Sets.difference(params.getDeclaredDeps(), componentDeps)));
+            ImmutableSortedSet.copyOf(
+                Sets.difference(params.getDeclaredDeps().get(), componentDeps)));
 
       default:
         throw new IllegalStateException();

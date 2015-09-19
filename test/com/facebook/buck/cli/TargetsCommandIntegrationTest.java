@@ -21,6 +21,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertThat;
+
+import static org.hamcrest.Matchers.containsString;
 
 import com.facebook.buck.testutil.integration.DebuggableTemporaryFolder;
 import com.facebook.buck.testutil.integration.ProjectWorkspace;
@@ -64,7 +67,7 @@ public class TargetsCommandIntegrationTest {
         "--show-output",
         "//:test");
     result.assertSuccess();
-    assertEquals("//:test buck-out/gen/test-output\n", result.getStdout());
+    assertEquals("//:test buck-out/gen/test/test-output\n", result.getStdout());
   }
 
   @Test
@@ -78,7 +81,7 @@ public class TargetsCommandIntegrationTest {
         "--show-rulekey",
         "//:test");
     result.assertSuccess();
-    assertEquals("//:test 8df358d272c27e9671f35759b8be58abc8a68ff8\n", result.getStdout());
+    assertEquals("//:test 12c109cdbab186fbb8fdd785853d8bcb4538aed2\n", result.getStdout());
   }
 
   @Test
@@ -94,7 +97,7 @@ public class TargetsCommandIntegrationTest {
         "//:test");
     result.assertSuccess();
     assertEquals(
-        "//:test 8df358d272c27e9671f35759b8be58abc8a68ff8 buck-out/gen/test-output\n",
+        "//:test 12c109cdbab186fbb8fdd785853d8bcb4538aed2 buck-out/gen/test/test-output\n",
         result.getStdout());
   }
 
@@ -108,7 +111,9 @@ public class TargetsCommandIntegrationTest {
         "targets",
         "--show-output");
     result.assertFailure();
-    assertEquals("BUILD FAILED: Must specify at least one build target.\n", result.getStderr());
+    assertThat(
+        result.getStderr(),
+        containsString("BUILD FAILED: Must specify at least one build target.\n"));
   }
 
   @Test
@@ -121,7 +126,9 @@ public class TargetsCommandIntegrationTest {
         "targets",
         "--show-rulekey");
     result.assertFailure();
-    assertEquals("BUILD FAILED: Must specify at least one build target.\n", result.getStderr());
+    assertThat(
+        result.getStderr(),
+        containsString("BUILD FAILED: Must specify at least one build target.\n"));
   }
 
   private String parseAndVerifyTargetAndHash(String target, String outputLine) {

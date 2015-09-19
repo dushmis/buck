@@ -24,11 +24,11 @@ import com.google.common.util.concurrent.ListenableFuture;
  */
 public interface RemoteLogger {
   /**
-   * @param jsonBlob data to upload.
+   * @param logLine data to upload.
    * @return {@link Optional#absent()} if the data has merely been buffered, a
    *         {@link ListenableFuture} representing the upload otherwise.
    */
-  Optional<ListenableFuture<Void>> log(String jsonBlob);
+  Optional<ListenableFuture<Void>> log(String logLine);
 
   /**
    * If the underlying logger employs buffering this signals it to upload whatever remaining

@@ -48,7 +48,6 @@ import com.facebook.infer.annotation.SuppressFieldNotInitialized;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
-import com.google.common.base.Functions;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -65,7 +64,6 @@ import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.hash.HashCode;
 import com.google.common.hash.Hasher;
@@ -192,7 +190,7 @@ public class TargetsCommand extends AbstractCommand {
   /** @return the name of the build target identified by the specified alias or {@code null}. */
   @Nullable
   public String getBuildTargetForAlias(BuckConfig buckConfig, String alias) {
-    return buckConfig.getBuildTargetForAlias(alias);
+    return buckConfig.getBuildTargetForAliasAsString(alias);
   }
 
   /** @return the build target identified by the specified full path or {@code null}. */
@@ -468,48 +466,15 @@ public class TargetsCommand extends AbstractCommand {
 
     while (valueIterator.hasNext()) {
       TargetNode<?> targetNode = valueIterator.next();
-      BuildTarget buildTarget = targetNode.getBuildTarget();
 
-      List<Map<String, Object>> rules;
-      try {
-        Path buildFile = params.getRepository().getAbsolutePathToBuildFile(buildTarget);
-        rules = params.getParser().parseBuildFile(
-            buildFile,
-            parserConfig,
-            params.getEnvironment(),
-            params.getConsole(),
-            params.getBuckEventBus());
-      } catch (BuildTargetException e) {
+      SortedMap<String, Object> sortedTargetRule =
+          CommandHelper.getBuildTargetRules(params, parserConfig, targetNode);
+      if (sortedTargetRule == null) {
         params.getConsole().printErrorText(
-            "unable to find rule for target " + buildTarget.getFullyQualifiedName());
+            "unable to find rule for target " +
+                targetNode.getBuildTarget().getFullyQualifiedName());
         continue;
       }
-
-      // Find the build rule information that corresponds to this build buildTarget.
-      Map<String, Object> targetRule = null;
-      for (Map<String, Object> rule : rules) {
-        String name = (String) Preconditions.checkNotNull(rule.get("name"));
-        if (name.equals(buildTarget.getShortNameAndFlavorPostfix())) {
-          targetRule = rule;
-          break;
-        }
-      }
-
-      if (targetRule == null) {
-        params.getConsole().printErrorText(
-            "unable to find rule for target " + buildTarget.getFullyQualifiedName());
-        continue;
-      }
-
-      targetRule.put(
-          "buck.direct_dependencies",
-          ImmutableList.copyOf((Iterables.transform(targetNode.getDeps(),
-          Functions.toStringFunction()))));
-
-      // Sort the rule items, both so we have a stable order for unit tests and
-      // to improve readability of the output.
-      SortedMap<String, Object> sortedTargetRule = Maps.newTreeMap();
-      sortedTargetRule.putAll(targetRule);
 
       // Print the build rule information as JSON.
       StringWriter stringWriter = new StringWriter();
@@ -664,7 +629,8 @@ public class TargetsCommand extends AbstractCommand {
       ImmutableSet<BuildTarget> explicitTestTargets;
       explicitTestTargets = TargetGraphAndTargets.getExplicitTestTargets(
           matchingBuildTargets,
-          projectGraph);
+          projectGraph,
+          true);
       LOG.debug("Got explicit test targets: %s", explicitTestTargets);
       matchingBuildTargetsWithTests =
           Sets.union(matchingBuildTargets, explicitTestTargets);

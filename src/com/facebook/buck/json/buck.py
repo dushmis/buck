@@ -11,11 +11,12 @@ import functools
 import imp
 import inspect
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath, PurePath
 import optparse
 import os
 import os.path
 import subprocess
+import sys
 
 
 # When build files are executed, the functions in this file tagged with
@@ -61,7 +62,8 @@ class BuildFileContext(object):
     type = BuildContextType.BUILD_FILE
 
     def __init__(self, base_path, dirname, allow_empty_globs, watchman_client,
-                 watchman_watch_root, watchman_project_prefix, sync_cookie_state):
+                 watchman_watch_root, watchman_project_prefix, sync_cookie_state,
+                 watchman_error):
         self.globals = {}
         self.includes = set()
         self.base_path = base_path
@@ -71,6 +73,7 @@ class BuildFileContext(object):
         self.watchman_watch_root = watchman_watch_root
         self.watchman_project_prefix = watchman_project_prefix
         self.sync_cookie_state = sync_cookie_state
+        self.watchman_error = watchman_error
         self.rules = {}
 
 
@@ -160,7 +163,7 @@ class memoized(object):
 
 
 @provide_for_build
-def glob(includes, excludes=[], include_dotfiles=False, build_env=None):
+def glob(includes, excludes=[], include_dotfiles=False, build_env=None, search_base=None):
     assert build_env.type == BuildContextType.BUILD_FILE, (
         "Cannot use `glob()` at the top-level of an included file.")
     # Ensure the user passes lists of strings rather than just a string.
@@ -169,20 +172,32 @@ def glob(includes, excludes=[], include_dotfiles=False, build_env=None):
     assert not isinstance(excludes, basestring), \
         "The excludes argument must be a list of strings."
 
+    results = None
     if not includes:
         results = []
     elif build_env.watchman_client:
-        results = glob_watchman(
-            includes,
-            excludes,
-            include_dotfiles,
-            build_env.base_path,
-            build_env.watchman_watch_root,
-            build_env.watchman_project_prefix,
-            build_env.sync_cookie_state,
-            build_env.watchman_client)
-    else:
-        search_base = Path(build_env.dirname)
+        try:
+            results = glob_watchman(
+                includes,
+                excludes,
+                include_dotfiles,
+                build_env.base_path,
+                build_env.watchman_watch_root,
+                build_env.watchman_project_prefix,
+                build_env.sync_cookie_state,
+                build_env.watchman_client)
+        except build_env.watchman_error, e:
+            print >>sys.stderr, 'Watchman error, falling back to slow glob: ' + str(e)
+            try:
+                build_env.watchman_client.close()
+            except:
+                pass
+            build_env.watchman_client = None
+
+    if results is None:
+        if search_base is None:
+            search_base = Path(build_env.dirname)
+
         results = glob_internal(
             includes,
             excludes,
@@ -197,6 +212,65 @@ def glob(includes, excludes=[], include_dotfiles=False, build_env=None):
             include_dotfiles=include_dotfiles)
 
     return results
+
+
+def merge_maps(*header_maps):
+    result = {}
+    for header_map in header_maps:
+        for key in header_map:
+            if key in result and result[key] != header_map[key]:
+                assert False, 'Conflicting header files in header search paths. ' + \
+                              '"%s" maps to both "%s" and "%s".' \
+                              % (key, result[key], header_map[key])
+
+            result[key] = header_map[key]
+
+    return result
+
+
+def single_subdir_glob(dirpath, glob_pattern, excludes=[], prefix=None, build_env=None,
+                       search_base=None):
+    results = {}
+    files = glob([os.path.join(dirpath, glob_pattern)],
+                 excludes=excludes,
+                 build_env=build_env,
+                 search_base=search_base)
+    for f in files:
+        if dirpath:
+            key = f[len(dirpath) + 1:]
+        else:
+            key = f
+        if prefix:
+            # `f` is a string, but we need to create correct platform-specific Path.
+            # Using Path straight away won't work because it will use host's class, which is Posix
+            # on OS X. For the same reason we can't use os.path.join.
+            # Here we try to understand if we're running Windows test, then use WindowsPath
+            # to build up the key with prefix, allowing test to pass.
+            cls = PureWindowsPath if "\\" in f else PurePath
+            key = str(cls(prefix) / cls(key))
+        results[key] = f
+
+    return results
+
+
+@provide_for_build
+def subdir_glob(glob_specs, excludes=[], prefix=None, build_env=None, search_base=None):
+    """
+    Given a list of tuples, the form of (relative-sub-directory, glob-pattern),
+    return a dict of sub-directory relative paths to full paths.  Useful for
+    defining header maps for C/C++ libraries which should be relative the given
+    sub-directory.
+
+    If prefix is not None, prepends it it to each key in the dictionary.
+    """
+
+    results = []
+
+    for dirpath, glob_pattern in glob_specs:
+        results.append(
+            single_subdir_glob(dirpath, glob_pattern, excludes, prefix, build_env, search_base))
+
+    return merge_maps(*results)
 
 
 def format_watchman_query_params(includes, excludes, include_dotfiles, relative_root):
@@ -244,10 +318,6 @@ def glob_watchman(includes, excludes, include_dotfiles, base_path, watchman_watc
 
     query = ["query", watchman_watch_root, query_params]
     res = watchman_client.query(*query)
-    if res.get('error'):
-        raise RuntimeError('Error from Watchman query {}: {}'.format(
-            query,
-            res.get('error')))
     if res.get('warning'):
         print >> sys.stderr, 'Watchman warning from query {}: {}'.format(
             query,
@@ -326,7 +396,8 @@ def add_deps(name, deps=[], build_env=None):
 class BuildFileProcessor(object):
 
     def __init__(self, project_root, watchman_watch_root, watchman_project_prefix, build_file_name,
-                 allow_empty_globs, watchman_client, implicit_includes=[]):
+                 allow_empty_globs, watchman_client, watchman_error, implicit_includes=[],
+                 extra_funcs=[]):
         self._cache = {}
         self._build_env_stack = []
         self._sync_cookie_state = SyncCookieState()
@@ -338,9 +409,10 @@ class BuildFileProcessor(object):
         self._implicit_includes = implicit_includes
         self._allow_empty_globs = allow_empty_globs
         self._watchman_client = watchman_client
+        self._watchman_error = watchman_error
 
         lazy_functions = {}
-        for func in BUILD_FUNCTIONS:
+        for func in BUILD_FUNCTIONS + extra_funcs:
             func_with_env = LazyBuildEnvPartial(func)
             lazy_functions[func.__name__] = func_with_env
         self._functions = lazy_functions
@@ -389,7 +461,7 @@ class BuildFileProcessor(object):
             raise ValueError(
                 'include_defs argument "%s" must begin with //' % name)
         relative_path = name[2:]
-        return os.path.join(self._project_root, name[2:])
+        return os.path.join(self._project_root, relative_path)
 
     def _include_defs(self, name, implicit_includes=[]):
         """
@@ -519,7 +591,8 @@ class BuildFileProcessor(object):
             self._watchman_client,
             self._watchman_watch_root,
             self._watchman_project_prefix,
-            self._sync_cookie_state)
+            self._sync_cookie_state,
+            self._watchman_error)
 
         return self._process(
             build_env,
@@ -605,6 +678,12 @@ def main():
         dest='watchman_project_prefix',
         help='Relative project prefix as returned by `watchman watch-project`.')
     parser.add_option(
+        '--watchman_query_timeout_ms',
+        action='store',
+        type='int',
+        dest='watchman_query_timeout_ms',
+        help='Maximum time in milliseconds to wait for watchman query to respond.')
+    parser.add_option(
         '--include',
         action='append',
         dest='include')
@@ -621,6 +700,7 @@ def main():
     project_root = os.path.abspath(options.project_root)
 
     watchman_client = None
+    watchman_error = None
     output_format = 'JSON'
     output_encode = lambda val: json.dumps(val, sort_keys=True)
     if options.use_watchman_glob:
@@ -628,7 +708,13 @@ def main():
             # pywatchman may not be built, so fall back to non-watchman
             # in that case.
             import pywatchman
-            watchman_client = pywatchman.client()
+            client_args = {}
+            if options.watchman_query_timeout_ms is not None:
+                # pywatchman expects a timeout as a nonnegative floating-point
+                # value in seconds.
+                client_args['timeout'] = max(0.0, options.watchman_query_timeout_ms / 1000.0)
+            watchman_client = pywatchman.client(**client_args)
+            watchman_error = pywatchman.WatchmanError
             output_format = 'BSER'
             output_encode = lambda val: pywatchman.bser.dumps(val)
         except ImportError, e:
@@ -646,6 +732,7 @@ def main():
         options.build_file_name,
         options.allow_empty_globs,
         watchman_client,
+        watchman_error,
         implicit_includes=options.include or [])
 
     buildFileProcessor.install_builtins(__builtin__.__dict__)

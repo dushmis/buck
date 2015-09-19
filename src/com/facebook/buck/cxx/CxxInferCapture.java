@@ -22,8 +22,8 @@ import com.facebook.buck.rules.AddToRuleKey;
 import com.facebook.buck.rules.BuildContext;
 import com.facebook.buck.rules.BuildRuleParams;
 import com.facebook.buck.rules.BuildableContext;
-import com.facebook.buck.rules.RuleKey;
 import com.facebook.buck.rules.RuleKeyAppendable;
+import com.facebook.buck.rules.RuleKeyBuilder;
 import com.facebook.buck.rules.SourcePath;
 import com.facebook.buck.rules.SourcePathResolver;
 import com.facebook.buck.shell.DefaultShellStep;
@@ -172,9 +172,9 @@ public class CxxInferCapture extends AbstractBuildRule implements RuleKeyAppenda
     buildableContext.recordArtifact(this.getPathToOutput());
 
     return ImmutableList.<Step>builder()
-        .add(new MkdirStep(resultsDir))
-        .add(new MkdirStep(output.getParent()))
-        .add(new DefaultShellStep(frontendCommand))
+        .add(new MkdirStep(getProjectFilesystem(), resultsDir))
+        .add(new MkdirStep(getProjectFilesystem(), output.getParent()))
+        .add(new DefaultShellStep(getProjectFilesystem().getRootPath(), frontendCommand))
         .build();
   }
 
@@ -184,7 +184,7 @@ public class CxxInferCapture extends AbstractBuildRule implements RuleKeyAppenda
   }
 
   @Override
-  public RuleKey.Builder appendToRuleKey(RuleKey.Builder builder) {
+  public RuleKeyBuilder appendToRuleKey(RuleKeyBuilder builder) {
     // Sanitize any relevant paths in the flags we pass to the preprocessor, to prevent them
     // from contributing to the rule key.
     builder.setReflectively(

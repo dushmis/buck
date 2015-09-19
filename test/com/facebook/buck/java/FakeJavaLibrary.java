@@ -34,6 +34,7 @@ import com.facebook.buck.testutil.FakeProjectFilesystem;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.FluentIterable;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
@@ -87,6 +88,13 @@ public class FakeJavaLibrary extends FakeBuildRule implements JavaLibrary, Andro
   }
 
   @Override
+  public ImmutableSet<JavaLibrary> getTransitiveClasspathDeps() {
+    return JavaLibraryClasspathProvider.getTransitiveClasspathDeps(
+        this,
+        Optional.fromNullable(getPathToOutput()));
+  }
+
+  @Override
   public Path getPathToOutput() {
     return BuildTargets.getGenPath(getBuildTarget(), "%s.jar");
   }
@@ -94,6 +102,11 @@ public class FakeJavaLibrary extends FakeBuildRule implements JavaLibrary, Andro
   @Override
   public ImmutableSortedSet<Path> getJavaSrcs() {
     return ImmutableSortedSet.copyOf(getResolver().getAllPaths(srcs));
+  }
+
+  @Override
+  public ImmutableSortedSet<SourcePath> getSources() {
+    return srcs;
   }
 
   public FakeJavaLibrary setJavaSrcs(ImmutableSortedSet<Path> srcs) {
@@ -112,6 +125,11 @@ public class FakeJavaLibrary extends FakeBuildRule implements JavaLibrary, Andro
   @Override
   public Sha1HashCode getAbiKey() {
     throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public Optional<SourcePath> getAbiJar() {
+    return Optional.absent();
   }
 
   @Override

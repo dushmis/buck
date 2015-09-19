@@ -1,6 +1,7 @@
 java_library(
   name = 'rules',
   srcs = [
+    'AbstractGenruleDescription.java',
     'ExportFile.java',
     'ExportFileDescription.java',
     'Genrule.java',
@@ -10,12 +11,16 @@ java_library(
     'ShTest.java',
     'ShTestDescription.java',
   ],
+  tests = [
+    '//test/com/facebook/buck/shell:shell',
+  ],
   deps = [
     ':steps',
     '//src/com/facebook/buck/io:io',
     '//src/com/facebook/buck/model:model',
     '//src/com/facebook/buck/parser:rule_pattern',
     '//src/com/facebook/buck/rules:build_rule',
+    '//src/com/facebook/buck/rules/keys:keys',
     '//src/com/facebook/buck/rules:rules',
     '//src/com/facebook/buck/rules/macros:macros',
     '//src/com/facebook/buck/step:step',
@@ -49,6 +54,9 @@ java_library(
     'ShellStep.java',
     'SymlinkFilesIntoDirectoryStep.java',
     'Shell.java',
+  ],
+  tests = [
+    '//test/com/facebook/buck/shell:shell',
   ],
   deps = [
     '//src/com/facebook/buck/event:event',
